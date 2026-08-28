@@ -2,9 +2,9 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Sparkles, Video, Image as ImageIcon, Plus, MousePointer, Hand, Move,
   ZoomIn, ZoomOut, Film, Trash2, CheckCircle2, Loader2, AtSign, X, Layers,
-  ChevronDown, ExternalLink, HelpCircle, ArrowRight, Volume2, VolumeX,
+  ChevronDown, ChevronUp, ExternalLink, HelpCircle, ArrowRight, Volume2, VolumeX,
   Code, Sliders, Monitor, Smartphone, Square, Ratio, Maximize2, Split,
-  LayoutGrid, ImagePlus, Compass, Focus, ChevronUp, Settings2, Play
+  LayoutGrid, ImagePlus, Compass, Focus, Settings2, Play, Hash, ToggleLeft, ToggleRight
 } from 'lucide-react';
 
 export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video';
@@ -29,7 +29,9 @@ export interface SpatialCard {
   model: string;
   status: 'idle' | 'generating' | 'done';
   progress: number;
-  showAdvanced?: boolean;
+  // UI folding & tab state
+  isExpanded?: boolean;
+  activeParamTab?: 'specs' | 'refs' | 'advanced';
   // Video specific parameters
   mode?: VideoTaskMode;
   resolution?: string;
@@ -38,6 +40,7 @@ export interface SpatialCard {
   generateAudio?: boolean;
   outputFormat?: 'mp4' | 'mov';
   promptOptimizer?: boolean;
+  seed?: number;
   references?: ReferenceItem[];
   // Image specific parameters (Seedream 5.0 Series)
   imageMode?: ImageTaskMode;
@@ -47,6 +50,8 @@ export interface SpatialCard {
   customPixels?: string;
   imageFormat?: 'jpeg' | 'png';
   watermark?: boolean;
+  background?: 'opaque' | 'transparent';
+  seedImage?: number;
 }
 
 const VIDEO_MODELS = [
@@ -129,7 +134,7 @@ const IMAGE_MODELS = [
   }
 ];
 
-// Accurate pixel mapping from Ark 6.1:103-214
+// Accurate pixel mapping table from Ark 6.1:103-214
 const SEEDREAM_PIXEL_MAP: Record<string, Record<string, string>> = {
   '1K': {
     '1:1': '1024x1024',
@@ -166,18 +171,14 @@ const SEEDREAM_PIXEL_MAP: Record<string, Record<string, string>> = {
     '16:9': '4096x2304',
     '9:16': '2304x4096',
     '4:3': '3456x2592',
-    '3:4': '2592x3456',
-    '3:2': '3744x2496',
-    '2:3': '2496x3744'
+    '3:4': '2592x3456'
   },
   '4K': {
     '1:1': '4096x4096',
     '16:9': '5504x3040',
     '9:16': '3040x5504',
     '4:3': '4704x3520',
-    '3:4': '3520x4704',
-    '3:2': '4992x3328',
-    '2:3': '3328x4992'
+    '3:4': '3520x4704'
   }
 };
 
@@ -190,17 +191,20 @@ export const VariantB_LovartSpatial: React.FC = () => {
       tagIndex: 1,
       x: 80,
       y: 140,
-      width: 320,
+      width: 330,
       prompt: '特写肖像，银发机甲少女，深邃眼眸，精细金属质感外骨骼，Vogue 光影',
       model: 'doubao-seedream-5-0-pro-260628',
       status: 'done',
       progress: 100,
+      isExpanded: false,
+      activeParamTab: 'specs',
       imageMode: 'single',
       sizeMode: 'tier',
       imageTier: '2K',
       imageRatioPreset: '16:9',
       imageFormat: 'jpeg',
-      watermark: false
+      watermark: false,
+      background: 'opaque'
     },
     {
       id: 'card-img-2',
@@ -208,28 +212,33 @@ export const VariantB_LovartSpatial: React.FC = () => {
       title: '雨夜街道场景',
       tagIndex: 2,
       x: 80,
-      y: 490,
-      width: 320,
+      y: 530,
+      width: 330,
       prompt: '赛博朋克都市雨夜全景，湿漉漉的沥青路面，红蓝霓虹灯招牌倒影，电影级景深',
       model: 'doubao-seedream-5-0-lite-260128',
       status: 'done',
       progress: 100,
+      isExpanded: false,
+      activeParamTab: 'specs',
       imageMode: 'single',
       sizeMode: 'tier',
       imageTier: '4K',
       imageRatioPreset: '16:9',
       imageFormat: 'jpeg',
-      watermark: false
+      watermark: false,
+      background: 'opaque'
     },
     {
       id: 'card-vid-1',
       type: 'video',
       title: '电影镜头生成',
       tagIndex: 3,
-      x: 450,
+      x: 470,
       y: 140,
-      width: 440,
+      width: 460,
       mode: 'all_modal',
+      isExpanded: false,
+      activeParamTab: 'specs',
       prompt: '以 @图1 为首帧与主角形象，置身于 @图2 的雨夜街道中。少女低头沉思随后抬眼望向镜头，摄影机缓慢推近特写，雨滴从发梢滑落，霓虹光晕在金属装甲表面流转',
       model: 'doubao-seedance-2-5-260628',
       status: 'idle',
@@ -248,10 +257,13 @@ export const VariantB_LovartSpatial: React.FC = () => {
   ]);
 
   const [activeTool, setActiveTool] = useState<'select' | 'hand'>('select');
-  const [zoom, setZoom] = useState(0.9);
+  const [zoom, setZoom] = useState(0.85);
   const [pan, setPan] = useState({ x: 60, y: 20 });
   const [isPanning, setIsPanning] = useState(false);
   const startPanRef = useRef({ x: 0, y: 0 });
+
+  // Keep track of current mouse position on canvas
+  const mousePosRef = useRef<{ x: number; y: number }>({ x: 500, y: 350 });
 
   const [selectedCardId, setSelectedCardId] = useState<string | null>('card-vid-1');
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
@@ -262,6 +274,21 @@ export const VariantB_LovartSpatial: React.FC = () => {
   const [showJsonInspectorCardId, setShowJsonInspectorCardId] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Zoom anchored at precise client coordinates (e.g. current mouse position)
+  const zoomAtPoint = useCallback((targetZoom: number, clientX?: number, clientY?: number) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const anchorX = (clientX !== undefined ? clientX : mousePosRef.current.x) - rect.left;
+    const anchorY = (clientY !== undefined ? clientY : mousePosRef.current.y) - rect.top;
+
+    const clampedZoom = Math.min(2.5, Math.max(0.25, targetZoom));
+    setPan(prevPan => ({
+      x: anchorX - (anchorX - prevPan.x) * (clampedZoom / zoom),
+      y: anchorY - (anchorY - prevPan.y) * (clampedZoom / zoom)
+    }));
+    setZoom(clampedZoom);
+  }, [zoom]);
 
   // Fit View
   const fitView = useCallback(() => {
@@ -293,12 +320,12 @@ export const VariantB_LovartSpatial: React.FC = () => {
     const containerH = containerRef.current.clientHeight;
     const targetZoom = 1;
     const targetPanX = containerW / 2 - (target.x + target.width / 2) * targetZoom;
-    const targetPanY = containerH / 2 - (target.y + 200) * targetZoom;
+    const targetPanY = containerH / 2 - (target.y + 180) * targetZoom;
     setZoom(targetZoom);
     setPan({ x: targetPanX, y: targetPanY });
   }, [cards, selectedCardId]);
 
-  // Native non-passive Wheel listener to smoothly zoom and prevent browser zooming
+  // Native non-passive Wheel listener (zoom anchored strictly at cursor)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -308,6 +335,9 @@ export const VariantB_LovartSpatial: React.FC = () => {
       const rect = container.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
+
+      // Update cursor reference
+      mousePosRef.current = { x: e.clientX, y: e.clientY };
 
       if (e.ctrlKey || e.metaKey) {
         // Trackpad pinch or Ctrl+Wheel zoom
@@ -335,7 +365,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
     return () => container.removeEventListener('wheel', handleNativeWheel);
   }, []);
 
-  // Keyboard Shortcuts (0: Fit View, 1: 100%, Space: Hand Tool)
+  // Keyboard Shortcuts (0: Fit View, 1: 100%, + / - Zoom centered on mouse, Space: Hand)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
@@ -344,11 +374,11 @@ export const VariantB_LovartSpatial: React.FC = () => {
       if (e.key === '0') {
         fitView();
       } else if (e.key === '1') {
-        setZoom(1);
+        zoomAtPoint(1);
       } else if (e.key === '=' || e.key === '+') {
-        setZoom(z => Math.min(2.5, z * 1.15));
+        zoomAtPoint(zoom * 1.15);
       } else if (e.key === '-') {
-        setZoom(z => Math.max(0.25, z / 1.15));
+        zoomAtPoint(zoom / 1.15);
       } else if (e.key === 'f' || e.key === 'F') {
         focusSelection();
       } else if (e.key === ' ') {
@@ -366,7 +396,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [fitView, focusSelection]);
+  }, [fitView, focusSelection, zoom, zoomAtPoint]);
 
   const handleMouseDownCanvas = (e: React.MouseEvent<HTMLDivElement>) => {
     if (activeTool === 'hand' || e.button === 1 || e.target === e.currentTarget) {
@@ -378,6 +408,8 @@ export const VariantB_LovartSpatial: React.FC = () => {
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    mousePosRef.current = { x: e.clientX, y: e.clientY };
+
     if (isPanning) {
       setPan({
         x: e.clientX - startPanRef.current.x,
@@ -592,11 +624,13 @@ export const VariantB_LovartSpatial: React.FC = () => {
       tagIndex: nextIndex,
       x: 200 - pan.x / zoom,
       y: 200 - pan.y / zoom,
-      width: type === 'video' ? 440 : 320,
+      width: type === 'video' ? 460 : 330,
       prompt: type === 'image' ? '输入画面主体与氛围描述...' : '输入运镜指令，可使用 @图1 @图2 引用...',
       model: type === 'image' ? 'doubao-seedream-5-0-pro-260628' : 'doubao-seedance-2-5-260628',
       status: 'idle',
       progress: 0,
+      isExpanded: false,
+      activeParamTab: 'specs',
       mode: 'all_modal',
       resolution: '720p',
       duration: 5,
@@ -610,6 +644,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
       imageRatioPreset: '16:9',
       imageFormat: 'jpeg',
       watermark: false,
+      background: 'opaque',
       references: []
     };
     setCards(prev => [...prev, newCard]);
@@ -631,13 +666,13 @@ export const VariantB_LovartSpatial: React.FC = () => {
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-bold text-white text-xs">Lovart 媒体工作台 • 紧凑卡片 & 快捷画布引擎</span>
+            <span className="font-bold text-white text-xs">Lovart 媒体工作台 • 全参折叠与光标锚定缩放引擎</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
-              Ark + MiniMax
+              Ark & MiniMax
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            滚轮中心缩放 • 快捷键 0 全览 / 1 原始大小 / Space 拖拽 • 紧凑卡片高级折叠
+            以光标为中心自由缩放 • 快捷键 0 全览 / 1 原始大小 / + - 放大缩小 / Space 拖拽 • 丰富参数 Tab 抽屉折叠
           </p>
         </div>
       </div>
@@ -699,16 +734,16 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
         <button
           type="button"
-          onClick={() => setZoom(z => Math.max(0.25, z / 1.15))}
+          onClick={() => zoomAtPoint(zoom / 1.15)}
           className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition"
-          title="缩小 (-)"
+          title="以光标为中心缩小 (-)"
         >
           <ZoomOut className="w-4 h-4" />
         </button>
 
         <button
           type="button"
-          onClick={() => setZoom(1)}
+          onClick={() => zoomAtPoint(1)}
           className="px-2 py-1 hover:bg-slate-800 rounded-lg text-xs font-mono text-slate-300 font-bold min-w-[52px] text-center"
           title="重置为 100% (快捷键 1)"
         >
@@ -717,9 +752,9 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
         <button
           type="button"
-          onClick={() => setZoom(z => Math.min(2.5, z * 1.15))}
+          onClick={() => zoomAtPoint(zoom * 1.15)}
           className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition"
-          title="放大 (+)"
+          title="以光标为中心放大 (+)"
         >
           <ZoomIn className="w-4 h-4" />
         </button>
@@ -795,7 +830,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                 transform: `translate(${card.x}px, ${card.y}px)`,
                 width: `${card.width}px`
               }}
-              className={`absolute z-10 bg-[#12141e]/95 border rounded-2xl shadow-2xl overflow-visible text-slate-200 transition-all ${
+              className={`absolute z-10 bg-[#12141e]/98 border rounded-2xl shadow-2xl overflow-visible text-slate-200 transition-all ${
                 isSelected
                   ? 'border-indigo-500/90 ring-4 ring-indigo-500/20 shadow-indigo-500/30'
                   : 'border-slate-700/70 hover:border-slate-600'
@@ -837,7 +872,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
               {/* JSON Payload Inspector */}
               {showJsonInspectorCardId === card.id && (
-                <div className="bg-[#08090e] p-2.5 border-b border-slate-800 text-[10px] font-mono text-emerald-400 max-h-40 overflow-y-auto space-y-1">
+                <div className="bg-[#08090e] p-2.5 border-b border-slate-800 text-[10px] font-mono text-emerald-400 max-h-44 overflow-y-auto space-y-1">
                   <div className="flex justify-between text-slate-400 border-b border-slate-800 pb-1">
                     <span>📡 序列化 API Payload</span>
                     <button type="button" onClick={() => setShowJsonInspectorCardId(null)} className="hover:text-white">✕</button>
@@ -846,9 +881,11 @@ export const VariantB_LovartSpatial: React.FC = () => {
                 </div>
               )}
 
-              {/* Compact Card Body */}
+              {/* Card Body */}
               <div className="p-3 space-y-2.5">
-                {/* 1. IMAGE CARD (COMPACT VISUAL FIRST) */}
+                {/* ========================================================================= */}
+                {/* 1. IMAGE CARD (SEEDREAM 5.0 PRO / LITE)                                   */}
+                {/* ========================================================================= */}
                 {card.type === 'image' && (
                   <>
                     {/* Visual Preview */}
@@ -868,79 +905,223 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Compact Quick Param Bar */}
+                    {/* Compact Quick Summary & Toggle Bar */}
                     <div className="flex items-center justify-between text-xs bg-[#0b0d14] p-1.5 px-2.5 rounded-xl border border-slate-800">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] text-slate-400">尺寸:</span>
-                        <div className="flex items-center gap-1">
-                          {currentImageModel.tiers.map(tr => (
-                            <button
-                              key={tr}
-                              type="button"
-                              onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageTier: tr, sizeMode: 'tier' } : c))}
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition ${
-                                card.imageTier === tr && card.sizeMode === 'tier'
-                                  ? 'bg-pink-600 text-white'
-                                  : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                              }`}
-                            >
-                              {tr}
-                            </button>
-                          ))}
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setOpenDropdownCardId(openDropdownCardId === card.id ? null : card.id)}
+                          className="font-semibold text-pink-300 flex items-center gap-1 hover:text-pink-200 text-[11px]"
+                        >
+                          {currentImageModel.name.split(' ')[1]} {currentImageModel.name.split(' ')[2]} <ChevronDown className="w-3 h-3 text-slate-400" />
+                        </button>
+                        <span className="text-slate-600">•</span>
+                        <span className="font-mono text-[10px] text-slate-300">
+                          {card.sizeMode === 'custom_pixels' ? card.customPixels : `${currentTier} (${currentRatio})`}
+                        </span>
                       </div>
 
                       <button
                         type="button"
-                        onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, showAdvanced: !c.showAdvanced } : c))}
-                        className={`text-[10px] font-medium flex items-center gap-1 px-1.5 py-0.5 rounded transition ${
-                          card.showAdvanced ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white bg-slate-800'
+                        onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, isExpanded: !c.isExpanded } : c))}
+                        className={`text-[10px] font-medium flex items-center gap-1 px-2 py-0.5 rounded-lg border transition ${
+                          card.isExpanded ? 'bg-pink-600 text-white border-pink-500' : 'text-slate-400 hover:text-white bg-slate-800/80 border-slate-700'
                         }`}
                       >
-                        <Settings2 className="w-3 h-3" /> 参数
+                        <Settings2 className="w-3 h-3" />
+                        {card.isExpanded ? '收起配置' : '展开参数'}
                       </button>
                     </div>
 
-                    {/* Collapsible Advanced Parameters Drawer */}
-                    {card.showAdvanced && (
+                    {/* Model Switch Dropdown */}
+                    {openDropdownCardId === card.id && (
+                      <div className="bg-[#161925] border border-slate-700 rounded-xl p-1.5 shadow-2xl z-30 space-y-1 animate-in fade-in">
+                        {IMAGE_MODELS.map(m => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => selectImageModel(card.id, m.id)}
+                            className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between text-xs transition ${
+                              card.model === m.id ? 'bg-pink-600 text-white font-bold' : 'hover:bg-slate-800 text-slate-200'
+                            }`}
+                          >
+                            <span>{m.name}</span>
+                            <span className="text-[10px] opacity-70">{m.tag}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Expanded Tabbed Parameter Drawer */}
+                    {card.isExpanded && (
                       <div className="bg-[#0b0d14] border border-slate-800 p-2.5 rounded-xl space-y-2 text-xs animate-in fade-in">
-                        {/* Model Selector */}
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400 text-[10px]">模型:</span>
-                          <div className="flex gap-1">
-                            {IMAGE_MODELS.map(m => (
-                              <button
-                                key={m.id}
-                                type="button"
-                                onClick={() => selectImageModel(card.id, m.id)}
-                                className={`px-2 py-0.5 rounded text-[10px] font-medium ${
-                                  card.model === m.id ? 'bg-pink-600 text-white' : 'bg-slate-800 text-slate-400'
-                                }`}
-                              >
-                                {m.name}
-                              </button>
-                            ))}
-                          </div>
+                        {/* Drawer Tabs */}
+                        <div className="flex items-center gap-1 pb-1.5 border-b border-slate-800 text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, activeParamTab: 'specs' } : c))}
+                            className={`px-2 py-0.5 rounded-md font-semibold transition ${
+                              card.activeParamTab === 'specs' || !card.activeParamTab ? 'bg-pink-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            尺寸规格 (Size)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, activeParamTab: 'advanced' } : c))}
+                            className={`px-2 py-0.5 rounded-md font-semibold transition ${
+                              card.activeParamTab === 'advanced' ? 'bg-pink-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            模式与输出 (Mode/Output)
+                          </button>
                         </div>
 
-                        {/* Ratio Mapping */}
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400 text-[10px]">比例:</span>
-                          <div className="flex gap-1 flex-wrap justify-end">
-                            {(['1:1', '16:9', '9:16', '4:3', '3:4', '21:9'] as const).map(rt => (
+                        {/* TAB 1: SIZE SPECIFICATIONS */}
+                        {(card.activeParamTab === 'specs' || !card.activeParamTab) && (
+                          <div className="space-y-2">
+                            {/* Method Switcher */}
+                            <div className="grid grid-cols-2 gap-1 bg-[#12141e] p-1 rounded-lg border border-slate-800 text-[10px]">
                               <button
-                                key={rt}
                                 type="button"
-                                onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageRatioPreset: rt, sizeMode: 'tier' } : c))}
-                                className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${
-                                  card.imageRatioPreset === rt && card.sizeMode === 'tier' ? 'bg-pink-600 text-white' : 'bg-slate-800 text-slate-400'
-                                }`}
+                                onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, sizeMode: 'tier' } : c))}
+                                className={`py-1 rounded font-medium ${card.sizeMode === 'tier' || !card.sizeMode ? 'bg-pink-600 text-white' : 'text-slate-400'}`}
                               >
-                                {rt}
+                                方式1: 档位预设
                               </button>
-                            ))}
+                              <button
+                                type="button"
+                                onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, sizeMode: 'custom_pixels' } : c))}
+                                className={`py-1 rounded font-medium ${card.sizeMode === 'custom_pixels' ? 'bg-pink-600 text-white' : 'text-slate-400'}`}
+                              >
+                                方式2: 显式像素
+                              </button>
+                            </div>
+
+                            {card.sizeMode === 'tier' || !card.sizeMode ? (
+                              <>
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <span className="text-slate-400">档位:</span>
+                                  <div className="flex gap-1">
+                                    {currentImageModel.tiers.map(tr => (
+                                      <button
+                                        key={tr}
+                                        type="button"
+                                        onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageTier: tr } : c))}
+                                        className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] ${
+                                          currentTier === tr ? 'bg-pink-600 text-white' : 'bg-slate-800 text-slate-400'
+                                        }`}
+                                      >
+                                        {tr}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <div className="flex justify-between text-[10px]">
+                                    <span className="text-slate-400">宽高比映射:</span>
+                                    <span className="font-mono text-pink-300 font-bold">{mappedPixels}</span>
+                                  </div>
+                                  <div className="grid grid-cols-4 gap-1 text-[9px] font-mono">
+                                    {(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9'] as const).map(rt => (
+                                      <button
+                                        key={rt}
+                                        type="button"
+                                        onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageRatioPreset: rt } : c))}
+                                        className={`py-1 rounded font-semibold ${
+                                          currentRatio === rt ? 'bg-pink-600 text-white' : 'bg-slate-800 text-slate-400'
+                                        }`}
+                                      >
+                                        {rt}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="space-y-1">
+                                <div className="flex justify-between text-[10px]">
+                                  <span className="text-slate-400">自定义宽高像素:</span>
+                                  <span className="font-mono text-[9px] text-slate-500">{currentImageModel.pixelRangeText}</span>
+                                </div>
+                                <input
+                                  type="text"
+                                  value={card.customPixels ?? currentImageModel.defaultCustomPixel}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setCards(prev => prev.map(c => c.id === card.id ? { ...c, customPixels: val } : c));
+                                  }}
+                                  className="w-full bg-[#161822] border border-slate-700 rounded-lg px-2 py-1 text-xs font-mono text-pink-300 focus:outline-none focus:border-pink-500"
+                                  placeholder="例如 2048x1024"
+                                />
+                              </div>
+                            )}
                           </div>
-                        </div>
+                        )}
+
+                        {/* TAB 2: ADVANCED MODE & OUTPUT */}
+                        {card.activeParamTab === 'advanced' && (
+                          <div className="space-y-2">
+                            {/* Mode Selection */}
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-slate-400">模式:</span>
+                              <div className="flex gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageMode: 'single' } : c))}
+                                  className={`px-2 py-0.5 rounded ${card.imageMode === 'single' || !card.imageMode ? 'bg-pink-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                >
+                                  单图
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!currentImageModel.supportsLayerDecomp}
+                                  onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageMode: 'layer_decomp' } : c))}
+                                  className={`px-2 py-0.5 rounded ${!currentImageModel.supportsLayerDecomp ? 'opacity-30' : card.imageMode === 'layer_decomp' ? 'bg-pink-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                >
+                                  图层拆分 (16层)
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!currentImageModel.supportsSequential}
+                                  onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageMode: 'sequential' } : c))}
+                                  className={`px-2 py-0.5 rounded ${!currentImageModel.supportsSequential ? 'opacity-30' : card.imageMode === 'sequential' ? 'bg-pink-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                >
+                                  连环组图 (15张)
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Format & Watermark */}
+                            <div className="flex items-center justify-between pt-1 border-t border-slate-800 text-[10px]">
+                              <div className="flex gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageFormat: c.imageFormat === 'png' ? 'jpeg' : 'png' } : c))}
+                                  className="px-2 py-0.5 rounded bg-pink-500/10 text-pink-300 border border-pink-500/20 font-mono font-bold"
+                                >
+                                  格式: {card.imageFormat?.toUpperCase()}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, background: c.background === 'transparent' ? 'opaque' : 'transparent' } : c))}
+                                  className={`px-2 py-0.5 rounded border ${card.background === 'transparent' ? 'bg-pink-500/20 text-pink-200 border-pink-500/40' : 'bg-slate-800 text-slate-400 border-slate-700'}`}
+                                >
+                                  {card.background === 'transparent' ? '透明底 (PNG)' : '不透明底'}
+                                </button>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, watermark: !c.watermark } : c))}
+                                className={`px-2 py-0.5 rounded border ${!card.watermark ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'}`}
+                              >
+                                {!card.watermark ? '无水印' : '含水印'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -951,13 +1132,33 @@ export const VariantB_LovartSpatial: React.FC = () => {
                         const val = e.target.value;
                         setCards(prev => prev.map(c => c.id === card.id ? { ...c, prompt: val } : c));
                       }}
-                      className="w-full bg-[#0b0d14] border border-slate-700/70 rounded-xl p-2 text-xs text-slate-200 focus:outline-none focus:border-pink-500 resize-none h-14"
-                      placeholder="生图提示词..."
+                      className="w-full bg-[#0b0d14] border border-slate-700/70 rounded-xl p-2 text-xs text-slate-200 focus:outline-none focus:border-pink-500 resize-none h-14 leading-relaxed"
+                      placeholder="输入画面描述..."
                     />
+
+                    {/* Generate Button */}
+                    <button
+                      type="button"
+                      onClick={() => triggerGenerate(card.id)}
+                      disabled={card.status === 'generating'}
+                      className="w-full py-2 bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-lg shadow-pink-600/25 transition active:scale-98"
+                    >
+                      {card.status === 'generating' ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> 生成中 {card.progress}%
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5" /> 生成 {currentImageModel.name.split(' ')[1]} 图片
+                        </>
+                      )}
+                    </button>
                   </>
                 )}
 
-                {/* 2. VIDEO CARD (COMPACT VISUAL FIRST) */}
+                {/* ========================================================================= */}
+                {/* 2. VIDEO CARD (SEEDANCE 2.5 / MINIMAX FULL PARAM MATRIX)                  */}
+                {/* ========================================================================= */}
                 {card.type === 'video' && (
                   <>
                     {/* Visual Preview */}
@@ -966,7 +1167,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                         <Film className="w-6 h-6 text-indigo-400 mb-1" />
                         <span className="text-xs text-indigo-200 font-semibold">{currentVideoModel.name}</span>
                         <span className="text-[10px] text-slate-400 font-mono mt-0.5">
-                          {card.resolution} • {card.duration}s • {card.ratio} • {card.references?.length ?? 0}张参考
+                          {card.resolution} • {card.duration}s • {card.ratio} • {card.references?.length ?? 0}素材
                         </span>
                       </div>
                       <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded-full bg-black/70 backdrop-blur text-[9px] font-mono font-bold text-indigo-300 border border-indigo-500/30">
@@ -977,40 +1178,38 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Compact Quick Param Bar */}
+                    {/* Compact Quick Summary & Toggle Bar */}
                     <div className="flex items-center justify-between text-xs bg-[#0b0d14] p-1.5 px-2.5 rounded-xl border border-slate-800">
-                      {/* Model & Mode Quick Switch */}
                       <div className="flex items-center gap-1.5">
                         <button
                           type="button"
                           onClick={() => setOpenDropdownCardId(openDropdownCardId === card.id ? null : card.id)}
-                          className="font-semibold text-white flex items-center gap-1 hover:text-indigo-300"
+                          className="font-semibold text-indigo-300 flex items-center gap-1 hover:text-indigo-200 text-[11px]"
                         >
                           {currentVideoModel.name} <ChevronDown className="w-3 h-3 text-slate-400" />
                         </button>
+                        <span className="text-slate-600">•</span>
+                        <span className="font-mono text-[10px] text-slate-300">
+                          {card.resolution} / {card.duration}s / {card.ratio}
+                        </span>
+                        {card.generateAudio && (
+                          <Volume2 className="w-3 h-3 text-emerald-400" title="音频已开启" />
+                        )}
                       </div>
 
-                      {/* Resolution & Duration Quick Pills */}
-                      <div className="flex items-center gap-1">
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300">
-                          {card.resolution}
-                        </span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300">
-                          {card.duration}s
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, showAdvanced: !c.showAdvanced } : c))}
-                          className={`text-[10px] font-medium flex items-center gap-1 px-1.5 py-0.5 rounded transition ${
-                            card.showAdvanced ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white bg-slate-800'
-                          }`}
-                        >
-                          <Settings2 className="w-3 h-3" /> 参数
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, isExpanded: !c.isExpanded } : c))}
+                        className={`text-[10px] font-medium flex items-center gap-1 px-2 py-0.5 rounded-lg border transition ${
+                          card.isExpanded ? 'bg-indigo-600 text-white border-indigo-500' : 'text-slate-400 hover:text-white bg-slate-800/80 border-slate-700'
+                        }`}
+                      >
+                        <Settings2 className="w-3 h-3" />
+                        {card.isExpanded ? '收起配置' : '展开参数'}
+                      </button>
                     </div>
 
-                    {/* Model Dropdown Menu */}
+                    {/* Model Switch Dropdown */}
                     {openDropdownCardId === card.id && (
                       <div className="bg-[#161925] border border-slate-700 rounded-xl p-1.5 shadow-2xl z-30 space-y-1 animate-in fade-in">
                         {VIDEO_MODELS.map(m => (
@@ -1029,82 +1228,215 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Collapsible Advanced Parameters Drawer */}
-                    {card.showAdvanced && (
+                    {/* Expanded Tabbed Parameter Drawer */}
+                    {card.isExpanded && (
                       <div className="bg-[#0b0d14] border border-slate-800 p-2.5 rounded-xl space-y-2 text-xs animate-in fade-in">
-                        {/* Task Mode */}
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400 text-[10px]">模式:</span>
-                          <div className="flex gap-1">
-                            <button
-                              type="button"
-                              onClick={() => setTaskMode(card.id, 'all_modal')}
-                              className={`px-2 py-0.5 rounded text-[10px] ${card.mode === 'all_modal' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
-                            >
-                              全模态多参考
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setTaskMode(card.id, 'first_last_frame')}
-                              className={`px-2 py-0.5 rounded text-[10px] ${card.mode === 'first_last_frame' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
-                            >
-                              首尾帧严格
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setTaskMode(card.id, 'text_to_video')}
-                              className={`px-2 py-0.5 rounded text-[10px] ${card.mode === 'text_to_video' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
-                            >
-                              纯文生
-                            </button>
-                          </div>
+                        {/* Drawer Tabs */}
+                        <div className="flex items-center gap-1 pb-1.5 border-b border-slate-800 text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, activeParamTab: 'specs' } : c))}
+                            className={`px-2 py-0.5 rounded-md font-semibold transition ${
+                              card.activeParamTab === 'specs' || !card.activeParamTab ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            基础规格 (Specs)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, activeParamTab: 'refs' } : c))}
+                            className={`px-2 py-0.5 rounded-md font-semibold transition ${
+                              card.activeParamTab === 'refs' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            素材槽位 ({card.references?.length ?? 0}/{currentVideoModel.maxRefs})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, activeParamTab: 'advanced' } : c))}
+                            className={`px-2 py-0.5 rounded-md font-semibold transition ${
+                              card.activeParamTab === 'advanced' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            高级控制 (Audio/Opt)
+                          </button>
                         </div>
 
-                        {/* Resolution & Duration Matrix */}
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400 text-[10px]">规格:</span>
-                          <div className="flex gap-1 items-center">
-                            {currentVideoModel.resolutions.map(res => (
-                              <button
-                                key={res}
-                                type="button"
-                                onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, resolution: res } : c))}
-                                className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${card.resolution === res ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
-                              >
-                                {res}
-                              </button>
-                            ))}
-                            <div className="w-[1px] h-3 bg-slate-700 mx-0.5" />
-                            {currentVideoModel.durations.map(dur => (
-                              <button
-                                key={dur}
-                                type="button"
-                                onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, duration: dur } : c))}
-                                className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${card.duration === dur ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
-                              >
-                                {dur === -1 ? '自适应' : `${dur}s`}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
+                        {/* TAB 1: SPECS & MATRIX */}
+                        {(card.activeParamTab === 'specs' || !card.activeParamTab) && (
+                          <div className="space-y-2">
+                            {/* Mode */}
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-slate-400">模式:</span>
+                              <div className="flex gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setTaskMode(card.id, 'all_modal')}
+                                  className={`px-2 py-0.5 rounded ${card.mode === 'all_modal' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                >
+                                  全模态多参考
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setTaskMode(card.id, 'first_last_frame')}
+                                  className={`px-2 py-0.5 rounded ${card.mode === 'first_last_frame' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                >
+                                  首尾帧严格
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setTaskMode(card.id, 'text_to_video')}
+                                  className={`px-2 py-0.5 rounded ${card.mode === 'text_to_video' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                >
+                                  纯文生
+                                </button>
+                              </div>
+                            </div>
 
-                        {/* Audio Toggle */}
-                        {currentVideoModel.supportsAudio && (
-                          <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
-                            <span className="text-slate-400 text-[10px]">原生音频:</span>
-                            <button
-                              type="button"
-                              onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, generateAudio: !c.generateAudio } : c))}
-                              className={`px-2 py-0.5 rounded text-[10px] font-medium ${card.generateAudio ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-slate-800 text-slate-500'}`}
-                            >
-                              {card.generateAudio ? '已开启音频' : '静音模式'}
-                            </button>
+                            {/* Resolution */}
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-slate-400">分辨率:</span>
+                              <div className="flex gap-1">
+                                {currentVideoModel.resolutions.map(res => (
+                                  <button
+                                    key={res}
+                                    type="button"
+                                    onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, resolution: res } : c))}
+                                    className={`px-2 py-0.5 rounded font-mono font-bold ${card.resolution === res ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                  >
+                                    {res}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Duration */}
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-slate-400">时长:</span>
+                              <div className="flex gap-1 flex-wrap justify-end">
+                                {currentVideoModel.durations.map(dur => (
+                                  <button
+                                    key={dur}
+                                    type="button"
+                                    onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, duration: dur } : c))}
+                                    className={`px-2 py-0.5 rounded font-mono font-bold ${card.duration === dur ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                  >
+                                    {dur === -1 ? '自适应' : `${dur}s`}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Ratio */}
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-slate-400">画面比例:</span>
+                              <div className="flex gap-1 flex-wrap justify-end">
+                                {card.mode === 'first_last_frame' ? (
+                                  <span className="px-2 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-mono text-[9px]">
+                                    自适应首帧 (adaptive)
+                                  </span>
+                                ) : (
+                                  currentVideoModel.ratios.map(rt => (
+                                    <button
+                                      key={rt}
+                                      type="button"
+                                      onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, ratio: rt } : c))}
+                                      className={`px-1.5 py-0.5 rounded text-[9px] font-mono ${card.ratio === rt ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                    >
+                                      {rt}
+                                    </button>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TAB 2: MULTI-IMAGE REFERENCES */}
+                        {card.activeParamTab === 'refs' && (
+                          <div className="space-y-1.5">
+                            <div className="flex justify-between items-center text-[10px]">
+                              <span className="text-slate-400">已绑定素材列表:</span>
+                              <button
+                                type="button"
+                                onClick={() => setMentionPickerCardId(mentionPickerCardId === card.id ? null : card.id)}
+                                className="text-indigo-400 hover:text-indigo-300 font-medium px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20"
+                              >
+                                + 引入画布图片
+                              </button>
+                            </div>
+
+                            <div className="space-y-1 max-h-32 overflow-y-auto">
+                              {card.references && card.references.length > 0 ? (
+                                card.references.map(ref => (
+                                  <div key={ref.cardId} className="flex items-center justify-between bg-[#141722] border border-slate-800 px-2 py-1 rounded text-[10px]">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-mono font-bold text-pink-400">@图{ref.tagIndex}</span>
+                                      <span className="text-slate-300 truncate max-w-[120px]">{ref.label}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => removeReference(card.id, ref.cardId)}
+                                      className="text-slate-500 hover:text-red-400 ml-2"
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="text-[10px] text-slate-500 text-center py-2">暂未引入参考图片</div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* TAB 3: ADVANCED CONTROLS */}
+                        {card.activeParamTab === 'advanced' && (
+                          <div className="space-y-2 text-[10px]">
+                            {currentVideoModel.supportsAudio && (
+                              <div className="flex justify-between items-center">
+                                <span className="text-slate-400">原生音频生成:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, generateAudio: !c.generateAudio } : c))}
+                                  className={`px-2 py-0.5 rounded border ${card.generateAudio ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'}`}
+                                >
+                                  {card.generateAudio ? '开启自动配音' : '静音模式'}
+                                </button>
+                              </div>
+                            )}
+
+                            {currentVideoModel.supportsMov && (
+                              <div className="flex justify-between items-center">
+                                <span className="text-slate-400">封装格式:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, outputFormat: c.outputFormat === 'mp4' ? 'mov' : 'mp4' } : c))}
+                                  className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 font-mono font-bold"
+                                >
+                                  {card.outputFormat?.toUpperCase()}
+                                </button>
+                              </div>
+                            )}
+
+                            {currentVideoModel.provider === 'minimax' && (
+                              <div className="flex justify-between items-center">
+                                <span className="text-slate-400">Prompt 智能优化器:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, promptOptimizer: !c.promptOptimizer } : c))}
+                                  className={`px-2 py-0.5 rounded border ${card.promptOptimizer ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400 border-slate-700'}`}
+                                >
+                                  {card.promptOptimizer ? '已开启' : '关闭'}
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
                     )}
 
-                    {/* Compact Reference Slots Pill Bar */}
+                    {/* Compact References Pill Strip (Always Visible when not text_to_video) */}
                     {card.mode !== 'text_to_video' && (
                       <div className="flex items-center justify-between bg-[#0b0d14] px-2 py-1 rounded-xl border border-slate-800 text-xs">
                         <div className="flex items-center gap-1.5 flex-wrap min-w-0">
@@ -1121,7 +1453,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => removeReference(card.id, ref.cardId)}
-                                  className="hover:text-red-400"
+                                  className="hover:text-red-400 ml-0.5"
                                 >
                                   ×
                                 </button>
@@ -1142,9 +1474,9 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Mention Picker Dropdown */}
+                    {/* Mention Picker Popover */}
                     {mentionPickerCardId === card.id && (
-                      <div className="bg-[#161925] border border-indigo-500/40 rounded-xl p-1.5 shadow-2xl space-y-1 animate-in fade-in">
+                      <div className="bg-[#161925] border border-indigo-500/40 rounded-xl p-1.5 shadow-2xl z-30 space-y-1 animate-in fade-in">
                         <span className="text-[9px] font-semibold text-slate-400 px-1 block">选择画布生图素材：</span>
                         {availableImageCards.map(img => (
                           <button
