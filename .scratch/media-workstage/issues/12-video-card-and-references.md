@@ -1,9 +1,9 @@
-# 06: 多模态生视频卡片、@Prompt 指代与流光射线
+# 12: 多模态生视频卡片、@Prompt 指代与流光射线
 
 **What to build:**
 在空间无限画布中实装多模态视频生成卡片（支持 Seedance 2.5/2.0 与 MiniMax H3），支持从画布一键引入最多 30 张图片至参考素材池，支持在 Prompt 运镜指令中通过 `@图1`、`@图2` 快捷插入进行角色/首尾帧精准语义指代，动态渲染多射线流光连线与 `@图N` 关系徽章，连接后端视频任务提交、异步轮询与本地视频平滑播放。
 
-**Blocked by:** 02: 火山方舟适配器、异步轮询器与 IPM 控频, 03: MiniMax 适配器与双重下载流转, 04: 前端空间无限画布核心与零漂移光标缩放引擎
+**Blocked by:** 08-ark-adapter-and-poller, 09-minimax-adapter-and-sse, 10-spatial-canvas-core
 
 **Status:** ready-for-agent
 

@@ -1,9 +1,9 @@
-# 03: MiniMax 适配器与双重下载流转
+# 09: MiniMax 适配器与双重下载流转
 
 **What to build:**
 构建 MiniMax 官方海螺视频生成适配器（支持 MiniMax-H3 与 Video-01），实现 `ProviderAdapter` 接口契约，打通 MiniMax 视频生成异步任务提交、状态轮询与双重下载流转（`content.url` 优先 + `GET /v1/files/retrieve` 回退），使系统能够独立调度 MiniMax 视频生成能力并记录精准计费数据。
 
-**Blocked by:** 01: Go 后端底座、SQLite 双表、ProviderAdapter 契约与静态流媒体服务
+**Blocked by:** 07-backend-foundation
 
 **Status:** ready-for-agent
 

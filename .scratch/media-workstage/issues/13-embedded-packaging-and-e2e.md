@@ -1,9 +1,9 @@
-# 07: 前后端单二进制打包内嵌与端到端冒烟验证
+# 13: 前后端单二进制打包内嵌与端到端冒烟验证
 
 **What to build:**
 实现前后端统一构建脚本，利用 Go 1.16+ `//go:embed dist/*` 将前端 Vite 生产产物内嵌至单个 Go 可执行文件中（`media-workstage.exe`），实现跨平台零外部运行时依赖的极简桌面运行体验，并在启动时自动打开默认浏览器，完成端到端生图、多图引用生视频的完整冒烟测试。
 
-**Blocked by:** 05: 生图卡片组件与 Seedream 5.0 多模式联动, 06: 多模态生视频卡片、@Prompt 指代与流光射线
+**Blocked by:** 11-image-card-node, 12-video-card-and-references
 
 **Status:** ready-for-agent
 

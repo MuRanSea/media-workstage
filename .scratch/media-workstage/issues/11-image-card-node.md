@@ -1,9 +1,9 @@
-# 05: 生图卡片组件与 Seedream 5.0 多模式联动
+# 11: 生图卡片组件与 Seedream 5.0 多模式联动
 
 **What to build:**
 在空间无限画布中实装生图卡片组件，完整支持 Seedream 5.0 Pro（1K/1.5K/2K 档位、显式像素输入、图层拆分）与 Seedream 5.0 Lite（2K/3K/4K 档位、连续组图），支持全量参数在折叠抽屉中按需展开，连接后端生图 API 与 SSE 进度流，并将生成的产物或拆解出的图层（1底图+最多16图层）自动展示在卡片视口或在画布上衍生为新的素材卡片。
 
-**Blocked by:** 02: 火山方舟适配器、异步轮询器与 IPM 控频, 04: 前端空间无限画布核心与零漂移光标缩放引擎
+**Blocked by:** 08-ark-adapter-and-poller, 10-spatial-canvas-core
 
 **Status:** ready-for-agent
 

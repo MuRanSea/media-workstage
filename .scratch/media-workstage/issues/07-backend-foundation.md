@@ -1,4 +1,4 @@
-# 01: Go 后端底座、SQLite 双表、ProviderAdapter 契约与静态流媒体服务
+# 07: Go 后端底座、SQLite 双表、ProviderAdapter 契约与静态流媒体服务
 
 **What to build:**
 建立本地后端服务的核心框架，提供基础运行配置、数据库持久化模型自动迁移（`media_tasks` 与 `task_assets`）、核心 `ProviderAdapter` 接口定义与 Fake Adapter 测试桩、统一任务 API / SSE 推流路由骨架、以及支持 RFC 7233 Range 请求的静态资源服务，为后续并行开发方舟适配器、MiniMax 适配器与前端画布提供坚实地基。

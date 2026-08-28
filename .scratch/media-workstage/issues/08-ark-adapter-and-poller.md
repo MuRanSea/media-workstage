@@ -1,9 +1,9 @@
-# 02: 火山方舟适配器、异步轮询器与 IPM 控频
+# 08: 火山方舟适配器、异步轮询器与 IPM 控频
 
 **What to build:**
 构建火山方舟（Volcengine Ark）原生 API 适配器与后台 Goroutine 任务调度器，对接 Seedance 2.5/2.0 视频生成任务与 Seedream 5.0 Pro/Lite 图片生成任务，实现小素材 Base64 自动编码、3种互斥生成模式参数校验、后台智能退避轮询、Seedream 5.0 Pro 图层拆分 17 IPM 预扣与回退风控，并在任务完成后自动将远端视频/图片流式下载至本地 `./assets/` 目录。
 
-**Blocked by:** 01: Go 后端底座、SQLite 双表、ProviderAdapter 契约与静态流媒体服务
+**Blocked by:** 07-backend-foundation
 
 **Status:** ready-for-agent
 
