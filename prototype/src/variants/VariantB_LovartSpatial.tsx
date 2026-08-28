@@ -4,7 +4,7 @@ import {
   ZoomIn, ZoomOut, Film, Trash2, CheckCircle2, Loader2, AtSign, X, Layers,
   ChevronDown, ChevronUp, ExternalLink, HelpCircle, ArrowRight, Volume2, VolumeX,
   Code, Sliders, Monitor, Smartphone, Square, Ratio, Maximize2, Split,
-  LayoutGrid, ImagePlus, Compass, Focus, Settings2, Play, Hash, ToggleLeft, ToggleRight
+  LayoutGrid, ImagePlus, Compass, Focus, Settings2, Play, Hash
 } from 'lucide-react';
 
 export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video';
@@ -134,7 +134,7 @@ const IMAGE_MODELS = [
   }
 ];
 
-// Accurate pixel mapping table from Ark 6.1:103-214
+// Accurate pixel mapping from Ark 6.1:103-214
 const SEEDREAM_PIXEL_MAP: Record<string, Record<string, string>> = {
   '1K': {
     '1:1': '1024x1024',
@@ -212,7 +212,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
       title: '雨夜街道场景',
       tagIndex: 2,
       x: 80,
-      y: 530,
+      y: 520,
       width: 330,
       prompt: '赛博朋克都市雨夜全景，湿漉漉的沥青路面，红蓝霓虹灯招牌倒影，电影级景深',
       model: 'doubao-seedream-5-0-lite-260128',
@@ -257,13 +257,19 @@ export const VariantB_LovartSpatial: React.FC = () => {
   ]);
 
   const [activeTool, setActiveTool] = useState<'select' | 'hand'>('select');
-  const [zoom, setZoom] = useState(0.85);
-  const [pan, setPan] = useState({ x: 60, y: 20 });
+
+  // Unified Atomic Transform State: ensures zero state desynchronization
+  const [transform, setTransform] = useState<{ zoom: number; panX: number; panY: number }>({
+    zoom: 0.85,
+    panX: 60,
+    panY: 20
+  });
+
   const [isPanning, setIsPanning] = useState(false);
   const startPanRef = useRef({ x: 0, y: 0 });
 
-  // Keep track of current mouse position on canvas
-  const mousePosRef = useRef<{ x: number; y: number }>({ x: 500, y: 350 });
+  // Realtime Mouse Pointer tracker on screen
+  const mousePosRef = useRef<{ x: number; y: number }>({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
 
   const [selectedCardId, setSelectedCardId] = useState<string | null>('card-vid-1');
   const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
@@ -275,22 +281,39 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Zoom anchored at precise client coordinates (e.g. current mouse position)
-  const zoomAtPoint = useCallback((targetZoom: number, clientX?: number, clientY?: number) => {
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const anchorX = (clientX !== undefined ? clientX : mousePosRef.current.x) - rect.left;
-    const anchorY = (clientY !== undefined ? clientY : mousePosRef.current.y) - rect.top;
+  // Mathematically exact zoom anchored strictly at cursor position (sX, sY)
+  const zoomAtPoint = useCallback((
+    zoomUpdater: number | ((currentZoom: number) => number),
+    clientX?: number,
+    clientY?: number
+  ) => {
+    setTransform(prev => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      const sX = (clientX !== undefined ? clientX : mousePosRef.current.x) - (rect?.left ?? 0);
+      const sY = (clientY !== undefined ? clientY : mousePosRef.current.y) - (rect?.top ?? 0);
 
-    const clampedZoom = Math.min(2.5, Math.max(0.25, targetZoom));
-    setPan(prevPan => ({
-      x: anchorX - (anchorX - prevPan.x) * (clampedZoom / zoom),
-      y: anchorY - (anchorY - prevPan.y) * (clampedZoom / zoom)
-    }));
-    setZoom(clampedZoom);
-  }, [zoom]);
+      const targetZoom = typeof zoomUpdater === 'function' ? zoomUpdater(prev.zoom) : zoomUpdater;
+      const nextZoom = Math.min(2.5, Math.max(0.25, targetZoom));
 
-  // Fit View
+      if (nextZoom === prev.zoom) return prev;
+
+      // World point in canvas coordinates under the anchor
+      const worldX = (sX - prev.panX) / prev.zoom;
+      const worldY = (sY - prev.panY) / prev.zoom;
+
+      // New pan required to keep world point at the EXACT same screen position
+      const nextPanX = sX - worldX * nextZoom;
+      const nextPanY = sY - worldY * nextZoom;
+
+      return {
+        zoom: nextZoom,
+        panX: nextPanX,
+        panY: nextPanY
+      };
+    });
+  }, []);
+
+  // Fit View (Bounding box auto-fit)
   const fitView = useCallback(() => {
     if (cards.length === 0 || !containerRef.current) return;
     const minX = Math.min(...cards.map(c => c.x));
@@ -307,8 +330,11 @@ export const VariantB_LovartSpatial: React.FC = () => {
     const targetPanX = (containerW - width * targetZoom) / 2 - minX * targetZoom;
     const targetPanY = (containerH - height * targetZoom) / 2 - minY * targetZoom;
 
-    setZoom(targetZoom);
-    setPan({ x: targetPanX, y: targetPanY });
+    setTransform({
+      zoom: targetZoom,
+      panX: targetPanX,
+      panY: targetPanY
+    });
   }, [cards]);
 
   // Focus Selection
@@ -321,8 +347,12 @@ export const VariantB_LovartSpatial: React.FC = () => {
     const targetZoom = 1;
     const targetPanX = containerW / 2 - (target.x + target.width / 2) * targetZoom;
     const targetPanY = containerH / 2 - (target.y + 180) * targetZoom;
-    setZoom(targetZoom);
-    setPan({ x: targetPanX, y: targetPanY });
+
+    setTransform({
+      zoom: targetZoom,
+      panX: targetPanX,
+      panY: targetPanY
+    });
   }, [cards, selectedCardId]);
 
   // Native non-passive Wheel listener (zoom anchored strictly at cursor)
@@ -332,40 +362,29 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
     const handleNativeWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const rect = container.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-
-      // Update cursor reference
       mousePosRef.current = { x: e.clientX, y: e.clientY };
 
       if (e.ctrlKey || e.metaKey) {
         // Trackpad pinch or Ctrl+Wheel zoom
-        const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
-        setZoom(prevZoom => {
-          const newZoom = Math.min(2.5, Math.max(0.25, prevZoom * zoomFactor));
-          setPan(prevPan => ({
-            x: mouseX - (mouseX - prevPan.x) * (newZoom / prevZoom),
-            y: mouseY - (mouseY - prevPan.y) * (newZoom / prevZoom)
-          }));
-          return newZoom;
-        });
+        const factor = e.deltaY < 0 ? 1.08 : 0.92;
+        zoomAtPoint(z => z * factor, e.clientX, e.clientY);
       } else {
-        // Plain wheel / Shift+Wheel for natural pan
+        // Plain wheel / Shift+Wheel for natural canvas pan
         const deltaX = e.shiftKey ? e.deltaY : e.deltaX;
         const deltaY = e.shiftKey ? 0 : e.deltaY;
-        setPan(prev => ({
-          x: prev.x - deltaX,
-          y: prev.y - deltaY
+        setTransform(prev => ({
+          ...prev,
+          panX: prev.panX - deltaX,
+          panY: prev.panY - deltaY
         }));
       }
     };
 
     container.addEventListener('wheel', handleNativeWheel, { passive: false });
     return () => container.removeEventListener('wheel', handleNativeWheel);
-  }, []);
+  }, [zoomAtPoint]);
 
-  // Keyboard Shortcuts (0: Fit View, 1: 100%, + / - Zoom centered on mouse, Space: Hand)
+  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
@@ -376,9 +395,9 @@ export const VariantB_LovartSpatial: React.FC = () => {
       } else if (e.key === '1') {
         zoomAtPoint(1);
       } else if (e.key === '=' || e.key === '+') {
-        zoomAtPoint(zoom * 1.15);
+        zoomAtPoint(z => z * 1.15);
       } else if (e.key === '-') {
-        zoomAtPoint(zoom / 1.15);
+        zoomAtPoint(z => z / 1.15);
       } else if (e.key === 'f' || e.key === 'F') {
         focusSelection();
       } else if (e.key === ' ') {
@@ -396,12 +415,12 @@ export const VariantB_LovartSpatial: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [fitView, focusSelection, zoom, zoomAtPoint]);
+  }, [fitView, focusSelection, zoomAtPoint]);
 
   const handleMouseDownCanvas = (e: React.MouseEvent<HTMLDivElement>) => {
     if (activeTool === 'hand' || e.button === 1 || e.target === e.currentTarget) {
       setIsPanning(true);
-      startPanRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+      startPanRef.current = { x: e.clientX - transform.panX, y: e.clientY - transform.panY };
       setOpenDropdownCardId(null);
       setMentionPickerCardId(null);
     }
@@ -411,13 +430,14 @@ export const VariantB_LovartSpatial: React.FC = () => {
     mousePosRef.current = { x: e.clientX, y: e.clientY };
 
     if (isPanning) {
-      setPan({
-        x: e.clientX - startPanRef.current.x,
-        y: e.clientY - startPanRef.current.y
-      });
+      setTransform(prev => ({
+        ...prev,
+        panX: e.clientX - startPanRef.current.x,
+        panY: e.clientY - startPanRef.current.y
+      }));
     } else if (draggingCardId) {
-      const newX = (e.clientX - pan.x) / zoom - dragOffsetRef.current.x;
-      const newY = (e.clientY - pan.y) / zoom - dragOffsetRef.current.y;
+      const newX = (e.clientX - transform.panX) / transform.zoom - dragOffsetRef.current.x;
+      const newY = (e.clientY - transform.panY) / transform.zoom - dragOffsetRef.current.y;
       setCards(prev => prev.map(c => c.id === draggingCardId ? { ...c, x: newX, y: newY } : c));
     }
   };
@@ -433,8 +453,8 @@ export const VariantB_LovartSpatial: React.FC = () => {
     setSelectedCardId(card.id);
     setDraggingCardId(card.id);
     dragOffsetRef.current = {
-      x: (e.clientX - pan.x) / zoom - card.x,
-      y: (e.clientY - pan.y) / zoom - card.y
+      x: (e.clientX - transform.panX) / transform.zoom - card.x,
+      y: (e.clientY - transform.panY) / transform.zoom - card.y
     };
   };
 
@@ -622,8 +642,8 @@ export const VariantB_LovartSpatial: React.FC = () => {
       type,
       title: type === 'image' ? `原画构思 ${nextIndex}` : `镜头 ${nextIndex}`,
       tagIndex: nextIndex,
-      x: 200 - pan.x / zoom,
-      y: 200 - pan.y / zoom,
+      x: 200 - transform.panX / transform.zoom,
+      y: 200 - transform.panY / transform.zoom,
       width: type === 'video' ? 460 : 330,
       prompt: type === 'image' ? '输入画面主体与氛围描述...' : '输入运镜指令，可使用 @图1 @图2 引用...',
       model: type === 'image' ? 'doubao-seedream-5-0-pro-260628' : 'doubao-seedance-2-5-260628',
@@ -666,13 +686,13 @@ export const VariantB_LovartSpatial: React.FC = () => {
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-bold text-white text-xs">Lovart 媒体工作台 • 全参折叠与光标锚定缩放引擎</span>
+            <span className="font-bold text-white text-xs">Lovart 媒体工作台 • 零漂移光标缩放引擎</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
-              Ark & MiniMax
+              Ark & MiniMax Full Specs
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            以光标为中心自由缩放 • 快捷键 0 全览 / 1 原始大小 / + - 放大缩小 / Space 拖拽 • 丰富参数 Tab 抽屉折叠
+            光标所在绝对坐标定点缩放 • 快捷键 0 全览 / 1 原始大小 / + - 放大缩小 / Space 漫游 • 全量参数折叠抽屉
           </p>
         </div>
       </div>
@@ -734,7 +754,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
         <button
           type="button"
-          onClick={() => zoomAtPoint(zoom / 1.15)}
+          onClick={() => zoomAtPoint(z => z / 1.15)}
           className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition"
           title="以光标为中心缩小 (-)"
         >
@@ -747,12 +767,12 @@ export const VariantB_LovartSpatial: React.FC = () => {
           className="px-2 py-1 hover:bg-slate-800 rounded-lg text-xs font-mono text-slate-300 font-bold min-w-[52px] text-center"
           title="重置为 100% (快捷键 1)"
         >
-          {Math.round(zoom * 100)}%
+          {Math.round(transform.zoom * 100)}%
         </button>
 
         <button
           type="button"
-          onClick={() => zoomAtPoint(zoom * 1.15)}
+          onClick={() => zoomAtPoint(z => z * 1.15)}
           className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition"
           title="以光标为中心放大 (+)"
         >
@@ -764,7 +784,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
       <div
         className="w-full h-full origin-top-left"
         style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transform: `translate(${transform.panX}px, ${transform.panY}px) scale(${transform.zoom})`,
           backgroundImage: 'radial-gradient(circle, #212638 1.2px, transparent 1.2px)',
           backgroundSize: '28px 28px'
         }}
