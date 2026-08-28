@@ -3,10 +3,12 @@ import {
   Sparkles, Video, Image as ImageIcon, Plus, MousePointer, Hand, Move,
   ZoomIn, ZoomOut, Film, Trash2, CheckCircle2, Loader2, AtSign, X, Layers,
   ChevronDown, ExternalLink, HelpCircle, ArrowRight, Volume2, VolumeX,
-  Code, Sliders, Monitor, Smartphone, Square, Ratio, Maximize2
+  Code, Sliders, Monitor, Smartphone, Square, Ratio, Maximize2, Split,
+  LayoutGrid, ImagePlus
 } from 'lucide-react';
 
 export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video';
+export type ImageTaskMode = 'single' | 'layer_decomp' | 'sequential';
 
 export interface ReferenceItem {
   cardId: string;
@@ -36,16 +38,18 @@ export interface SpatialCard {
   outputFormat?: 'mp4' | 'mov';
   promptOptimizer?: boolean;
   references?: ReferenceItem[];
-  // Image specific parameters (Seedream)
+  // Image specific parameters (Seedream 5.0 series)
+  imageMode?: ImageTaskMode;
   sizeMode?: 'tier' | 'custom_pixels';
-  imageTier?: '1K' | '1.5K' | '2K' | 'auto';
-  imageRatioPreset?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '21:9';
+  imageTier?: string; // 1K, 1.5K, 2K, 3K, 4K, auto
+  imageRatioPreset?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '21:9' | '3:2' | '2:3';
   customPixels?: string;
   imageFormat?: 'jpeg' | 'png';
   watermark?: boolean;
+  background?: 'opaque' | 'transparent';
 }
 
-// Available model definitions with their capabilities
+// Available Video Models
 const VIDEO_MODELS = [
   {
     id: 'doubao-seedance-2-5-260628',
@@ -97,7 +101,33 @@ const VIDEO_MODELS = [
   }
 ];
 
-// Documented pixel mapping for Seedream 5.0 Pro (ark/6.1:103-129)
+// Available Image Models (Seedream 5.0 Series per ark/6.1:81-190)
+const IMAGE_MODELS = [
+  {
+    id: 'doubao-seedream-5-0-pro-260628',
+    name: 'Doubao Seedream 5.0 Pro',
+    tag: '2K/图层拆分/交互编辑',
+    defaultTier: '2K',
+    tiers: ['1K', '1.5K', '2K', 'auto'],
+    pixelRangeText: '[92万, 462万像素]',
+    defaultCustomPixel: '2048x1024',
+    supportsLayerDecomp: true,
+    supportsSequential: false
+  },
+  {
+    id: 'doubao-seedream-5-0-lite-260128',
+    name: 'Doubao Seedream 5.0 Lite',
+    tag: '4K超清/连续组图分镜',
+    defaultTier: '2K',
+    tiers: ['2K', '3K', '4K'],
+    pixelRangeText: '[368万, 1677万像素]',
+    defaultCustomPixel: '2048x2048',
+    supportsLayerDecomp: false,
+    supportsSequential: true
+  }
+];
+
+// Pixel mapping reference table directly transcribed from ark/6.1:103-184
 const SEEDREAM_PIXEL_MAP: Record<string, Record<string, string>> = {
   '1K': {
     '1:1': '1024x1024',
@@ -105,6 +135,8 @@ const SEEDREAM_PIXEL_MAP: Record<string, Record<string, string>> = {
     '9:16': '800x1424',
     '4:3': '1152x864',
     '3:4': '864x1152',
+    '3:2': '1248x832',
+    '2:3': '832x1248',
     '21:9': '1568x672'
   },
   '1.5K': {
@@ -113,6 +145,8 @@ const SEEDREAM_PIXEL_MAP: Record<string, Record<string, string>> = {
     '9:16': '1152x2048',
     '4:3': '1792x1344',
     '3:4': '1344x1792',
+    '3:2': '1872x1248',
+    '2:3': '1248x1872',
     '21:9': '2352x1008'
   },
   '2K': {
@@ -121,7 +155,23 @@ const SEEDREAM_PIXEL_MAP: Record<string, Record<string, string>> = {
     '9:16': '1584x2816',
     '4:3': '2368x1776',
     '3:4': '1776x2368',
-    '21:9': '2352x1008'
+    '3:2': '2496x1664',
+    '2:3': '1664x2496',
+    '21:9': '3136x1344'
+  },
+  '3K': {
+    '1:1': '3072x3072',
+    '16:9': '3840x2160',
+    '9:16': '2160x3840',
+    '4:3': '3456x2592',
+    '3:4': '2592x3456'
+  },
+  '4K': {
+    '1:1': '4096x4096',
+    '16:9': '4096x2304',
+    '9:16': '2304x4096',
+    '4:3': '4096x3072',
+    '3:4': '3072x4096'
   }
 };
 
@@ -130,15 +180,16 @@ export const VariantB_LovartSpatial: React.FC = () => {
     {
       id: 'card-img-1',
       type: 'image',
-      title: '赛博机甲少女角色原画',
+      title: '赛博机甲少女设定',
       tagIndex: 1,
       x: 50,
       y: 120,
-      width: 350,
+      width: 360,
       prompt: '特写肖像，银发机甲少女，深邃眼眸，精细金属质感外骨骼，Vogue 杂志风格光影',
-      model: 'doubao-seedream-5-0-pro',
+      model: 'doubao-seedream-5-0-pro-260628',
       status: 'done',
       progress: 100,
+      imageMode: 'single',
       sizeMode: 'tier',
       imageTier: '2K',
       imageRatioPreset: '16:9',
@@ -152,13 +203,14 @@ export const VariantB_LovartSpatial: React.FC = () => {
       tagIndex: 2,
       x: 50,
       y: 530,
-      width: 350,
+      width: 360,
       prompt: '赛博朋克都市雨夜全景，湿漉漉的沥青路面，红蓝霓虹灯招牌倒影，电影级景深',
-      model: 'doubao-seedream-5-0-pro',
+      model: 'doubao-seedream-5-0-lite-260128',
       status: 'done',
       progress: 100,
+      imageMode: 'single',
       sizeMode: 'tier',
-      imageTier: '2K',
+      imageTier: '4K',
       imageRatioPreset: '16:9',
       imageFormat: 'jpeg',
       watermark: false
@@ -256,7 +308,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
     }, 500);
   };
 
-  const selectModel = (cardId: string, modelId: string) => {
+  const selectVideoModel = (cardId: string, modelId: string) => {
     const modelDef = VIDEO_MODELS.find(m => m.id === modelId);
     setCards(prev => prev.map(c => {
       if (c.id !== cardId) return c;
@@ -266,6 +318,21 @@ export const VariantB_LovartSpatial: React.FC = () => {
         resolution: modelDef?.resolutions[0] ?? '720p',
         duration: modelDef?.durations[0] ?? 5,
         ratio: modelDef?.ratios[0] ?? '16:9'
+      };
+    }));
+    setOpenModelDropdownId(null);
+  };
+
+  const selectImageModel = (cardId: string, modelId: string) => {
+    const modelDef = IMAGE_MODELS.find(m => m.id === modelId);
+    setCards(prev => prev.map(c => {
+      if (c.id !== cardId) return c;
+      return {
+        ...c,
+        model: modelId,
+        imageTier: modelDef?.defaultTier ?? '2K',
+        customPixels: modelDef?.defaultCustomPixel ?? '2048x2048',
+        imageMode: 'single'
       };
     }));
     setOpenModelDropdownId(null);
@@ -281,14 +348,12 @@ export const VariantB_LovartSpatial: React.FC = () => {
       if (newMode === 'text_to_video') {
         newRefs = [];
       } else if (newMode === 'first_last_frame') {
-        // Enforce max 2 refs, first as first_frame, second as last_frame; ratio is locked to adaptive in first_last_frame
         newRefs = newRefs.slice(0, 2).map((r, idx) => ({
           ...r,
           role: idx === 0 ? 'first_frame' : 'last_frame'
         }));
         newRatio = 'adaptive';
       } else if (newMode === 'all_modal') {
-        // In all_modal mode, all inputs are role=reference_image (frame roles specified via prompt @)
         newRefs = newRefs.map(r => ({ ...r, role: 'reference_image' }));
       }
       return {
@@ -352,7 +417,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
   const availableImageCards = cards.filter(c => c.type === 'image');
 
-  // Compute compiled payload (demonstrating Ark official prompt serialization)
+  // Compute compiled payload
   const getCompiledJsonPayload = (card: SpatialCard) => {
     if (card.type === 'video') {
       const isMiniMax = card.model.includes('MiniMax') || card.model.includes('video-01');
@@ -367,7 +432,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
           prompt_optimizer: card.promptOptimizer
         };
       } else {
-        // Ark Payload with remapped bare 图1/图2 as per ark-guide/2.4.2
         const contentItems: any[] = [
           { type: 'text', text: card.prompt.replace(/@图/g, '图') }
         ];
@@ -389,7 +453,9 @@ export const VariantB_LovartSpatial: React.FC = () => {
         };
       }
     }
-    // Image Payload (Ark Seedream 5.0 pro / ark/6.1:81-130)
+    // Image Payload (Ark Seedream 5.0 Series)
+    const isLayerDecomp = card.imageMode === 'layer_decomp';
+    const isSequential = card.imageMode === 'sequential';
     const finalSize = card.sizeMode === 'custom_pixels'
       ? (card.customPixels || '2048x1024')
       : (card.imageTier ?? '2K');
@@ -397,10 +463,12 @@ export const VariantB_LovartSpatial: React.FC = () => {
     return {
       model: card.model,
       prompt: card.prompt,
-      size: finalSize,
+      size: isLayerDecomp ? 'auto' : finalSize,
       response_format: 'url',
       output_format: card.imageFormat,
-      watermark: card.watermark
+      watermark: card.watermark,
+      layer_decomposition: isLayerDecomp,
+      sequential_image_generation: isSequential ? 'auto' : 'disabled'
     };
   };
 
@@ -413,9 +481,9 @@ export const VariantB_LovartSpatial: React.FC = () => {
       tagIndex: nextIndex,
       x: 180 - pan.x,
       y: 180 - pan.y,
-      width: type === 'video' ? 480 : 350,
+      width: type === 'video' ? 480 : 360,
       prompt: type === 'image' ? '输入生图描述...' : '输入运镜指令，可通过 @图1 @图2 指代首帧或主体...',
-      model: type === 'image' ? 'doubao-seedream-5-0-pro' : 'doubao-seedance-2-5-260628',
+      model: type === 'image' ? 'doubao-seedream-5-0-pro-260628' : 'doubao-seedance-2-5-260628',
       status: 'idle',
       progress: 0,
       mode: 'all_modal',
@@ -425,6 +493,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
       generateAudio: true,
       outputFormat: 'mp4',
       promptOptimizer: true,
+      imageMode: 'single',
       sizeMode: 'tier',
       imageTier: '2K',
       imageRatioPreset: '16:9',
@@ -449,13 +518,13 @@ export const VariantB_LovartSpatial: React.FC = () => {
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-bold text-white text-xs">Lovart 媒体工作台 • 完整参数与模型矩阵控制台</span>
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-medium font-mono">
-              Ark & MiniMax Specs
+            <span className="font-bold text-white text-xs">Lovart 媒体工作台 • Seedream 5.0 & Seedance 2.5 原生控制台</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300 font-medium font-mono">
+              Seedream 5.0 Pro & Lite
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            生图 Size（方式1 档位 1K/1.5K/2K + 方式2 显式像素不可混用）• 生视频全参数矩阵
+            生图支持 5.0 Pro (1K/1.5K/2K + 图层拆分) 与 5.0 Lite (2K/3K/4K + 连续组图) • 独立模型动态参数矩阵
           </p>
         </div>
       </div>
@@ -554,12 +623,13 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
         {/* Spatial Cards */}
         {cards.map(card => {
-          const currentModelDef = VIDEO_MODELS.find(m => m.id === card.model) ?? VIDEO_MODELS[0];
+          const currentVideoModelDef = VIDEO_MODELS.find(m => m.id === card.model) ?? VIDEO_MODELS[0];
+          const currentImageModelDef = IMAGE_MODELS.find(m => m.id === card.model) ?? IMAGE_MODELS[0];
 
-          // Compute mapped pixel info for Seedream 5.0
-          const currentMappedPixels = card.imageRatioPreset && card.imageTier && SEEDREAM_PIXEL_MAP[card.imageTier]?.[card.imageRatioPreset]
-            ? SEEDREAM_PIXEL_MAP[card.imageTier][card.imageRatioPreset]
-            : '2048x2048';
+          // Compute mapped pixel info for Seedream
+          const currentTier = card.imageTier ?? currentImageModelDef.defaultTier;
+          const currentRatio = card.imageRatioPreset ?? '16:9';
+          const mappedPixels = SEEDREAM_PIXEL_MAP[currentTier]?.[currentRatio] ?? '由模型自动判断';
 
           return (
             <div
@@ -616,27 +686,100 @@ export const VariantB_LovartSpatial: React.FC = () => {
               {/* Card Body */}
               <div className="p-4 space-y-3.5">
                 {/* ========================================================================= */}
-                {/* 1. IMAGE CARD BODY (SEEDREAM 5.0 PRO / ARK 6.1:81-130 SPEC)               */}
+                {/* 1. IMAGE CARD BODY (SEEDREAM 5.0 SERIES / ARK 6.1:81-190 SPEC)            */}
                 {/* ========================================================================= */}
                 {card.type === 'image' && (
                   <>
-                    <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-black aspect-video flex items-center justify-center">
-                      <div className="w-full h-full bg-gradient-to-br from-indigo-950 via-purple-950 to-pink-950 flex flex-col items-center justify-center p-4 text-center">
-                        <ImageIcon className="w-8 h-8 text-pink-400/80 mb-2" />
-                        <span className="text-xs text-pink-200 font-medium">Doubao Seedream 5.0 Pro</span>
-                        <span className="text-[10px] text-slate-400 mt-1">
-                          {card.sizeMode === 'tier' ? `${card.imageTier} (${currentMappedPixels})` : `自定义 ${card.customPixels}`}
-                        </span>
-                      </div>
-                      <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur text-[10px] font-mono font-bold text-pink-300 border border-pink-500/30">
-                        @图{card.tagIndex}
-                      </div>
-                      <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur text-[10px] text-emerald-400 flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" /> 就绪
+                    {/* Image Model Custom Dark Dropdown */}
+                    <div className="relative">
+                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">生图模型引擎 (Seedream 5.0 系列)</label>
+                      <button
+                        type="button"
+                        onClick={() => setOpenModelDropdownId(openModelDropdownId === card.id ? null : card.id)}
+                        className="w-full flex items-center justify-between bg-[#0e1017] hover:bg-[#12151f] border border-slate-700/90 rounded-xl px-3 py-2 text-xs text-white transition focus:outline-none focus:border-pink-500"
+                      >
+                        <div className="flex items-center gap-2">
+                          <ImageIcon className="w-4 h-4 text-pink-400" />
+                          <span className="font-semibold">{currentImageModelDef.name}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-300 font-medium">
+                            {currentImageModelDef.tag}
+                          </span>
+                        </div>
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      </button>
+
+                      {/* Custom Dark Dropdown Popover */}
+                      {openModelDropdownId === card.id && (
+                        <div className="absolute top-full left-0 right-0 mt-1.5 bg-[#171a26] border border-slate-700 rounded-xl p-1.5 shadow-2xl z-30 space-y-1 animate-in fade-in">
+                          {IMAGE_MODELS.map(m => (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() => selectImageModel(card.id, m.id)}
+                              className={`w-full text-left px-3 py-2 rounded-lg flex items-center justify-between text-xs transition ${
+                                card.model === m.id ? 'bg-pink-600 text-white font-bold' : 'hover:bg-slate-800 text-slate-200'
+                              }`}
+                            >
+                              <div>
+                                <span>{m.name}</span>
+                                <span className="text-[10px] ml-2 px-1.5 py-0.5 rounded bg-slate-800 text-pink-300">
+                                  {m.tiers.join('/')}
+                                </span>
+                              </div>
+                              <span className="text-[10px] opacity-80">{m.tag}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Image Task Mode Switcher (Model Gated) */}
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">生图模式 (Task Mode)</label>
+                      <div className="grid grid-cols-3 gap-1 bg-[#0e1017] p-1 rounded-xl border border-slate-800 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageMode: 'single' } : c))}
+                          className={`py-1.5 rounded-lg font-medium transition ${
+                            card.imageMode === 'single' || !card.imageMode ? 'bg-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          单图生成
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!currentImageModelDef.supportsLayerDecomp}
+                          onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageMode: 'layer_decomp' } : c))}
+                          className={`py-1.5 rounded-lg font-medium transition ${
+                            !currentImageModelDef.supportsLayerDecomp
+                              ? 'opacity-30 cursor-not-allowed text-slate-500'
+                              : card.imageMode === 'layer_decomp'
+                              ? 'bg-pink-600 text-white shadow-md'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                          title={currentImageModelDef.supportsLayerDecomp ? '拆解为1张底图+最多16个图层' : '仅 5.0 Pro 支持图层拆分'}
+                        >
+                          图层拆分 (Pro)
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!currentImageModelDef.supportsSequential}
+                          onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageMode: 'sequential' } : c))}
+                          className={`py-1.5 rounded-lg font-medium transition ${
+                            !currentImageModelDef.supportsSequential
+                              ? 'opacity-30 cursor-not-allowed text-slate-500'
+                              : card.imageMode === 'sequential'
+                              ? 'bg-pink-600 text-white shadow-md'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                          title={currentImageModelDef.supportsSequential ? '生成最多15张连贯分镜组图' : '仅 5.0 Lite 支持连续组图'}
+                        >
+                          连续组图 (Lite)
+                        </button>
                       </div>
                     </div>
 
-                    {/* Ark 6.1 Size Specification Mode Switcher (方式1 vs 方式2 不可混用) */}
+                    {/* Ark 6.1 Size Controls (Mutually Exclusive: 方式1 档位 vs 方式2 显式像素) */}
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="text-[11px] font-semibold text-slate-300">尺寸配置方式 (ark/6.1 规范)</label>
@@ -651,11 +794,11 @@ export const VariantB_LovartSpatial: React.FC = () => {
                             card.sizeMode === 'tier' || !card.sizeMode ? 'bg-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
                           }`}
                         >
-                          方式1: 档位预设 (推荐)
+                          方式1: 档位预设 ({currentImageModelDef.tiers.join('/')})
                         </button>
                         <button
                           type="button"
-                          onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, sizeMode: 'custom_pixels', customPixels: c.customPixels || '2048x1024' } : c))}
+                          onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, sizeMode: 'custom_pixels', customPixels: c.customPixels || currentImageModelDef.defaultCustomPixel } : c))}
                           className={`py-1.5 rounded-lg font-medium transition ${
                             card.sizeMode === 'custom_pixels' ? 'bg-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
                           }`}
@@ -665,7 +808,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Size Controls Sub-panel */}
+                    {/* Size Parameters Sub-panel */}
                     <div className="bg-[#0e1017] border border-slate-800 p-3 rounded-2xl space-y-2.5">
                       {/* Method 1: Tier Selection + Ratio Mapping */}
                       {(card.sizeMode === 'tier' || !card.sizeMode) ? (
@@ -675,13 +818,13 @@ export const VariantB_LovartSpatial: React.FC = () => {
                               <Monitor className="w-3.5 h-3.5 text-pink-400" /> 分辨率档位 (Size):
                             </span>
                             <div className="flex items-center gap-1">
-                              {(['1K', '1.5K', '2K'] as const).map(tr => (
+                              {currentImageModelDef.tiers.map(tr => (
                                 <button
                                   key={tr}
                                   type="button"
                                   onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageTier: tr } : c))}
                                   className={`px-2 py-0.5 rounded-lg font-mono text-[11px] font-bold transition ${
-                                    card.imageTier === tr ? 'bg-pink-600 text-white shadow-md' : 'bg-[#181a24] text-slate-400 hover:text-slate-200'
+                                    currentTier === tr ? 'bg-pink-600 text-white shadow-md' : 'bg-[#181a24] text-slate-400 hover:text-slate-200'
                                   }`}
                                 >
                                   {tr}
@@ -693,15 +836,15 @@ export const VariantB_LovartSpatial: React.FC = () => {
                           <div className="space-y-1">
                             <div className="flex items-center justify-between text-xs">
                               <span className="text-slate-400 text-[11px] flex items-center gap-1">
-                                <Ratio className="w-3.5 h-3.5 text-pink-400" /> 宽高比 (映射像素):
+                                <Ratio className="w-3.5 h-3.5 text-pink-400" /> 常见宽高比与像素映射:
                               </span>
                               <span className="font-mono text-[11px] text-pink-300 font-bold">
-                                {currentMappedPixels}
+                                {mappedPixels}
                               </span>
                             </div>
 
-                            <div className="grid grid-cols-6 gap-1 text-[10px] font-mono">
-                              {(['1:1', '16:9', '9:16', '4:3', '3:4', '21:9'] as const).map(rt => (
+                            <div className="grid grid-cols-4 gap-1 text-[10px] font-mono">
+                              {(['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9'] as const).map(rt => (
                                 <button
                                   key={rt}
                                   type="button"
@@ -723,17 +866,17 @@ export const VariantB_LovartSpatial: React.FC = () => {
                         <div className="space-y-1.5">
                           <div className="flex items-center justify-between text-xs">
                             <span className="text-slate-400 text-[11px]">显式宽高像素 (宽x高):</span>
-                            <span className="font-mono text-[10px] text-slate-500">区间 [92万, 462万像素]</span>
+                            <span className="font-mono text-[10px] text-slate-500">{currentImageModelDef.pixelRangeText}</span>
                           </div>
                           <input
                             type="text"
-                            value={card.customPixels ?? '2048x1024'}
+                            value={card.customPixels ?? currentImageModelDef.defaultCustomPixel}
                             onChange={e => {
                               const val = e.target.value;
                               setCards(prev => prev.map(c => c.id === card.id ? { ...c, customPixels: val } : c));
                             }}
                             className="w-full bg-[#181a24] border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-pink-300 focus:outline-none focus:border-pink-500"
-                            placeholder="例如 2048x1024, 2368x1776, 1424x800"
+                            placeholder="例如 2048x1024, 2816x1584"
                           />
                         </div>
                       )}
@@ -757,6 +900,23 @@ export const VariantB_LovartSpatial: React.FC = () => {
                         >
                           {!card.watermark ? '无水印' : '含水印'}
                         </button>
+                      </div>
+                    </div>
+
+                    {/* Image Preview Canvas */}
+                    <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-black aspect-video flex items-center justify-center">
+                      <div className="w-full h-full bg-gradient-to-br from-indigo-950 via-purple-950 to-pink-950 flex flex-col items-center justify-center p-4 text-center">
+                        <ImageIcon className="w-8 h-8 text-pink-400/80 mb-2" />
+                        <span className="text-xs text-pink-200 font-semibold">{currentImageModelDef.name}</span>
+                        <span className="text-[10px] text-slate-400 mt-1">
+                          {card.sizeMode === 'custom_pixels' ? card.customPixels : `${currentTier} • ${mappedPixels}`}
+                        </span>
+                      </div>
+                      <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur text-[10px] font-mono font-bold text-pink-300 border border-pink-500/30">
+                        @图{card.tagIndex}
+                      </div>
+                      <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur text-[10px] text-emerald-400 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> 就绪
                       </div>
                     </div>
 
@@ -790,9 +950,9 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       >
                         <div className="flex items-center gap-2">
                           <Film className="w-4 h-4 text-indigo-400" />
-                          <span className="font-semibold">{currentModelDef.name}</span>
+                          <span className="font-semibold">{currentVideoModelDef.name}</span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-medium">
-                            {currentModelDef.tag}
+                            {currentVideoModelDef.tag}
                           </span>
                         </div>
                         <ChevronDown className="w-4 h-4 text-slate-400" />
@@ -805,7 +965,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                             <button
                               key={m.id}
                               type="button"
-                              onClick={() => selectModel(card.id, m.id)}
+                              onClick={() => selectVideoModel(card.id, m.id)}
                               className={`w-full text-left px-3 py-2 rounded-lg flex items-center justify-between text-xs transition ${
                                 card.model === m.id ? 'bg-indigo-600 text-white font-bold' : 'hover:bg-slate-800 text-slate-200'
                               }`}
@@ -865,7 +1025,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                           <Monitor className="w-3.5 h-3.5 text-indigo-400" /> 分辨率 (Resolution):
                         </span>
                         <div className="flex items-center gap-1">
-                          {currentModelDef.resolutions.map(res => (
+                          {currentVideoModelDef.resolutions.map(res => (
                             <button
                               key={res}
                               type="button"
@@ -886,7 +1046,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                           <Sliders className="w-3.5 h-3.5 text-indigo-400" /> 视频时长 (Duration):
                         </span>
                         <div className="flex items-center gap-1 flex-wrap justify-end">
-                          {currentModelDef.durations.map(dur => (
+                          {currentVideoModelDef.durations.map(dur => (
                             <button
                               key={dur}
                               type="button"
@@ -912,7 +1072,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                               自适应首帧 (adaptive)
                             </span>
                           ) : (
-                            currentModelDef.ratios.map(rt => (
+                            currentVideoModelDef.ratios.map(rt => (
                               <button
                                 key={rt}
                                 type="button"
@@ -930,7 +1090,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
                       {/* Audio & Format Toggles */}
                       <div className="flex items-center justify-between pt-1 border-t border-slate-800/80 text-xs">
-                        {currentModelDef.supportsAudio && (
+                        {currentVideoModelDef.supportsAudio && (
                           <button
                             type="button"
                             onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, generateAudio: !c.generateAudio } : c))}
@@ -943,7 +1103,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                           </button>
                         )}
 
-                        {currentModelDef.supportsMov && (
+                        {currentVideoModelDef.supportsMov && (
                           <button
                             type="button"
                             onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, outputFormat: c.outputFormat === 'mp4' ? 'mov' : 'mp4' } : c))}
@@ -962,7 +1122,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                           <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
                             <Layers className="w-3.5 h-3.5 text-indigo-400" />
                             {card.mode === 'all_modal'
-                              ? `全模态参考素材池 (${card.references?.length ?? 0}/${currentModelDef.maxRefs})`
+                              ? `全模态参考素材池 (${card.references?.length ?? 0}/${currentVideoModelDef.maxRefs})`
                               : `首尾帧素材 (${card.references?.length ?? 0}/2)`}
                           </span>
                           <button
@@ -1085,7 +1245,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                         <div className="flex justify-between text-[11px] text-slate-400">
                           <span className="flex items-center gap-1.5">
                             <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-400" />
-                            {currentModelDef.provider === 'ark' ? '火山方舟' : 'MiniMax'} 异步渲染中...
+                            {currentVideoModelDef.provider === 'ark' ? '火山方舟' : 'MiniMax'} 异步渲染中...
                           </span>
                           <span className="font-mono">{card.progress}%</span>
                         </div>
@@ -1115,7 +1275,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                         disabled={card.status === 'generating'}
                         className="w-full py-2.5 bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition active:scale-98"
                       >
-                        <Sparkles className="w-4 h-4" /> 提交 {currentModelDef.name} 视频生成
+                        <Sparkles className="w-4 h-4" /> 提交 {currentVideoModelDef.name} 视频生成
                       </button>
                     )}
                   </>
