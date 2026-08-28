@@ -16,20 +16,20 @@ interface PrototypeSwitcherProps {
 export const VARIANTS: VariantInfo[] = [
   {
     key: 'A',
-    name: 'React Flow 显式节点连线 (Graph Pipeline)',
+    name: 'React Flow 节点连线 (Graph Pipeline)',
     desc: '结构化 DAG，显式端口与连线流转，适合精确控制多步生成管道',
     icon: <Layers className="w-4 h-4 text-indigo-400" />
   },
   {
     key: 'B',
-    name: 'Lovart 无限自由空间 (Spatial Canvas)',
-    desc: '自由卡片漫游、磁吸框分组、拖拽直连参考，极简且手感流畅',
+    name: '空间无限画布 (Spatial Canvas)',
+    desc: '自由卡片漫游、全参折叠抽屉、零漂移光标定点缩放、多图流光关联',
     icon: <Sparkles className="w-4 h-4 text-emerald-400" />
   },
   {
     key: 'C',
-    name: '混合故事板与时间轴 (Storyboard Hybrid)',
-    desc: '中央自由画布 + 底部时间轴/分镜托盘 + 悬浮生成控制台',
+    name: '分镜故事板与时间轴 (Storyboard Hybrid)',
+    desc: '中央大屏舞台 + 底部镜头连续时间轴 + 右侧精细控制台',
     icon: <Film className="w-4 h-4 text-amber-400" />
   }
 ];

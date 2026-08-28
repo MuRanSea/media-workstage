@@ -1,18 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { PrototypeSwitcher } from './components/PrototypeSwitcher';
 import { VariantA_ReactFlow } from './variants/VariantA_ReactFlow';
-import { VariantB_LovartSpatial } from './variants/VariantB_LovartSpatial';
+import { VariantB_SpatialCanvas } from './variants/VariantB_SpatialCanvas';
 import { VariantC_StoryboardHybrid } from './variants/VariantC_StoryboardHybrid';
 
 export const App: React.FC = () => {
-  // Sync with ?variant= URL parameter
   const getInitialVariant = (): string => {
     const params = new URLSearchParams(window.location.search);
     const v = params.get('variant')?.toUpperCase();
     if (v === 'A' || v === 'B' || v === 'C') {
       return v;
     }
-    return 'B'; // Default to B (Lovart Spatial) as recommended baseline
+    return 'B';
   };
 
   const [variant, setVariant] = useState<string>(getInitialVariant);
@@ -40,7 +39,7 @@ export const App: React.FC = () => {
     <div className="w-screen h-screen overflow-hidden relative flex flex-col">
       <main className="flex-1 w-full h-full relative">
         {variant === 'A' && <VariantA_ReactFlow />}
-        {variant === 'B' && <VariantB_LovartSpatial />}
+        {variant === 'B' && <VariantB_SpatialCanvas />}
         {variant === 'C' && <VariantC_StoryboardHybrid />}
       </main>
 

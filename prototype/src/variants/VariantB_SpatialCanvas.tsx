@@ -134,7 +134,6 @@ const IMAGE_MODELS = [
   }
 ];
 
-// Accurate pixel mapping from Ark 6.1:103-214
 const SEEDREAM_PIXEL_MAP: Record<string, Record<string, string>> = {
   '1K': {
     '1:1': '1024x1024',
@@ -182,7 +181,7 @@ const SEEDREAM_PIXEL_MAP: Record<string, Record<string, string>> = {
   }
 };
 
-export const VariantB_LovartSpatial: React.FC = () => {
+export const VariantB_SpatialCanvas: React.FC = () => {
   const [cards, setCards] = useState<SpatialCard[]>([
     {
       id: 'card-img-1',
@@ -258,7 +257,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
   const [activeTool, setActiveTool] = useState<'select' | 'hand'>('select');
 
-  // Unified Atomic Transform State: ensures zero state desynchronization
   const [transform, setTransform] = useState<{ zoom: number; panX: number; panY: number }>({
     zoom: 0.85,
     panX: 60,
@@ -267,8 +265,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
   const [isPanning, setIsPanning] = useState(false);
   const startPanRef = useRef({ x: 0, y: 0 });
-
-  // Realtime Mouse Pointer tracker on screen
   const mousePosRef = useRef<{ x: number; y: number }>({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
 
   const [selectedCardId, setSelectedCardId] = useState<string | null>('card-vid-1');
@@ -281,7 +277,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Mathematically exact zoom anchored strictly at cursor position (sX, sY)
   const zoomAtPoint = useCallback((
     zoomUpdater: number | ((currentZoom: number) => number),
     clientX?: number,
@@ -297,11 +292,9 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
       if (nextZoom === prev.zoom) return prev;
 
-      // World point in canvas coordinates under the anchor
       const worldX = (sX - prev.panX) / prev.zoom;
       const worldY = (sY - prev.panY) / prev.zoom;
 
-      // New pan required to keep world point at the EXACT same screen position
       const nextPanX = sX - worldX * nextZoom;
       const nextPanY = sY - worldY * nextZoom;
 
@@ -313,7 +306,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
     });
   }, []);
 
-  // Fit View (Bounding box auto-fit)
   const fitView = useCallback(() => {
     if (cards.length === 0 || !containerRef.current) return;
     const minX = Math.min(...cards.map(c => c.x));
@@ -337,7 +329,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
     });
   }, [cards]);
 
-  // Focus Selection
   const focusSelection = useCallback((cardId?: string) => {
     const id = cardId ?? selectedCardId;
     const target = cards.find(c => c.id === id);
@@ -355,7 +346,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
     });
   }, [cards, selectedCardId]);
 
-  // Native non-passive Wheel listener (zoom anchored strictly at cursor)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -365,11 +355,9 @@ export const VariantB_LovartSpatial: React.FC = () => {
       mousePosRef.current = { x: e.clientX, y: e.clientY };
 
       if (e.ctrlKey || e.metaKey) {
-        // Trackpad pinch or Ctrl+Wheel zoom
         const factor = e.deltaY < 0 ? 1.08 : 0.92;
         zoomAtPoint(z => z * factor, e.clientX, e.clientY);
       } else {
-        // Plain wheel / Shift+Wheel for natural canvas pan
         const deltaX = e.shiftKey ? e.deltaY : e.deltaX;
         const deltaY = e.shiftKey ? 0 : e.deltaY;
         setTransform(prev => ({
@@ -384,7 +372,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
     return () => container.removeEventListener('wheel', handleNativeWheel);
   }, [zoomAtPoint]);
 
-  // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
@@ -686,7 +673,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <span className="font-bold text-white text-xs">Lovart 媒体工作台 • 零漂移光标缩放引擎</span>
+            <span className="font-bold text-white text-xs">媒体工作台 • 零漂移光标缩放引擎</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
               Ark & MiniMax Full Specs
             </span>
@@ -903,12 +890,9 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
               {/* Card Body */}
               <div className="p-3 space-y-2.5">
-                {/* ========================================================================= */}
-                {/* 1. IMAGE CARD (SEEDREAM 5.0 PRO / LITE)                                   */}
-                {/* ========================================================================= */}
+                {/* 1. IMAGE CARD */}
                 {card.type === 'image' && (
                   <>
-                    {/* Visual Preview */}
                     <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-black aspect-video flex items-center justify-center group">
                       <div className="w-full h-full bg-gradient-to-br from-indigo-950 via-purple-950 to-pink-950 flex flex-col items-center justify-center p-3 text-center">
                         <ImageIcon className="w-6 h-6 text-pink-400/80 mb-1" />
@@ -925,7 +909,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Compact Quick Summary & Toggle Bar */}
                     <div className="flex items-center justify-between text-xs bg-[#0b0d14] p-1.5 px-2.5 rounded-xl border border-slate-800">
                       <div className="flex items-center gap-1.5">
                         <button
@@ -953,7 +936,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </button>
                     </div>
 
-                    {/* Model Switch Dropdown */}
                     {openDropdownCardId === card.id && (
                       <div className="bg-[#161925] border border-slate-700 rounded-xl p-1.5 shadow-2xl z-30 space-y-1 animate-in fade-in">
                         {IMAGE_MODELS.map(m => (
@@ -972,10 +954,8 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Expanded Tabbed Parameter Drawer */}
                     {card.isExpanded && (
                       <div className="bg-[#0b0d14] border border-slate-800 p-2.5 rounded-xl space-y-2 text-xs animate-in fade-in">
-                        {/* Drawer Tabs */}
                         <div className="flex items-center gap-1 pb-1.5 border-b border-slate-800 text-[10px]">
                           <button
                             type="button"
@@ -997,10 +977,8 @@ export const VariantB_LovartSpatial: React.FC = () => {
                           </button>
                         </div>
 
-                        {/* TAB 1: SIZE SPECIFICATIONS */}
                         {(card.activeParamTab === 'specs' || !card.activeParamTab) && (
                           <div className="space-y-2">
-                            {/* Method Switcher */}
                             <div className="grid grid-cols-2 gap-1 bg-[#12141e] p-1 rounded-lg border border-slate-800 text-[10px]">
                               <button
                                 type="button"
@@ -1080,10 +1058,8 @@ export const VariantB_LovartSpatial: React.FC = () => {
                           </div>
                         )}
 
-                        {/* TAB 2: ADVANCED MODE & OUTPUT */}
                         {card.activeParamTab === 'advanced' && (
                           <div className="space-y-2">
-                            {/* Mode Selection */}
                             <div className="flex items-center justify-between text-[10px]">
                               <span className="text-slate-400">模式:</span>
                               <div className="flex gap-1">
@@ -1113,7 +1089,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                               </div>
                             </div>
 
-                            {/* Format & Watermark */}
                             <div className="flex items-center justify-between pt-1 border-t border-slate-800 text-[10px]">
                               <div className="flex gap-1.5">
                                 <button
@@ -1145,7 +1120,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Prompt Textarea */}
                     <textarea
                       value={card.prompt}
                       onChange={e => {
@@ -1156,7 +1130,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       placeholder="输入画面描述..."
                     />
 
-                    {/* Generate Button */}
                     <button
                       type="button"
                       onClick={() => triggerGenerate(card.id)}
@@ -1177,11 +1150,10 @@ export const VariantB_LovartSpatial: React.FC = () => {
                 )}
 
                 {/* ========================================================================= */}
-                {/* 2. VIDEO CARD (SEEDANCE 2.5 / MINIMAX FULL PARAM MATRIX)                  */}
+                {/* 2. VIDEO CARD                                                             */}
                 {/* ========================================================================= */}
                 {card.type === 'video' && (
                   <>
-                    {/* Visual Preview */}
                     <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-black aspect-video flex items-center justify-center group">
                       <div className="w-full h-full bg-gradient-to-br from-indigo-950 via-slate-900 to-cyan-950 flex flex-col items-center justify-center p-3 text-center">
                         <Film className="w-6 h-6 text-indigo-400 mb-1" />
@@ -1198,7 +1170,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Compact Quick Summary & Toggle Bar */}
                     <div className="flex items-center justify-between text-xs bg-[#0b0d14] p-1.5 px-2.5 rounded-xl border border-slate-800">
                       <div className="flex items-center gap-1.5">
                         <button
@@ -1229,7 +1200,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </button>
                     </div>
 
-                    {/* Model Switch Dropdown */}
                     {openDropdownCardId === card.id && (
                       <div className="bg-[#161925] border border-slate-700 rounded-xl p-1.5 shadow-2xl z-30 space-y-1 animate-in fade-in">
                         {VIDEO_MODELS.map(m => (
@@ -1248,10 +1218,8 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Expanded Tabbed Parameter Drawer */}
                     {card.isExpanded && (
                       <div className="bg-[#0b0d14] border border-slate-800 p-2.5 rounded-xl space-y-2 text-xs animate-in fade-in">
-                        {/* Drawer Tabs */}
                         <div className="flex items-center gap-1 pb-1.5 border-b border-slate-800 text-[10px]">
                           <button
                             type="button"
@@ -1282,10 +1250,8 @@ export const VariantB_LovartSpatial: React.FC = () => {
                           </button>
                         </div>
 
-                        {/* TAB 1: SPECS & MATRIX */}
                         {(card.activeParamTab === 'specs' || !card.activeParamTab) && (
                           <div className="space-y-2">
-                            {/* Mode */}
                             <div className="flex items-center justify-between text-[10px]">
                               <span className="text-slate-400">模式:</span>
                               <div className="flex gap-1">
@@ -1313,7 +1279,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                               </div>
                             </div>
 
-                            {/* Resolution */}
                             <div className="flex items-center justify-between text-[10px]">
                               <span className="text-slate-400">分辨率:</span>
                               <div className="flex gap-1">
@@ -1330,7 +1295,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                               </div>
                             </div>
 
-                            {/* Duration */}
                             <div className="flex items-center justify-between text-[10px]">
                               <span className="text-slate-400">时长:</span>
                               <div className="flex gap-1 flex-wrap justify-end">
@@ -1347,7 +1311,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                               </div>
                             </div>
 
-                            {/* Ratio */}
                             <div className="flex items-center justify-between text-[10px]">
                               <span className="text-slate-400">画面比例:</span>
                               <div className="flex gap-1 flex-wrap justify-end">
@@ -1372,7 +1335,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                           </div>
                         )}
 
-                        {/* TAB 2: MULTI-IMAGE REFERENCES */}
                         {card.activeParamTab === 'refs' && (
                           <div className="space-y-1.5">
                             <div className="flex justify-between items-center text-[10px]">
@@ -1410,7 +1372,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                           </div>
                         )}
 
-                        {/* TAB 3: ADVANCED CONTROLS */}
                         {card.activeParamTab === 'advanced' && (
                           <div className="space-y-2 text-[10px]">
                             {currentVideoModel.supportsAudio && (
@@ -1456,7 +1417,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Compact References Pill Strip (Always Visible when not text_to_video) */}
                     {card.mode !== 'text_to_video' && (
                       <div className="flex items-center justify-between bg-[#0b0d14] px-2 py-1 rounded-xl border border-slate-800 text-xs">
                         <div className="flex items-center gap-1.5 flex-wrap min-w-0">
@@ -1494,7 +1454,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Mention Picker Popover */}
                     {mentionPickerCardId === card.id && (
                       <div className="bg-[#161925] border border-indigo-500/40 rounded-xl p-1.5 shadow-2xl z-30 space-y-1 animate-in fade-in">
                         <span className="text-[9px] font-semibold text-slate-400 px-1 block">选择画布生图素材：</span>
@@ -1512,7 +1471,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Prompt Textarea */}
                     <textarea
                       value={card.prompt}
                       onChange={e => {
@@ -1523,7 +1481,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       placeholder="运镜描述，输入 @图1 @图2 引用素材..."
                     />
 
-                    {/* Action Button */}
                     <button
                       type="button"
                       onClick={() => triggerGenerate(card.id)}
