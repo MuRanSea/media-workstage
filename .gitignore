@@ -1,0 +1,38 @@
+# Binaries & Build Output
+dist/
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Node / Frontend Dependencies
+node_modules/
+.vite/
+.npm/
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Local SQLite Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Local Media Assets & Uploads (May contain 200MB+ videos)
+assets/
+tmp/
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
