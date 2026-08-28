@@ -16,7 +16,13 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   A visual card on the canvas representing an atomic media generation or transformation unit (Image Generation Card, Video Generation Card). Contains large visual preview, compact summary pill, and collapsible parameter drawers.
 
 - **MediaTask (媒体生成任务)**:
-  An asynchronous generation job managed by the local Go backend. Every task transitions through a strictly defined lifecycle state machine (`Queued` → `Running` → `Succeeded` / `Failed` / `Cancelled` / `Expired`).
+  An asynchronous generation job managed by the local Go backend (`media_tasks` table). Transitions through `Queued` → `Running` → `Succeeded` / `Failed` / `Cancelled` / `Expired`. Tracks token usage (`usage_tokens`) and billing metadata (`billing_details_json`).
+
+- **TaskAsset (任务产出资产)**:
+  A granular output item produced by a `MediaTask` (`task_assets` table). Accommodates single outputs as well as multi-asset outputs:
+  - Base Image & Transparent PNG Layers (up to 16 layers with `z_index` and `bounding_box_json` from Seedream 5.0 Pro layer decomposition).
+  - Storyboard Image Sequences (up to 15 images from Seedream 5.0 Lite sequential generation).
+  - Video File & Output Frame Snapshots.
 
 - **ProviderAdapter (服务商适配器)**:
   The architectural boundary seam that isolates third-party API contracts (Volcengine Ark, MiniMax). Translates generic `MediaTaskRequest` into provider-specific payloads and normalizes polling responses.
@@ -31,7 +37,24 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   The local filesystem repository responsible for caching uploaded reference assets, downloading finished generation outputs, and serving them via local HTTP endpoints.
 
 - **TaskPoller (任务轮询调度器)**:
-  The backend worker pool that queries cloud provider task status endpoints at configured intervals until a terminal state is reached.
+  The backend worker pool that queries cloud provider task status endpoints at configured intervals until a terminal state is reached, featuring smart backoff, IPM rate-limiting protection, and startup recovery.
+
+- **SyncEvent (同步事件)**:
+  Real-time state broadcast pushed from the backend to the frontend canvas via SSE (`GET /api/tasks/events`).
+
+---
+
+### Billing & Rate Limiting Rules (Ark & MiniMax Contract)
+
+1. **IPM (Images Per Minute) & Concurrency Throttling**:
+   - Ark enforces strict account-level IPM limits per model version.
+   - **Layer Decomposition Pre-deduction**: Seedream 5.0 Pro layer decomposition pre-deducts **17 IPM** upon task submission, refunded/adjusted post-generation based on actual layer count.
+   - Local Poller maintains a local token bucket limiter to prevent triggering cloud QPS/IPM rejection.
+
+2. **Video Generation Metering**:
+   - Seedance 2.5/2.0 billing is metered by resolution, output duration, and token usage (`completion_tokens`).
+   - For adaptive duration (`duration: -1`), billed duration is calculated based on returned total frames (`frames / 24`).
+   - When input includes reference video, minimum token threshold constraints apply.
 
 ---
 
