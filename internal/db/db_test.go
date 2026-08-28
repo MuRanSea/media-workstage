@@ -45,7 +45,7 @@ func TestInitDB_DualTablesAndCascade(t *testing.T) {
 		Status:             model.TaskStatusSucceeded,
 		Progress:           100,
 		UsageTokens:        16384,
-		BilledDurationSec:  0,
+		OutputDurationSec:  0,
 		BillingDetailsJSON: `{"pre_deducted_ipm":17,"actual_layers":2}`,
 		CreatedAt:          now,
 		UpdatedAt:          now,

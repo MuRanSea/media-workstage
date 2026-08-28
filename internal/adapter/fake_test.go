@@ -48,7 +48,7 @@ func TestFakeProviderAdapter_LifecycleAndAssets(t *testing.T) {
 		Status:            model.TaskStatusSucceeded,
 		Progress:          100,
 		ResultURL:         "https://fake.tos.volces.com/output.mp4",
-		BilledDurationSec: 5.0,
+		OutputDurationSec: 5.0,
 		UsageTokens:       12500,
 		Assets: []model.TaskAsset{
 			{
@@ -67,7 +67,7 @@ func TestFakeProviderAdapter_LifecycleAndAssets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusSucceeded, poll2.Status)
 	assert.Equal(t, 100, poll2.Progress)
-	assert.Equal(t, 5.0, poll2.BilledDurationSec)
+	assert.Equal(t, 5.0, poll2.OutputDurationSec)
 	assert.Equal(t, 1, len(poll2.Assets))
 
 	// 4. DownloadAsset: verify streaming write to local disk

@@ -16,11 +16,12 @@ const (
 
 // ReferenceItem represents an input reference media item.
 type ReferenceItem struct {
-	CardID   string `json:"card_id"`
-	TagIndex int    `json:"tag_index"`
-	Role     string `json:"role"` // "reference_image" | "first_frame" | "last_frame"
-	Label    string `json:"label"`
-	URL      string `json:"url,omitempty"`
+	CardID    string `json:"card_id"`
+	TagIndex  int    `json:"tag_index"`
+	Role      string `json:"role"` // "reference_image" | "first_frame" | "last_frame" | "reference_video" | "reference_audio"
+	Label     string `json:"label"`
+	URL       string `json:"url,omitempty"`
+	LocalPath string `json:"local_path,omitempty"`
 }
 
 // MediaTask represents a generation job in the system.
@@ -38,7 +39,7 @@ type MediaTask struct {
 	ErrorCode          string      `gorm:"type:varchar(64)" json:"error_code,omitempty"`
 	ErrorMessage       string      `gorm:"type:text" json:"error_message,omitempty"`
 	UsageTokens        int         `gorm:"default:0" json:"usage_tokens"`
-	BilledDurationSec  float64     `gorm:"default:0" json:"billed_duration_sec"`
+	OutputDurationSec  float64     `gorm:"default:0" json:"output_duration_sec"` // Returned video duration
 	BillingDetailsJSON string      `gorm:"type:text" json:"billing_details_json,omitempty"`
 	CreatedAt          time.Time   `gorm:"index;not null" json:"created_at"`
 	UpdatedAt          time.Time   `gorm:"not null" json:"updated_at"`

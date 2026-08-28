@@ -10,7 +10,7 @@ type PollResult struct {
 	Status             string
 	Progress           int
 	ResultURL          string
-	BilledDurationSec  float64
+	OutputDurationSec  float64
 	UsageTokens        int
 	BillingDetailsJSON string
 	ErrorCode          string
