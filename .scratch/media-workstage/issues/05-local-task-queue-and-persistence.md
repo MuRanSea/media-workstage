@@ -2,7 +2,7 @@
 
 Type: grilling
 Status: unclaimed
-Blocked by: 02, 03, 04
+Blocked by: none
 
 ## Question
 
