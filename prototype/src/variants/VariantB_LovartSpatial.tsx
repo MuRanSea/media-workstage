@@ -36,8 +36,11 @@ export interface SpatialCard {
   outputFormat?: 'mp4' | 'mov';
   promptOptimizer?: boolean;
   references?: ReferenceItem[];
-  // Image specific parameters
-  imageSize?: '1K' | '1.5K' | '2K';
+  // Image specific parameters (Seedream)
+  sizeMode?: 'tier' | 'custom_pixels';
+  imageTier?: '1K' | '1.5K' | '2K' | 'auto';
+  imageRatioPreset?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '21:9';
+  customPixels?: string;
   imageFormat?: 'jpeg' | 'png';
   watermark?: boolean;
 }
@@ -94,6 +97,34 @@ const VIDEO_MODELS = [
   }
 ];
 
+// Documented pixel mapping for Seedream 5.0 Pro (ark/6.1:103-129)
+const SEEDREAM_PIXEL_MAP: Record<string, Record<string, string>> = {
+  '1K': {
+    '1:1': '1024x1024',
+    '16:9': '1424x800',
+    '9:16': '800x1424',
+    '4:3': '1152x864',
+    '3:4': '864x1152',
+    '21:9': '1568x672'
+  },
+  '1.5K': {
+    '1:1': '1536x1536',
+    '16:9': '2048x1152',
+    '9:16': '1152x2048',
+    '4:3': '1792x1344',
+    '3:4': '1344x1792',
+    '21:9': '2352x1008'
+  },
+  '2K': {
+    '1:1': '2048x2048',
+    '16:9': '2816x1584',
+    '9:16': '1584x2816',
+    '4:3': '2368x1776',
+    '3:4': '1776x2368',
+    '21:9': '2352x1008'
+  }
+};
+
 export const VariantB_LovartSpatial: React.FC = () => {
   const [cards, setCards] = useState<SpatialCard[]>([
     {
@@ -101,14 +132,16 @@ export const VariantB_LovartSpatial: React.FC = () => {
       type: 'image',
       title: '赛博机甲少女角色原画',
       tagIndex: 1,
-      x: 60,
+      x: 50,
       y: 120,
-      width: 320,
+      width: 350,
       prompt: '特写肖像，银发机甲少女，深邃眼眸，精细金属质感外骨骼，Vogue 杂志风格光影',
       model: 'doubao-seedream-5-0-pro',
       status: 'done',
       progress: 100,
-      imageSize: '2K',
+      sizeMode: 'tier',
+      imageTier: '2K',
+      imageRatioPreset: '16:9',
       imageFormat: 'jpeg',
       watermark: false
     },
@@ -117,14 +150,16 @@ export const VariantB_LovartSpatial: React.FC = () => {
       type: 'image',
       title: '未来雨夜街道场景',
       tagIndex: 2,
-      x: 60,
-      y: 490,
-      width: 320,
+      x: 50,
+      y: 530,
+      width: 350,
       prompt: '赛博朋克都市雨夜全景，湿漉漉的沥青路面，红蓝霓虹灯招牌倒影，电影级景深',
       model: 'doubao-seedream-5-0-pro',
       status: 'done',
       progress: 100,
-      imageSize: '2K',
+      sizeMode: 'tier',
+      imageTier: '2K',
+      imageRatioPreset: '16:9',
       imageFormat: 'jpeg',
       watermark: false
     },
@@ -240,19 +275,27 @@ export const VariantB_LovartSpatial: React.FC = () => {
     setCards(prev => prev.map(c => {
       if (c.id !== videoCardId) return c;
       let newRefs = c.references ?? [];
+      let newRatio = c.ratio;
+      let newDuration = c.duration;
+
       if (newMode === 'text_to_video') {
         newRefs = [];
       } else if (newMode === 'first_last_frame') {
+        // Enforce max 2 refs, first as first_frame, second as last_frame; ratio is locked to adaptive in first_last_frame
         newRefs = newRefs.slice(0, 2).map((r, idx) => ({
           ...r,
           role: idx === 0 ? 'first_frame' : 'last_frame'
         }));
+        newRatio = 'adaptive';
       } else if (newMode === 'all_modal') {
+        // In all_modal mode, all inputs are role=reference_image (frame roles specified via prompt @)
         newRefs = newRefs.map(r => ({ ...r, role: 'reference_image' }));
       }
       return {
         ...c,
         mode: newMode,
+        ratio: newRatio,
+        duration: newDuration,
         references: newRefs
       };
     }));
@@ -346,11 +389,17 @@ export const VariantB_LovartSpatial: React.FC = () => {
         };
       }
     }
+    // Image Payload (Ark Seedream 5.0 pro / ark/6.1:81-130)
+    const finalSize = card.sizeMode === 'custom_pixels'
+      ? (card.customPixels || '2048x1024')
+      : (card.imageTier ?? '2K');
+
     return {
       model: card.model,
       prompt: card.prompt,
-      size: card.imageSize,
+      size: finalSize,
       response_format: 'url',
+      output_format: card.imageFormat,
       watermark: card.watermark
     };
   };
@@ -364,7 +413,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
       tagIndex: nextIndex,
       x: 180 - pan.x,
       y: 180 - pan.y,
-      width: type === 'video' ? 480 : 320,
+      width: type === 'video' ? 480 : 350,
       prompt: type === 'image' ? '输入生图描述...' : '输入运镜指令，可通过 @图1 @图2 指代首帧或主体...',
       model: type === 'image' ? 'doubao-seedream-5-0-pro' : 'doubao-seedance-2-5-260628',
       status: 'idle',
@@ -376,7 +425,9 @@ export const VariantB_LovartSpatial: React.FC = () => {
       generateAudio: true,
       outputFormat: 'mp4',
       promptOptimizer: true,
-      imageSize: '2K',
+      sizeMode: 'tier',
+      imageTier: '2K',
+      imageRatioPreset: '16:9',
       imageFormat: 'jpeg',
       watermark: false,
       references: []
@@ -400,11 +451,11 @@ export const VariantB_LovartSpatial: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="font-bold text-white text-xs">Lovart 媒体工作台 • 完整参数与模型矩阵控制台</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-medium font-mono">
-              Ark & MiniMax Full Specs
+              Ark & MiniMax Specs
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            全黑化深度定制 UI • 分辨率 / 时长 / 画面比例 / 多模态多图参考 / API 契约序列化一览
+            生图 Size（方式1 档位 1K/1.5K/2K + 方式2 显式像素不可混用）• 生视频全参数矩阵
           </p>
         </div>
       </div>
@@ -505,6 +556,11 @@ export const VariantB_LovartSpatial: React.FC = () => {
         {cards.map(card => {
           const currentModelDef = VIDEO_MODELS.find(m => m.id === card.model) ?? VIDEO_MODELS[0];
 
+          // Compute mapped pixel info for Seedream 5.0
+          const currentMappedPixels = card.imageRatioPreset && card.imageTier && SEEDREAM_PIXEL_MAP[card.imageTier]?.[card.imageRatioPreset]
+            ? SEEDREAM_PIXEL_MAP[card.imageTier][card.imageRatioPreset]
+            : '2048x2048';
+
           return (
             <div
               key={card.id}
@@ -528,9 +584,10 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
                 <div className="flex items-center gap-2">
                   <button
+                    type="button"
                     onClick={() => setShowJsonInspectorCardId(showJsonInspectorCardId === card.id ? null : card.id)}
                     className="p-1 rounded hover:bg-slate-700/60 text-slate-400 hover:text-indigo-300 transition"
-                    title="查看实际提交的 API Payload"
+                    title="查看真实提交的 API Payload"
                   >
                     <Code className="w-3.5 h-3.5" />
                   </button>
@@ -549,8 +606,8 @@ export const VariantB_LovartSpatial: React.FC = () => {
               {showJsonInspectorCardId === card.id && (
                 <div className="bg-[#090b10] p-3 border-b border-slate-800 text-[10px] font-mono text-emerald-400 max-h-48 overflow-y-auto space-y-1">
                   <div className="flex justify-between text-slate-400 border-b border-slate-800 pb-1">
-                    <span>📡 API 实际请求体 Payload (序列化预览)</span>
-                    <button onClick={() => setShowJsonInspectorCardId(null)} className="hover:text-white">✕</button>
+                    <span>📡 API 真实请求 Payload (包含 Size/Prompt 序列化)</span>
+                    <button type="button" onClick={() => setShowJsonInspectorCardId(null)} className="hover:text-white">✕</button>
                   </div>
                   <pre className="whitespace-pre-wrap">{JSON.stringify(getCompiledJsonPayload(card), null, 2)}</pre>
                 </div>
@@ -558,14 +615,18 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
               {/* Card Body */}
               <div className="p-4 space-y-3.5">
-                {/* 1. IMAGE CARD SPECIFIC BODY */}
+                {/* ========================================================================= */}
+                {/* 1. IMAGE CARD BODY (SEEDREAM 5.0 PRO / ARK 6.1:81-130 SPEC)               */}
+                {/* ========================================================================= */}
                 {card.type === 'image' && (
                   <>
-                    <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-black aspect-square flex items-center justify-center">
+                    <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-black aspect-video flex items-center justify-center">
                       <div className="w-full h-full bg-gradient-to-br from-indigo-950 via-purple-950 to-pink-950 flex flex-col items-center justify-center p-4 text-center">
                         <ImageIcon className="w-8 h-8 text-pink-400/80 mb-2" />
-                        <span className="text-xs text-pink-200 font-medium">Seedream 5.0 Pro</span>
-                        <span className="text-[10px] text-slate-400 mt-1">{card.imageSize} ({card.imageFormat?.toUpperCase()})</span>
+                        <span className="text-xs text-pink-200 font-medium">Doubao Seedream 5.0 Pro</span>
+                        <span className="text-[10px] text-slate-400 mt-1">
+                          {card.sizeMode === 'tier' ? `${card.imageTier} (${currentMappedPixels})` : `自定义 ${card.customPixels}`}
+                        </span>
                       </div>
                       <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/70 backdrop-blur text-[10px] font-mono font-bold text-pink-300 border border-pink-500/30">
                         @图{card.tagIndex}
@@ -575,24 +636,131 @@ export const VariantB_LovartSpatial: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Image Size Selection Pills */}
-                    <div className="flex items-center justify-between text-xs bg-[#0e1017] p-2 rounded-xl border border-slate-800">
-                      <span className="text-slate-400 text-[11px]">生图规格 (Size):</span>
-                      <div className="flex items-center gap-1">
-                        {(['1K', '1.5K', '2K'] as const).map(sz => (
-                          <button
-                            key={sz}
-                            onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageSize: sz } : c))}
-                            className={`px-2 py-0.5 rounded-lg text-xs font-mono font-bold transition ${
-                              card.imageSize === sz ? 'bg-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 bg-slate-800/60'
-                            }`}
-                          >
-                            {sz}
-                          </button>
-                        ))}
+                    {/* Ark 6.1 Size Specification Mode Switcher (方式1 vs 方式2 不可混用) */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-semibold text-slate-300">尺寸配置方式 (ark/6.1 规范)</label>
+                        <span className="text-[10px] text-amber-400/80">方式1与方式2互斥</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1 bg-[#0e1017] p-1 rounded-xl border border-slate-800 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, sizeMode: 'tier' } : c))}
+                          className={`py-1.5 rounded-lg font-medium transition ${
+                            card.sizeMode === 'tier' || !card.sizeMode ? 'bg-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          方式1: 档位预设 (推荐)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, sizeMode: 'custom_pixels', customPixels: c.customPixels || '2048x1024' } : c))}
+                          className={`py-1.5 rounded-lg font-medium transition ${
+                            card.sizeMode === 'custom_pixels' ? 'bg-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          方式2: 显式像素 (宽x高)
+                        </button>
                       </div>
                     </div>
 
+                    {/* Size Controls Sub-panel */}
+                    <div className="bg-[#0e1017] border border-slate-800 p-3 rounded-2xl space-y-2.5">
+                      {/* Method 1: Tier Selection + Ratio Mapping */}
+                      {(card.sizeMode === 'tier' || !card.sizeMode) ? (
+                        <>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-slate-400 text-[11px] flex items-center gap-1">
+                              <Monitor className="w-3.5 h-3.5 text-pink-400" /> 分辨率档位 (Size):
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {(['1K', '1.5K', '2K'] as const).map(tr => (
+                                <button
+                                  key={tr}
+                                  type="button"
+                                  onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageTier: tr } : c))}
+                                  className={`px-2 py-0.5 rounded-lg font-mono text-[11px] font-bold transition ${
+                                    card.imageTier === tr ? 'bg-pink-600 text-white shadow-md' : 'bg-[#181a24] text-slate-400 hover:text-slate-200'
+                                  }`}
+                                >
+                                  {tr}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-slate-400 text-[11px] flex items-center gap-1">
+                                <Ratio className="w-3.5 h-3.5 text-pink-400" /> 宽高比 (映射像素):
+                              </span>
+                              <span className="font-mono text-[11px] text-pink-300 font-bold">
+                                {currentMappedPixels}
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-6 gap-1 text-[10px] font-mono">
+                              {(['1:1', '16:9', '9:16', '4:3', '3:4', '21:9'] as const).map(rt => (
+                                <button
+                                  key={rt}
+                                  type="button"
+                                  onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageRatioPreset: rt } : c))}
+                                  className={`py-1 px-1 rounded-lg text-center font-semibold transition ${
+                                    card.imageRatioPreset === rt
+                                      ? 'bg-pink-600 text-white shadow-md'
+                                      : 'bg-[#181a24] text-slate-400 hover:text-slate-200'
+                                  }`}
+                                >
+                                  {rt}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        /* Method 2: Explicit width x height pixels */
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-slate-400 text-[11px]">显式宽高像素 (宽x高):</span>
+                            <span className="font-mono text-[10px] text-slate-500">区间 [92万, 462万像素]</span>
+                          </div>
+                          <input
+                            type="text"
+                            value={card.customPixels ?? '2048x1024'}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setCards(prev => prev.map(c => c.id === card.id ? { ...c, customPixels: val } : c));
+                            }}
+                            className="w-full bg-[#181a24] border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-pink-300 focus:outline-none focus:border-pink-500"
+                            placeholder="例如 2048x1024, 2368x1776, 1424x800"
+                          />
+                        </div>
+                      )}
+
+                      {/* Format & Watermark */}
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-800/80 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, imageFormat: c.imageFormat === 'png' ? 'jpeg' : 'png' } : c))}
+                          className="text-[10px] font-mono font-semibold text-pink-300 bg-pink-500/10 px-2 py-0.5 rounded-md border border-pink-500/20"
+                        >
+                          格式: {card.imageFormat?.toUpperCase()}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, watermark: !c.watermark } : c))}
+                          className={`text-[10px] px-2 py-0.5 rounded-md border transition ${
+                            !card.watermark ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-slate-800/40 text-slate-400 border-slate-700/50'
+                          }`}
+                        >
+                          {!card.watermark ? '无水印' : '含水印'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Prompt Textarea */}
                     <div>
                       <label className="text-[11px] font-medium text-slate-400 block mb-1">生图提示词 (Prompt)</label>
                       <textarea
@@ -601,13 +769,15 @@ export const VariantB_LovartSpatial: React.FC = () => {
                           const val = e.target.value;
                           setCards(prev => prev.map(c => c.id === card.id ? { ...c, prompt: val } : c));
                         }}
-                        className="w-full bg-[#0e1017] border border-slate-700 rounded-xl p-2.5 text-xs text-slate-200 focus:outline-none focus:border-pink-500 resize-none h-16"
+                        className="w-full bg-[#0e1017] border border-slate-700 rounded-xl p-2.5 text-xs text-slate-200 focus:outline-none focus:border-pink-500 resize-none h-16 leading-relaxed"
                       />
                     </div>
                   </>
                 )}
 
-                {/* 2. VIDEO CARD SPECIFIC BODY */}
+                {/* ========================================================================= */}
+                {/* 2. VIDEO CARD BODY (SEEDANCE 2.5 / MINIMAX FULL PARAM MATRIX)             */}
+                {/* ========================================================================= */}
                 {card.type === 'video' && (
                   <>
                     {/* Model Custom Dark Dropdown */}
@@ -689,7 +859,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
                     {/* Interactive Parameter Control Matrix (Resolution / Duration / Ratio / Audio) */}
                     <div className="bg-[#0e1017] border border-slate-800 p-3 rounded-2xl space-y-2.5">
-                      {/* Resolution Selector */}
+                      {/* Resolution Selector (Gated by selected model) */}
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-slate-400 text-[11px] flex items-center gap-1">
                           <Monitor className="w-3.5 h-3.5 text-indigo-400" /> 分辨率 (Resolution):
@@ -731,24 +901,30 @@ export const VariantB_LovartSpatial: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Aspect Ratio Selector */}
+                      {/* Aspect Ratio Selector (Disabled/Adaptive when first_last_frame mode) */}
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-slate-400 text-[11px] flex items-center gap-1">
                           <Ratio className="w-3.5 h-3.5 text-indigo-400" /> 画面比例 (Ratio):
                         </span>
                         <div className="flex items-center gap-1 flex-wrap justify-end">
-                          {currentModelDef.ratios.map(rt => (
-                            <button
-                              key={rt}
-                              type="button"
-                              onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, ratio: rt } : c))}
-                              className={`px-1.5 py-0.5 rounded-lg text-[10px] font-mono font-semibold transition ${
-                                card.ratio === rt ? 'bg-indigo-600 text-white shadow-md' : 'bg-[#181a24] text-slate-400 hover:text-slate-200'
-                              }`}
-                            >
-                              {rt}
-                            </button>
-                          ))}
+                          {card.mode === 'first_last_frame' ? (
+                            <span className="px-2 py-0.5 rounded-lg bg-indigo-600/30 border border-indigo-500/40 text-[10px] font-mono text-indigo-300">
+                              自适应首帧 (adaptive)
+                            </span>
+                          ) : (
+                            currentModelDef.ratios.map(rt => (
+                              <button
+                                key={rt}
+                                type="button"
+                                onClick={() => setCards(prev => prev.map(c => c.id === card.id ? { ...c, ratio: rt } : c))}
+                                className={`px-1.5 py-0.5 rounded-lg text-[10px] font-mono font-semibold transition ${
+                                  card.ratio === rt ? 'bg-indigo-600 text-white shadow-md' : 'bg-[#181a24] text-slate-400 hover:text-slate-200'
+                                }`}
+                              >
+                                {rt}
+                              </button>
+                            ))
+                          )}
                         </div>
                       </div>
 
@@ -763,7 +939,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                             }`}
                           >
                             {card.generateAudio ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-                            {card.generateAudio ? '原生音频已开启' : '关闭音频'}
+                            {card.generateAudio ? '原生音频开启' : '关闭音频'}
                           </button>
                         )}
 
