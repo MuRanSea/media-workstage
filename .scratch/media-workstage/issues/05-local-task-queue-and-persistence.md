@@ -1,7 +1,7 @@
 # 05-local-task-queue-and-persistence
 
 Type: grilling
-Status: unclaimed
+Status: claimed
 Blocked by: none
 
 ## Question
