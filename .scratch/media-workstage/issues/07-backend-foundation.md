@@ -21,7 +21,7 @@ Ticket 07 已通过 TDD 闭环实现并通过全量测试（`go test -v ./...` �
 
 ### 核心实现：
 1. **纯 Go SQLite 双表模型 (`internal/model/task.go`, `internal/db/db.go`)**：
-   - `media_tasks`：支持记录任务类型、模式、Prompt、参数 JSON、Token 消耗（`usage_tokens`）、精准时长（`billed_duration_sec`）与计费明细。
+   - `media_tasks`：支持记录任务类型、模式、Prompt、参数 JSON、Token 消耗（`usage_tokens`）、实际生成时长（`output_duration_sec`）与计费明细。
    - `task_assets`：支持图层拆分（`z_index`、`bounding_box_json`、`name`、`description`）与连环组图等多产物子资产。
 2. **`ProviderAdapter` 接口与 Fake Adapter 测试桩 (`internal/adapter/`)**：
    - 定义了 `SubmitTask`、`PollTask` 与 `DownloadAsset` 抽象，并实现内存可控的 `FakeProviderAdapter` 作为系统顶级测试 Seam。

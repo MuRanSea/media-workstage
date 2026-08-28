@@ -39,7 +39,7 @@ Status: ready-for-agent
 17. As a creator, I want to inspect the compiled API JSON payload by clicking a `<Code>` button on each card, so that I have full transparency over what is submitted to the cloud API.
 18. As a creator, I want tasks to execute asynchronously in the background while I continue editing other canvas cards, so that my workflow is never blocked.
 19. As a creator, I want the backend to enforce rate-limiting and handle Seedream's 17 IPM pre-deduction, so that my account is never rejected by cloud API concurrency caps.
-20. As a creator, I want the backend to record exact billing details (output duration `billed_duration_sec`, token usage, generated image counts), so that I have full visibility into my generation costs.
+20. As a creator, I want the backend to record exact billing details (output duration `output_duration_sec`, token usage `usage_tokens`, generated image counts), so that I have full visibility into my generation costs.
 21. As a creator, I want generated video and image files to be automatically downloaded to my local `./assets/` disk upon completion, so that my assets never break when cloud presigned URLs expire.
 22. As a creator, I want the local HTTP static server to support RFC 7233 range requests, so that I can scrub video timelines smoothly in the browser.
 
@@ -76,7 +76,7 @@ CREATE TABLE media_tasks (
     error_code TEXT,
     error_message TEXT,
     usage_tokens INTEGER DEFAULT 0,
-    billed_duration_sec REAL DEFAULT 0,
+    output_duration_sec REAL DEFAULT 0,
     billing_details_json TEXT,       -- Accurate cost and meter logs (pre-deductions, generated counts, frames)
     created_at DATETIME,
     updated_at DATETIME,
@@ -140,7 +140,7 @@ CREATE TABLE task_assets (
   - Submit mock video and image tasks, verify state machine transitions, SSE event broadcast payload format, and child `task_assets` creation.
 - **Provider Adapter Suite**:
   - Unit-test `ArkAdapter` and `MiniMaxAdapter` against recorded HTTP mock fixtures.
-  - Verify payload compilation: Ark Base64 content array structure vs MiniMax flat schema, prompt renumbering (`@图N` $\rightarrow$ `图N`), error code extraction, and `billed_duration_sec` calculation.
+  - Verify payload compilation: Ark Base64 content array structure vs MiniMax flat schema, prompt renumbering (`@图N` $\rightarrow$ `图N`), error code extraction, and `output_duration_sec` / `usage_tokens` calculation.
 - **Asset Ingestion & Static Server Suite**:
   - Verify range requests (`Accept-Ranges: bytes`, status 206 Partial Content), directory traversal attack rejections, and atomic file downloading.
 - **Frontend Canvas Matrix Suite**:

@@ -12,5 +12,5 @@
 - [ ] 严格校验 Seedream 5.0 Pro（1K/1.5K/2K 档位 vs 显式像素 `[92万, 462万]`）与 5.0 Lite（2K/3K/4K 档位 vs 显式像素 `[368万, 1677万]`）互斥尺寸规范
 - [ ] 实现基于 Goroutine 的 `TaskPoller` 任务轮询池，支持生图（2s 间隔）与视频（6~8s 间隔，超时 600s）智能退避
 - [ ] 实装本地令牌桶限流器，内置 Seedream 5.0 Pro 图层拆分每次提交预扣 17 IPM 的风控保护与按实回退
-- [ ] 实现任务进入 `succeeded` 后的即刻流式下载落盘管道（包含图层拆分多图层解包写入 `task_assets`），更新 `billed_duration_sec` 与计费明细
+- [ ] 实现任务进入 `succeeded` 后的即刻流式下载落盘管道（包含图层拆分多图层解包写入 `task_assets`），更新 `output_duration_sec` 与计费明细
 - [ ] 编写并通过 ArkAdapter Payload 序列化与 Mock Poller 任务状态机的单元测试

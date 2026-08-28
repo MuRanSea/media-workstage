@@ -11,5 +11,5 @@
 - [ ] 实现双重下载流转策略：`Success` 响应中优先提取 `content.url` 下载；若链接缺失/过期，则通过 `GET /v1/files/retrieve?file_id={id}` 获取有效下载地址
 - [ ] 校验并构造 MiniMax H3（支持首尾帧 `first_frame_image` + `last_frame_image`、2K 分辨率）与 Video-01 的 Payload
 - [ ] 连通 Poller 轮询器，在任务成功时将 MP4 文件流式下载至本地 `./assets/videos/`，并写入 `task_assets`
-- [ ] 记录精准时长（`billed_duration_sec`）与使用量元数据
+- [ ] 记录实际生成时长（`output_duration_sec`）与使用量元数据
 - [ ] 编写并通过 MiniMaxAdapter 任务提交、轮询与文件提取回退的单元测试
