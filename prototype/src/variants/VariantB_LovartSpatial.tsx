@@ -29,7 +29,6 @@ export interface SpatialCard {
   model: string;
   status: 'idle' | 'generating' | 'done';
   progress: number;
-  // UI state
   showAdvanced?: boolean;
   // Video specific parameters
   mode?: VideoTaskMode;
@@ -209,7 +208,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
       title: '雨夜街道场景',
       tagIndex: 2,
       x: 80,
-      y: 500,
+      y: 490,
       width: 320,
       prompt: '赛博朋克都市雨夜全景，湿漉漉的沥青路面，红蓝霓虹灯招牌倒影，电影级景深',
       model: 'doubao-seedream-5-0-lite-260128',
@@ -227,7 +226,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
       type: 'video',
       title: '电影镜头生成',
       tagIndex: 3,
-      x: 460,
+      x: 450,
       y: 140,
       width: 440,
       mode: 'all_modal',
@@ -264,27 +263,8 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Smooth Zoom Centered on Pointer
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (!containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89;
-    const newZoom = Math.min(2.5, Math.max(0.25, zoom * zoomFactor));
-
-    // Calculate new pan to keep mouse point anchored in canvas space
-    const newPanX = mouseX - (mouseX - pan.x) * (newZoom / zoom);
-    const newPanY = mouseY - (mouseY - pan.y) * (newZoom / zoom);
-
-    setZoom(newZoom);
-    setPan({ x: newPanX, y: newPanY });
-  }, [zoom, pan]);
-
-  // Fit View (Fit all cards on screen)
-  const fitView = () => {
+  // Fit View
+  const fitView = useCallback(() => {
     if (cards.length === 0 || !containerRef.current) return;
     const minX = Math.min(...cards.map(c => c.x));
     const maxX = Math.max(...cards.map(c => c.x + c.width));
@@ -302,10 +282,10 @@ export const VariantB_LovartSpatial: React.FC = () => {
 
     setZoom(targetZoom);
     setPan({ x: targetPanX, y: targetPanY });
-  };
+  }, [cards]);
 
   // Focus Selection
-  const focusSelection = (cardId?: string) => {
+  const focusSelection = useCallback((cardId?: string) => {
     const id = cardId ?? selectedCardId;
     const target = cards.find(c => c.id === id);
     if (!target || !containerRef.current) return;
@@ -316,13 +296,50 @@ export const VariantB_LovartSpatial: React.FC = () => {
     const targetPanY = containerH / 2 - (target.y + 200) * targetZoom;
     setZoom(targetZoom);
     setPan({ x: targetPanX, y: targetPanY });
-  };
+  }, [cards, selectedCardId]);
+
+  // Native non-passive Wheel listener to smoothly zoom and prevent browser zooming
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleNativeWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      if (e.ctrlKey || e.metaKey) {
+        // Trackpad pinch or Ctrl+Wheel zoom
+        const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+        setZoom(prevZoom => {
+          const newZoom = Math.min(2.5, Math.max(0.25, prevZoom * zoomFactor));
+          setPan(prevPan => ({
+            x: mouseX - (mouseX - prevPan.x) * (newZoom / prevZoom),
+            y: mouseY - (mouseY - prevPan.y) * (newZoom / prevZoom)
+          }));
+          return newZoom;
+        });
+      } else {
+        // Plain wheel / Shift+Wheel for natural pan
+        const deltaX = e.shiftKey ? e.deltaY : e.deltaX;
+        const deltaY = e.shiftKey ? 0 : e.deltaY;
+        setPan(prev => ({
+          x: prev.x - deltaX,
+          y: prev.y - deltaY
+        }));
+      }
+    };
+
+    container.addEventListener('wheel', handleNativeWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleNativeWheel);
+  }, []);
 
   // Keyboard Shortcuts (0: Fit View, 1: 100%, Space: Hand Tool)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea') return;
+      if (tag === 'input' || tag === 'textarea' || (e.target as HTMLElement)?.isContentEditable) return;
 
       if (e.key === '0') {
         fitView();
@@ -332,7 +349,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
         setZoom(z => Math.min(2.5, z * 1.15));
       } else if (e.key === '-') {
         setZoom(z => Math.max(0.25, z / 1.15));
-      } else if (e.key === 'f') {
+      } else if (e.key === 'f' || e.key === 'F') {
         focusSelection();
       } else if (e.key === ' ') {
         setActiveTool('hand');
@@ -349,7 +366,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [cards, selectedCardId, zoom, pan]);
+  }, [fitView, focusSelection]);
 
   const handleMouseDownCanvas = (e: React.MouseEvent<HTMLDivElement>) => {
     if (activeTool === 'hand' || e.button === 1 || e.target === e.currentTarget) {
@@ -571,7 +588,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
     const newCard: SpatialCard = {
       id: `card-${Date.now()}`,
       type,
-      title: type === 'image' ? `原画构思 ${nextIndex}` : `镜头镜头 ${nextIndex}`,
+      title: type === 'image' ? `原画构思 ${nextIndex}` : `镜头 ${nextIndex}`,
       tagIndex: nextIndex,
       x: 200 - pan.x / zoom,
       y: 200 - pan.y / zoom,
@@ -606,7 +623,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
       onMouseDown={handleMouseDownCanvas}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onWheel={handleWheel}
     >
       {/* Top Banner Header */}
       <div className="absolute top-4 left-4 z-20 flex items-center gap-3 bg-[#11131c]/95 backdrop-blur-xl border border-slate-700/60 rounded-2xl px-4 py-2.5 shadow-2xl">
@@ -629,12 +645,14 @@ export const VariantB_LovartSpatial: React.FC = () => {
       {/* Floating Top-Right Tool Dock */}
       <div className="absolute top-4 right-4 z-20 flex items-center gap-1.5 bg-[#11131c]/95 backdrop-blur-xl border border-slate-700/60 rounded-2xl p-1.5 shadow-2xl text-slate-200">
         <button
+          type="button"
           onClick={() => setActiveTool('select')}
           className={`px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition ${activeTool === 'select' ? 'bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30' : 'hover:bg-slate-800 text-slate-400'}`}
         >
           <MousePointer className="w-3.5 h-3.5" /> 选择 (V)
         </button>
         <button
+          type="button"
           onClick={() => setActiveTool('hand')}
           className={`px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition ${activeTool === 'hand' ? 'bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-600/30' : 'hover:bg-slate-800 text-slate-400'}`}
         >
@@ -642,12 +660,14 @@ export const VariantB_LovartSpatial: React.FC = () => {
         </button>
         <div className="w-[1px] h-5 bg-slate-700 mx-1" />
         <button
+          type="button"
           onClick={() => addNewCard('image')}
           className="px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 bg-pink-500/15 hover:bg-pink-500/25 text-pink-300 font-medium border border-pink-500/30 transition"
         >
           <Plus className="w-3.5 h-3.5" /> +生图卡片
         </button>
         <button
+          type="button"
           onClick={() => addNewCard('video')}
           className="px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 font-medium border border-indigo-500/30 transition"
         >
@@ -658,6 +678,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
       {/* Floating Bottom-Right Zoom & Navigation Controls */}
       <div className="absolute bottom-20 right-6 z-20 flex items-center gap-1 bg-[#11131c]/95 backdrop-blur-xl border border-slate-700/60 rounded-2xl p-1.5 shadow-2xl text-slate-300">
         <button
+          type="button"
           onClick={fitView}
           className="px-2.5 py-1.5 hover:bg-slate-800 rounded-xl text-xs font-medium flex items-center gap-1.5 text-slate-300 hover:text-white transition"
           title="适屏全览 (快捷键 0)"
@@ -666,6 +687,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
         </button>
 
         <button
+          type="button"
           onClick={() => focusSelection()}
           className="px-2.5 py-1.5 hover:bg-slate-800 rounded-xl text-xs font-medium flex items-center gap-1.5 text-slate-300 hover:text-white transition"
           title="聚焦选中卡片 (快捷键 F)"
@@ -676,6 +698,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
         <div className="w-[1px] h-4 bg-slate-700 mx-1" />
 
         <button
+          type="button"
           onClick={() => setZoom(z => Math.max(0.25, z / 1.15))}
           className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition"
           title="缩小 (-)"
@@ -684,6 +707,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
         </button>
 
         <button
+          type="button"
           onClick={() => setZoom(1)}
           className="px-2 py-1 hover:bg-slate-800 rounded-lg text-xs font-mono text-slate-300 font-bold min-w-[52px] text-center"
           title="重置为 100% (快捷键 1)"
@@ -692,6 +716,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
         </button>
 
         <button
+          type="button"
           onClick={() => setZoom(z => Math.min(2.5, z * 1.15))}
           className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition"
           title="放大 (+)"
@@ -787,7 +812,6 @@ export const VariantB_LovartSpatial: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  {/* Model Name Pill */}
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-900 text-slate-300 border border-slate-700">
                     {card.type === 'image' ? currentImageModel.name.split(' ')[1] : currentVideoModel.name}
                   </span>
@@ -827,7 +851,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                 {/* 1. IMAGE CARD (COMPACT VISUAL FIRST) */}
                 {card.type === 'image' && (
                   <>
-                    {/* Visual Preview / Output */}
+                    {/* Visual Preview */}
                     <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-black aspect-video flex items-center justify-center group">
                       <div className="w-full h-full bg-gradient-to-br from-indigo-950 via-purple-950 to-pink-950 flex flex-col items-center justify-center p-3 text-center">
                         <ImageIcon className="w-6 h-6 text-pink-400/80 mb-1" />
@@ -893,7 +917,7 @@ export const VariantB_LovartSpatial: React.FC = () => {
                                   card.model === m.id ? 'bg-pink-600 text-white' : 'bg-slate-800 text-slate-400'
                                 }`}
                               >
-                                {m.name.split(' ')[1]} {m.name.split(' ')[2]}
+                                {m.name}
                               </button>
                             ))}
                           </div>
