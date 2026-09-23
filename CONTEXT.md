@@ -6,6 +6,9 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
 
 ### Core Concepts
 
+- **Project (工程)**:
+  A self-contained folder on disk under the projects root (`./projects` by default) holding one `CanvasWorkspace` (`project.json`: cards + viewport + revision) and the `TaskAsset` files its tasks produced (`assets/`). Card media paths are relative to the project folder, so a project can be copied or moved as a unit. `MediaTask.project_id` links a task to the project whose folder receives its outputs. See ADR 0003.
+
 - **CanvasWorkspace (画布工作区)**:
   The top-level interactive infinite spatial canvas containing cards, connections, viewport transform matrix (`zoom`, `panX`, `panY`), and active user selections.
 

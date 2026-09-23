@@ -16,6 +16,7 @@ import (
 	"media-workstage/internal/db"
 	"media-workstage/internal/model"
 	"media-workstage/internal/poller"
+	"media-workstage/internal/project"
 	"media-workstage/internal/server"
 )
 
@@ -42,6 +43,7 @@ func main() {
 	hostFlag := flag.String("host", "", "HTTP listen host")
 	dbFlag := flag.String("db", "", "SQLite database file path")
 	assetDirFlag := flag.String("assets", "", "Local assets directory")
+	projectsDirFlag := flag.String("projects", "", "Projects root directory (one folder per project)")
 	noBrowserFlag := flag.Bool("no-browser", false, "Disable opening default browser on startup")
 	flag.Parse()
 
@@ -75,6 +77,18 @@ func main() {
 	}
 	if assetDir == "" {
 		assetDir = "./assets"
+	}
+
+	projectsDir := *projectsDirFlag
+	if projectsDir == "" {
+		projectsDir = os.Getenv("PROJECTS_DIR")
+	}
+	if projectsDir == "" {
+		projectsDir = "./projects"
+	}
+	projectStore, err := project.NewStore(projectsDir)
+	if err != nil {
+		log.Fatalf("Failed to initialize projects directory: %v", err)
 	}
 
 	database, err := db.InitDB(dbPath)
@@ -163,6 +177,8 @@ func main() {
 		DB:       database,
 		Registry: registry,
 		AssetDir: assetDir,
+		// Tasks created inside a project download into that project's folder.
+		AssetRoot: func(task *model.MediaTask) string { return projectStore.AssetRoot(task.ProjectID) },
 	})
 
 	// Start background poller and startup recovery
@@ -175,7 +191,7 @@ func main() {
 		log.Printf("[WARN] Failed to load embedded dist filesystem: %v", err)
 	}
 
-	srv := server.NewServer(database, assetDir, registry, taskPoller, distSub)
+	srv := server.NewServer(database, assetDir, registry, taskPoller, distSub, projectStore)
 	r := srv.SetupRouter()
 
 	addr := host + ":" + port

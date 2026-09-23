@@ -1,4 +1,5 @@
 import type { SpatialCard } from '../types/canvas.ts';
+import { assetStoredPath } from './assetPaths.ts';
 
 /**
  * Unpacks transparent PNG layers produced by Seedream 5.0 Pro layer decomposition
@@ -42,11 +43,7 @@ export function unpackLayerDecomposition(
     const x = startX + col * (layerWidth + gapX);
     const y = startY + row * (layerHeight + gapY);
 
-    const assetPath = asset.local_path
-      ? asset.local_path.startsWith('/') || asset.local_path.startsWith('assets/')
-        ? `/${asset.local_path.replace(/^\/+/, '')}`
-        : `/assets/${asset.local_path}`
-      : asset.remote_url;
+    const assetPath = assetStoredPath(asset);
 
     const newCard: SpatialCard = {
       id: cardId,
@@ -118,11 +115,7 @@ export function unpackSequentialStoryboards(
     const x = startX + col * (frameWidth + gapX);
     const y = startY + row * (frameHeight + gapY);
 
-    const assetPath = asset.local_path
-      ? asset.local_path.startsWith('/') || asset.local_path.startsWith('assets/')
-        ? `/${asset.local_path.replace(/^\/+/, '')}`
-        : `/assets/${asset.local_path}`
-      : asset.remote_url;
+    const assetPath = assetStoredPath(asset);
 
     const newCard: SpatialCard = {
       id: cardId,

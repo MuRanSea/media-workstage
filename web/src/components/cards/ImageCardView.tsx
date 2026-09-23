@@ -32,6 +32,7 @@ import {
   connectHintRing,
   type ConnectHint,
 } from './CardPorts.tsx';
+import { assetStoredPath, assetUrl } from '../../engine/assetPaths.ts';
 
 const RATIO_PRESETS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9'] as const;
 const CHANNEL_RESOLUTIONS = ['1K', '2K', '4K'] as const;
@@ -151,17 +152,9 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
   let activeDisplayUrl = card.resultUrl;
   if (selectedLayerIndex !== null && layerAssets[selectedLayerIndex]) {
     const activeLayer = layerAssets[selectedLayerIndex];
-    activeDisplayUrl = activeLayer.local_path
-      ? activeLayer.local_path.startsWith('/') || activeLayer.local_path.startsWith('assets/')
-        ? `/${activeLayer.local_path.replace(/^\/+/, '')}`
-        : `/assets/${activeLayer.local_path}`
-      : activeLayer.remote_url;
+    activeDisplayUrl = assetStoredPath(activeLayer);
   } else if (baseAsset) {
-    activeDisplayUrl = baseAsset.local_path
-      ? baseAsset.local_path.startsWith('/') || baseAsset.local_path.startsWith('assets/')
-        ? `/${baseAsset.local_path.replace(/^\/+/, '')}`
-        : `/assets/${baseAsset.local_path}`
-      : baseAsset.remote_url;
+    activeDisplayUrl = assetStoredPath(baseAsset);
   }
 
   const isGenerating = card.status === 'running' || card.status === 'queued';
@@ -239,7 +232,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-black aspect-[16/10] flex items-center justify-center group">
           {activeDisplayUrl ? (
             <img
-              src={activeDisplayUrl}
+              src={assetUrl(activeDisplayUrl)}
               alt={card.title}
               className="w-full h-full object-cover rounded-xl"
               onError={(e) => {

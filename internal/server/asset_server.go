@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -34,13 +35,18 @@ func (s *AssetServer) RegisterRoutes(r *gin.Engine) {
 }
 
 func (s *AssetServer) handleServeAsset(c *gin.Context) {
-	relParam := c.Param("filepath")
-	cleanSlash := "/" + strings.TrimLeft(filepath.ToSlash(relParam), "/")
+	serveAssetFile(c, s.rootDir, c.Param("filepath"))
+}
+
+// serveAssetFile serves relParam from under rootDir (an absolute path) with
+// traversal protection, ETag and Range support.
+func serveAssetFile(c *gin.Context, rootDir string, relParam string) {
+	cleanSlash := path.Clean("/" + strings.TrimLeft(filepath.ToSlash(relParam), "/"))
 	cleanLocalPath := filepath.FromSlash(strings.TrimPrefix(cleanSlash, "/"))
-	targetPath := filepath.Join(s.rootDir, cleanLocalPath)
+	targetPath := filepath.Join(rootDir, cleanLocalPath)
 
 	// Directory traversal guard
-	if !strings.HasPrefix(targetPath, s.rootDir) {
+	if targetPath != rootDir && !strings.HasPrefix(targetPath, rootDir+string(filepath.Separator)) {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Access denied"})
 		return
 	}

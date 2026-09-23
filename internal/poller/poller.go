@@ -19,10 +19,13 @@ import (
 
 // TaskPollerConfig holds configuration for the background task poller.
 type TaskPollerConfig struct {
-	DB                 *gorm.DB
-	Adapters           map[string]adapter.ProviderAdapter
-	Registry           *adapter.AdapterRegistry
-	AssetDir           string
+	DB       *gorm.DB
+	Adapters map[string]adapter.ProviderAdapter
+	Registry *adapter.AdapterRegistry
+	AssetDir string
+	// AssetRoot, when set, picks the download root per task (a project's assets
+	// folder). An empty result falls back to AssetDir.
+	AssetRoot          func(task *model.MediaTask) string
 	Limiter            *IPMLimiter
 	Broadcaster        EventBroadcaster
 	ImagePollInterval  time.Duration
@@ -37,21 +40,22 @@ type TaskPollerConfig struct {
 
 // TaskPoller manages background task execution, polling, rate limiting, and asset persistence.
 type TaskPoller struct {
-	db                 *gorm.DB
-	registry           *adapter.AdapterRegistry
-	assetDir           string
-	limiter            *IPMLimiter
-	broadcaster        EventBroadcaster
-	imagePollInterval  time.Duration
-	imageTimeout       time.Duration
-	videoPollInterval  time.Duration
-	videoTimeout       time.Duration
-	videoInitialDelay  time.Duration
-	imageInitialDelay  time.Duration
-	taskQueue          chan string
-	activeTasks        sync.Map // map[string]context.CancelFunc
-	cancelWorkerCtx    context.CancelFunc
-	workerWg           sync.WaitGroup
+	db                *gorm.DB
+	registry          *adapter.AdapterRegistry
+	assetDir          string
+	assetRoot         func(task *model.MediaTask) string
+	limiter           *IPMLimiter
+	broadcaster       EventBroadcaster
+	imagePollInterval time.Duration
+	imageTimeout      time.Duration
+	videoPollInterval time.Duration
+	videoTimeout      time.Duration
+	videoInitialDelay time.Duration
+	imageInitialDelay time.Duration
+	taskQueue         chan string
+	activeTasks       sync.Map // map[string]context.CancelFunc
+	cancelWorkerCtx   context.CancelFunc
+	workerWg          sync.WaitGroup
 }
 
 // NewTaskPoller creates and initializes a new TaskPoller instance.
@@ -122,6 +126,7 @@ func NewTaskPoller(cfg TaskPollerConfig) *TaskPoller {
 		db:                cfg.DB,
 		registry:          reg,
 		assetDir:          assetDir,
+		assetRoot:         cfg.AssetRoot,
 		limiter:           limiter,
 		broadcaster:       broadcaster,
 		imagePollInterval: imageInterval,
@@ -364,6 +369,16 @@ func (p *TaskPoller) ProcessTask(ctx context.Context, taskID string) {
 	}
 }
 
+// assetRootFor returns the folder a task's outputs are downloaded into.
+func (p *TaskPoller) assetRootFor(task *model.MediaTask) string {
+	if p.assetRoot != nil {
+		if root := p.assetRoot(task); root != "" {
+			return root
+		}
+	}
+	return p.assetDir
+}
+
 func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, res *adapter.PollResult, provAdapter adapter.ProviderAdapter, isLayerDecomp bool) {
 	now := time.Now().UTC()
 	var downloadedAssets []model.TaskAsset
@@ -377,7 +392,7 @@ func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, r
 			actualLayersCount++
 		}
 
-		targetLocalPath := filepath.Join(p.assetDir, asset.LocalPath)
+		targetLocalPath := filepath.Join(p.assetRootFor(task), asset.LocalPath)
 		if err := provAdapter.DownloadAsset(ctx, asset.RemoteURL, targetLocalPath); err != nil {
 			log.Printf("[TaskPoller] Failed to download asset %s to %s: %v", asset.RemoteURL, targetLocalPath, err)
 			if firstDownloadErr == nil {

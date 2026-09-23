@@ -16,6 +16,8 @@ interface CanvasHeaderProps {
   onAddVideoCard: () => void;
   onAddTextCard: () => void;
   onOpenSettings: () => void;
+  /** Project name, save status and switcher. */
+  projectSlot?: React.ReactNode;
 }
 
 export const CanvasHeader: React.FC<CanvasHeaderProps> = ({
@@ -26,6 +28,7 @@ export const CanvasHeader: React.FC<CanvasHeaderProps> = ({
   onAddVideoCard,
   onAddTextCard,
   onOpenSettings,
+  projectSlot,
 }) => {
   return (
     <header className="fixed top-4 left-4 right-4 z-40 flex items-center justify-between pointer-events-none select-none">
@@ -44,6 +47,13 @@ export const CanvasHeader: React.FC<CanvasHeaderProps> = ({
             </h1>
           </div>
         </div>
+
+        {projectSlot && (
+          <>
+            <div className="h-4 w-[1px] bg-slate-800" />
+            {projectSlot}
+          </>
+        )}
 
         <div className="h-4 w-[1px] bg-slate-800" />
 

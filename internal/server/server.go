@@ -16,6 +16,7 @@ import (
 	"media-workstage/internal/llm"
 	"media-workstage/internal/model"
 	"media-workstage/internal/poller"
+	"media-workstage/internal/project"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -29,6 +30,7 @@ type Server struct {
 	assetServer *AssetServer
 	registry    *adapter.AdapterRegistry
 	poller      *poller.TaskPoller
+	projects    *project.Store
 	staticFS    fs.FS
 }
 
@@ -50,6 +52,7 @@ func NewServer(
 
 	var p *poller.TaskPoller
 	var staticFS fs.FS
+	var projects *project.Store
 	explicitRegistry := false
 
 	for _, opt := range opts {
@@ -61,6 +64,8 @@ func NewServer(
 			explicitRegistry = true
 		case fs.FS:
 			staticFS = v
+		case *project.Store:
+			projects = v
 		}
 	}
 
@@ -73,11 +78,15 @@ func NewServer(
 	}
 
 	if p == nil {
-		p = poller.NewTaskPoller(poller.TaskPollerConfig{
+		cfg := poller.TaskPollerConfig{
 			DB:       db,
 			Registry: reg,
 			AssetDir: assetDir,
-		})
+		}
+		if projects != nil {
+			cfg.AssetRoot = func(task *model.MediaTask) string { return projects.AssetRoot(task.ProjectID) }
+		}
+		p = poller.NewTaskPoller(cfg)
 	}
 
 	return &Server{
@@ -85,6 +94,7 @@ func NewServer(
 		assetServer: NewAssetServer(assetDir),
 		registry:    reg,
 		poller:      p,
+		projects:    projects,
 		staticFS:    staticFS,
 	}
 }
@@ -185,6 +195,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.GET("/tasks", s.handleListTasks)
 		api.GET("/tasks/:id", s.handleGetTask)
 		api.GET("/tasks/events", s.handleSSEEvents)
+		s.registerProjectRoutes(api)
 	}
 
 	// Embedded SPA Static File Server & Fallback handler
@@ -658,6 +669,7 @@ func (s *Server) handleGenerateText(c *gin.Context) {
 }
 
 type CreateTaskPayload struct {
+	ProjectID       string                 `json:"project_id"`
 	Provider        string                 `json:"provider" binding:"required"`
 	Model           string                 `json:"model" binding:"required"`
 	TaskType        string                 `json:"task_type" binding:"required"`
@@ -674,6 +686,22 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 		return
 	}
 
+	if payload.ProjectID != "" {
+		if s.projects == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Project storage is not configured"})
+			return
+		}
+		projectDir, err := s.projects.Dir(payload.ProjectID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown project: " + payload.ProjectID})
+			return
+		}
+		if err := resolveProjectReferences(projectDir, payload.ReferenceAssets); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
 	params := payload.Params
 	if params == nil {
 		params = make(map[string]interface{})
@@ -688,6 +716,7 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 
 	task := model.MediaTask{
 		ID:         taskID,
+		ProjectID:  payload.ProjectID,
 		Provider:   payload.Provider,
 		Model:      payload.Model,
 		TaskType:   payload.TaskType,

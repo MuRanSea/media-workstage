@@ -30,7 +30,8 @@ type ReferenceItem struct {
 // MediaTask represents a generation job in the system.
 type MediaTask struct {
 	ID                 string      `gorm:"primaryKey;type:varchar(64)" json:"id"`
-	Provider           string      `gorm:"type:varchar(32);index;not null" json:"provider"` // "ark" | "minimax"
+	ProjectID          string      `gorm:"type:varchar(64);index" json:"project_id,omitempty"` // Owning project; empty for pre-project tasks
+	Provider          string      `gorm:"type:varchar(32);index;not null" json:"provider"` // "ark" | "minimax"
 	ProviderTaskID     string      `gorm:"type:varchar(128);index" json:"provider_task_id"`
 	Model              string      `gorm:"type:varchar(64);not null" json:"model"`
 	TaskType           string      `gorm:"type:varchar(32);not null" json:"task_type"` // "video_generation" | "image_generation"

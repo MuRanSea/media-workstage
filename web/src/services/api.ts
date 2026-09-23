@@ -1,6 +1,8 @@
 import type { TaskAssetDto } from '../types/canvas.ts';
 
 export interface CreateTaskPayload {
+  /** Owning project; its folder receives the outputs and resolves reference paths. */
+  project_id?: string;
   provider: string;
   model: string;
   task_type: string;

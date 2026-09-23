@@ -31,6 +31,7 @@ import {
 import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from './ProviderModelPicker.tsx';
 import { InputPort, LinkedPromptBox, connectHintRing, type ConnectHint } from './CardPorts.tsx';
+import { assetUrl } from '../../engine/assetPaths.ts';
 
 interface VideoCardViewProps {
   card: SpatialCard;
@@ -328,7 +329,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
         <div className="relative rounded-xl overflow-hidden border border-slate-700/80 bg-black aspect-video flex items-center justify-center group">
           {videoUrl ? (
             <video
-              src={videoUrl}
+              src={assetUrl(videoUrl)}
               autoPlay
               loop
               muted

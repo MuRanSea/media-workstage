@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SpatialCard } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
-import { screenToWorld } from '../engine/matrix.ts';
+import { screenToWorld, type CanvasTransform } from '../engine/matrix.ts';
 import { connectCards, hasOutputPort } from '../engine/connections.ts';
 import { ImageCardView } from './cards/ImageCardView.tsx';
 import { VideoCardView } from './cards/VideoCardView.tsx';
@@ -22,6 +22,12 @@ interface SpatialCanvasProps {
   onAddVideoCard: () => void;
   onAddTextCard: () => void;
   onTriggerGenerate: (cardId: string) => void;
+  /** Viewport to open with (a saved project's). */
+  initialViewport?: CanvasTransform;
+  /** Called whenever the viewport pans or zooms. */
+  onViewportChange?: (viewport: CanvasTransform) => void;
+  /** Project controls rendered inside the header's brand area. */
+  headerSlot?: React.ReactNode;
 }
 
 interface Ray {
@@ -54,6 +60,9 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   onAddVideoCard,
   onAddTextCard,
   onTriggerGenerate,
+  initialViewport,
+  onViewportChange,
+  headerSlot,
 }) => {
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
@@ -83,7 +92,14 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     cards,
     setCards,
     containerRef,
+    initialZoom: initialViewport?.zoom,
+    initialPanX: initialViewport?.panX,
+    initialPanY: initialViewport?.panY,
   });
+
+  useEffect(() => {
+    onViewportChange?.(transform);
+  }, [transform, onViewportChange]);
 
   const availableImageCards = useMemo(
     () => cards.filter((c) => c.type === 'image'),
@@ -275,6 +291,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         onAddVideoCard={onAddVideoCard}
         onAddTextCard={onAddTextCard}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        projectSlot={headerSlot}
       />
 
       {/* Settings Modal */}

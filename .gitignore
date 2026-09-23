@@ -39,3 +39,6 @@ Thumbs.db
 
 # Local runtime data (SQLite + generated assets)
 data/
+
+# Local projects (user work)
+projects/

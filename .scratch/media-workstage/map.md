@@ -26,9 +26,11 @@
 - [11-image-card-node](issues/11-image-card-node.md): 完成 Seedream 5.0 生图卡片组件与参数抽屉、单源严格尺寸编译器（档位+比例映射 vs 显式像素）、图层拆分多透明图层解包与连环组图画布一键裂变展开。
 - [12-video-card-and-references](issues/12-video-card-and-references.md): 完成多模态视频生成卡片、全模态/首尾帧/纯文生 3 种互斥模式、Prompt 文本框 `@` 智能补全与快捷胶囊、多图参考池路径排他解析与 `@图N` 重新编号、SVG 渐变流光连线引擎及内嵌 MP4 循环播放器。
 - [13-embedded-packaging-and-e2e](issues/13-embedded-packaging-and-e2e.md): 完成 Go `embed.FS` 单二进制打包、Gin SPA Fallback 路由（解耦 `/static` 与 `/assets` 命名空间）、跨平台自动化构建流水线（`build.ps1`, `Makefile`）、浏览器自动弹出及全流程端到端冒烟验证。
+- [14-project-store-backend](issues/14-project-store-backend.md): 工程以磁盘文件夹持久化（`project.json` + `assets/`），`internal/project.Store` 原子写入与 revision 乐观并发，工程 REST API 与 `.trash` 删除。详见 [docs/adr/0003-project-folders-persistence.md](../../docs/adr/0003-project-folders-persistence.md)。
+- [15-project-scoped-tasks-and-assets](issues/15-project-scoped-tasks-and-assets.md): 任务携带 `project_id`，产物下载进工程文件夹并经 `/api/projects/:id/assets` 访问，参考素材按工程解析。
+- [16-project-ui-and-autosave](issues/16-project-ui-and-autosave.md): 工程列表页、顶栏工程切换与改名、防抖自动保存 + Ctrl+S + 冲突提示、打开工程时补齐任务状态。
 ## Not yet specified
 
-- 画布工程文件持久化（本地 JSON 项目保存与恢复）
 - 视频后处理工具扩展（火山 AI MediaKit 智能剪辑、画质增强集成）
 
 ## Out of scope
