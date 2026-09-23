@@ -30,7 +30,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	}
 
 	// AutoMigrate tables
-	if err := database.AutoMigrate(&model.MediaTask{}, &model.TaskAsset{}); err != nil {
+	if err := database.AutoMigrate(&model.MediaTask{}, &model.TaskAsset{}, &model.SystemConfig{}); err != nil {
 		return nil, fmt.Errorf("failed to run database automigrate: %w", err)
 	}
 

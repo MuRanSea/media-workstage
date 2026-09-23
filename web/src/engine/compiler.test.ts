@@ -1,0 +1,161 @@
+import { describe, it, expect } from 'vitest';
+import {
+  compileImageTaskPayload,
+  compileCardImagePayload,
+} from './compiler.ts';
+import type { SpatialCard } from '../types/canvas.ts';
+
+describe('Seedream Image Payload Compiler', () => {
+  it('compiles tier preset + aspect ratio to exact mapped pixel dimension', () => {
+    const payload = compileImageTaskPayload({
+      model: 'doubao-seedream-5-0-pro-260628',
+      prompt: 'A cyberpunk warrior',
+      sizeMode: 'tier',
+      imageTier: '2K',
+      imageRatioPreset: '16:9',
+      imageFormat: 'jpeg',
+      watermark: false,
+    });
+    expect(payload.provider).toBe('ark');
+    expect(payload.task_type).toBe('image_generation');
+    expect(payload.task_mode).toBe('single');
+    // 2K 16:9 maps to 2816x1584
+    expect(payload.params?.size).toBe('2816x1584');
+    expect(payload.params?.output_format).toBe('jpeg');
+    expect(payload.params?.watermark).toBe(false);
+  });
+
+  it('rejects unsupported tier or ratio combinations rather than silently falling back', () => {
+    expect(() =>
+      compileImageTaskPayload({
+        model: 'doubao-seedream-5-0-pro-260628',
+        prompt: 'test',
+        sizeMode: 'tier',
+        imageTier: '10K', // invalid tier
+        imageRatioPreset: '16:9',
+      })
+    ).toThrowError(/Unsupported Seedream size tier/);
+
+    expect(() =>
+      compileImageTaskPayload({
+        model: 'doubao-seedream-5-0-pro-260628',
+        prompt: 'test',
+        sizeMode: 'tier',
+        imageTier: '3K',
+        imageRatioPreset: '3:2', // 3K only maps 1:1, 16:9, 9:16, 4:3, 3:4
+      })
+    ).toThrowError(/Unsupported tier\/ratio combination/);
+  });
+
+  it('compiles and validates explicit custom pixel dimensions', () => {
+    const valid = compileImageTaskPayload({
+      model: 'doubao-seedream-5-0-pro-260628',
+      prompt: 'test',
+      sizeMode: 'custom_pixels',
+      customPixels: '2048x1024',
+    });
+    expect(valid.params?.size).toBe('2048x1024');
+
+    expect(() =>
+      compileImageTaskPayload({
+        model: 'doubao-seedream-5-0-pro-260628',
+        prompt: 'test',
+        sizeMode: 'custom_pixels',
+        customPixels: 'invalid-dimension',
+      })
+    ).toThrowError(/Invalid custom pixel dimensions/);
+  });
+
+  it('compiles layer decomposition mode with size: auto and layer_decomposition: true', () => {
+    const layerPayload = compileImageTaskPayload({
+      model: 'doubao-seedream-5-0-pro-260628',
+      prompt: 'Layered character',
+      imageMode: 'layer_decomp',
+    });
+
+    expect(layerPayload.task_mode).toBe('layer_decomp');
+    expect(layerPayload.params?.size).toBe('auto');
+    expect(layerPayload.params?.layer_decomposition).toBe(true);
+    expect(layerPayload.params?.sequential_image_generation).toBe('disabled');
+  });
+
+  it('compiles sequential storyboard mode with sequential_image_generation: auto', () => {
+    const seqPayload = compileImageTaskPayload({
+      model: 'doubao-seedream-5-0-lite-260128',
+      prompt: 'Story comics',
+      imageMode: 'sequential',
+      imageTier: '2K',
+      imageRatioPreset: '1:1',
+    });
+
+    expect(seqPayload.task_mode).toBe('sequential');
+    expect(seqPayload.params?.size).toBe('2048x2048');
+    expect(seqPayload.params?.sequential_image_generation).toBe('auto');
+    expect(seqPayload.params?.layer_decomposition).toBe(false);
+  });
+
+  it('compiles directly from a SpatialCard object identically', () => {
+    const card: SpatialCard = {
+      id: 'c-test',
+      type: 'image',
+      title: 'Card Test',
+      tagIndex: 1,
+      x: 0,
+      y: 0,
+      width: 340,
+      model: 'doubao-seedream-5-0-pro-260628',
+      prompt: 'Prompt test',
+      status: 'idle',
+      progress: 0,
+      imageTier: '1K',
+      imageRatioPreset: '1:1',
+    };
+
+    const compiled = compileCardImagePayload(card);
+    expect(compiled.params?.size).toBe('1024x1024');
+  });
+});
+
+describe('Channel Image Payload Compiler', () => {
+  it('sends non-Ark channels a provider-neutral ratio + resolution payload', () => {
+    const payload = compileImageTaskPayload({
+      provider: 'openai',
+      model: 'gpt-image-2',
+      prompt: 'A red fox',
+      imageRatioPreset: '9:16',
+      imageResolution: '4K',
+      // Seedream-only settings must not leak into other channels
+      imageMode: 'layer_decomp',
+      sizeMode: 'custom_pixels',
+      customPixels: 'not-a-size',
+    });
+    expect(payload).toEqual({
+      provider: 'openai',
+      model: 'gpt-image-2',
+      task_type: 'image_generation',
+      task_mode: 'single',
+      prompt: 'A red fox',
+      params: { aspect_ratio: '9:16', resolution: '4K' },
+    });
+  });
+
+  it('keeps cards without a provider on the Seedream path', () => {
+    const payload = compileCardImagePayload({
+      id: 'c1',
+      type: 'image',
+      title: 't',
+      tagIndex: 1,
+      x: 0,
+      y: 0,
+      width: 340,
+      prompt: 'p',
+      model: 'doubao-seedream-5-0-pro-260628',
+      status: 'idle',
+      progress: 0,
+      imageTier: '1K',
+      imageRatioPreset: '1:1',
+    } as SpatialCard);
+    expect(payload.provider).toBe('ark');
+    expect(payload.params?.size).toBe('1024x1024');
+  });
+});

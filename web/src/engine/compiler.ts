@@ -1,0 +1,121 @@
+import { SEEDREAM_PIXEL_MAP, type SpatialCard } from '../types/canvas.ts';
+import type { ChannelId, CreateTaskPayload } from '../services/api.ts';
+
+export interface ImageCompilationInput {
+  /** Channel running the model; defaults to 'ark' (Seedream rules). */
+  provider?: ChannelId;
+  model: string;
+  prompt: string;
+  imageMode?: 'single' | 'layer_decomp' | 'sequential';
+  sizeMode?: 'tier' | 'custom_pixels';
+  imageTier?: string;
+  imageRatioPreset?: string;
+  customPixels?: string;
+  imageFormat?: 'jpeg' | 'png';
+  watermark?: boolean;
+  background?: 'opaque' | 'transparent';
+  imageResolution?: '1K' | '2K' | '4K';
+}
+
+/**
+ * Compiles and strictly validates a Seedream image generation request payload.
+ * Used identically by both the JSON inspector and POST /api/tasks.
+ */
+export function compileImageTaskPayload(input: ImageCompilationInput): CreateTaskPayload {
+  const provider = input.provider ?? 'ark';
+  if (provider !== 'ark') {
+    return compileChannelImagePayload(provider, input);
+  }
+
+  const isLayerDecomp = input.imageMode === 'layer_decomp';
+  const isSequential = input.imageMode === 'sequential';
+
+  let finalSize = '2048x2048';
+
+  if (isLayerDecomp) {
+    finalSize = 'auto';
+  } else if (input.sizeMode === 'custom_pixels') {
+    const custom = input.customPixels?.trim();
+    if (!custom || !/^\d+\s*[xX]\s*\d+$/.test(custom)) {
+      throw new Error(`Invalid custom pixel dimensions: "${input.customPixels}", expected <width>x<height>`);
+    }
+    finalSize = custom.toLowerCase().replace(/\s+/g, '');
+  } else {
+    // Method 1: Tier + Aspect Ratio mapping
+    const tier = input.imageTier ?? '2K';
+    const ratio = input.imageRatioPreset ?? '16:9';
+
+    const tierMap = SEEDREAM_PIXEL_MAP[tier];
+    if (!tierMap) {
+      throw new Error(`Unsupported Seedream size tier: "${tier}"`);
+    }
+
+    const mappedDimension = tierMap[ratio];
+    if (!mappedDimension) {
+      throw new Error(`Unsupported tier/ratio combination: tier="${tier}", ratio="${ratio}"`);
+    }
+
+    finalSize = mappedDimension;
+  }
+
+  const taskMode = isLayerDecomp
+    ? 'layer_decomp'
+    : isSequential
+    ? 'sequential'
+    : 'single';
+
+  return {
+    provider: 'ark',
+    model: input.model,
+    task_type: 'image_generation',
+    task_mode: taskMode,
+    prompt: input.prompt,
+    params: {
+      size: finalSize,
+      response_format: 'url',
+      output_format: input.imageFormat ?? 'jpeg',
+      watermark: input.watermark ?? false,
+      background: input.background ?? 'opaque',
+      layer_decomposition: isLayerDecomp,
+      sequential_image_generation: isSequential ? 'auto' : 'disabled',
+    },
+  };
+}
+
+/**
+ * Compiles the provider-neutral image payload used by non-Ark channels. The backend
+ * adapter maps aspect_ratio + resolution onto each provider's own size parameters.
+ */
+function compileChannelImagePayload(provider: ChannelId, input: ImageCompilationInput): CreateTaskPayload {
+  return {
+    provider,
+    model: input.model,
+    task_type: 'image_generation',
+    task_mode: 'single',
+    prompt: input.prompt,
+    params: {
+      aspect_ratio: input.imageRatioPreset ?? '16:9',
+      resolution: input.imageResolution ?? '2K',
+    },
+  };
+}
+
+/**
+ * Convenience helper to compile directly from a SpatialCard.
+ */
+export function compileCardImagePayload(card: SpatialCard): CreateTaskPayload {
+  return compileImageTaskPayload({
+    provider: card.provider,
+    model: card.model,
+    prompt: card.prompt,
+    imageMode: card.imageMode,
+    sizeMode: card.sizeMode,
+    imageTier: card.imageTier,
+    imageRatioPreset: card.imageRatioPreset,
+    customPixels: card.customPixels,
+    imageFormat: card.imageFormat,
+    watermark: card.watermark,
+    background: card.background,
+    imageResolution: card.imageResolution,
+  });
+}

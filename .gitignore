@@ -36,3 +36,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Local runtime data (SQLite + generated assets)
+data/

@@ -22,6 +22,9 @@ type ReferenceItem struct {
 	Label     string `json:"label"`
 	URL       string `json:"url,omitempty"`
 	LocalPath string `json:"local_path,omitempty"`
+	// RemoteURL is where the provider originally served a generated image. It may
+	// expire; adapters needing a public URL use it only when they cannot upload LocalPath.
+	RemoteURL string `json:"remote_url,omitempty"`
 }
 
 // MediaTask represents a generation job in the system.
