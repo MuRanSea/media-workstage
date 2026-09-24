@@ -20,8 +20,8 @@ type PollResult struct {
 	ErrorCode          string
 	ErrorMessage       string
 	Assets             []model.TaskAsset
-	// Actions are the follow-ups the provider offers on this result.
-	Actions []model.TaskAction
+	// ResultActions are the follow-ups the provider offers on this result.
+	ResultActions []model.ResultAction
 	// Text is a text result (e.g. Midjourney Describe); such a task may have no assets.
 	Text string
 }

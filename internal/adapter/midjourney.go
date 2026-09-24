@@ -106,6 +106,13 @@ const (
 	midjourneyCodeQueued    = 22
 )
 
+// Task modes the adapter dispatches on; any other mode is an imagine.
+const (
+	midjourneyModeAction   = "action"
+	midjourneyModeBlend    = "blend"
+	midjourneyModeDescribe = "describe"
+)
+
 // SubmitTask dispatches on the task mode: "action" runs a follow-up on a finished task,
 // anything else is an imagine.
 func (a *MidjourneyAdapter) SubmitTask(ctx context.Context, task *model.MediaTask) (string, error) {
@@ -116,11 +123,11 @@ func (a *MidjourneyAdapter) SubmitTask(ctx context.Context, task *model.MediaTas
 		return "", fmt.Errorf("%s 未填写 Base URL：Midjourney 没有官方地址，请在设置中填写代理或中转地址", a.name)
 	}
 	switch task.TaskMode {
-	case "action":
+	case midjourneyModeAction:
 		return a.submitAction(ctx, task)
-	case "blend":
+	case midjourneyModeBlend:
 		return a.submitBlend(ctx, task)
-	case "describe":
+	case midjourneyModeDescribe:
 		return a.submitDescribe(ctx, task)
 	default:
 		return a.submitImagine(ctx, task)
@@ -317,7 +324,7 @@ func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 
 	switch resp.Status {
 	case "SUCCESS":
-		if task.TaskMode == "describe" {
+		if task.TaskMode == midjourneyModeDescribe {
 			// The result is text; the task's image is the user's own upload.
 			if strings.TrimSpace(resp.Properties.FinalPrompt) == "" {
 				return &PollResult{Status: model.TaskStatusFailed, ErrorCode: "EmptyResult", ErrorMessage: "Midjourney 反推完成但没有返回提示词"}, nil
@@ -329,11 +336,11 @@ func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 		}
 		asset := imageAsset(task.ID, 0, resp.ImageURL, imageExt("", resp.ImageURL))
 		return &PollResult{
-			Status:    model.TaskStatusSucceeded,
-			Progress:  100,
-			ResultURL: resp.ImageURL,
-			Assets:    []model.TaskAsset{asset},
-			Actions:   midjourneyActions(resp.Buttons),
+			Status:        model.TaskStatusSucceeded,
+			Progress:      100,
+			ResultURL:     resp.ImageURL,
+			Assets:        []model.TaskAsset{asset},
+			ResultActions: midjourneyActions(resp.Buttons),
 		}, nil
 
 	case "FAILURE", "CANCEL":
@@ -364,8 +371,8 @@ func (a *MidjourneyAdapter) PollTimeout(*model.MediaTask) time.Duration {
 var midjourneyInteractiveButtons = []string{"CustomZoom", "Inpaint", "PicReader", "BOOKMARK"}
 
 // midjourneyActions turns the result's buttons into the follow-ups a card can run directly.
-func midjourneyActions(buttons []midjourneyButton) []model.TaskAction {
-	var actions []model.TaskAction
+func midjourneyActions(buttons []midjourneyButton) []model.ResultAction {
+	var actions []model.ResultAction
 next:
 	for _, b := range buttons {
 		if b.CustomID == "" {
@@ -376,7 +383,7 @@ next:
 				continue next
 			}
 		}
-		actions = append(actions, model.TaskAction{ID: b.CustomID, Label: b.Label, Emoji: b.Emoji})
+		actions = append(actions, model.ResultAction{ID: b.CustomID, Label: b.Label, Emoji: b.Emoji})
 	}
 	return actions
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type SpatialCard } from '../types/canvas.ts';
+import { isDescribeCard, type SpatialCard } from '../types/canvas.ts';
 import { SpatialCanvas } from './SpatialCanvas.tsx';
 import { ProjectSwitcher } from './ProjectSwitcher.tsx';
 import {
@@ -148,7 +148,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       return;
     }
     // Describe cards are Midjourney tasks; other text cards chat with an LLM.
-    const isDescribe = targetCard.derivedFrom?.operation === 'describe';
+    const isDescribe = isDescribeCard(targetCard);
     if (targetCard.type === 'text' && !isDescribe) {
       await handleGenerateText(targetCard);
       return;

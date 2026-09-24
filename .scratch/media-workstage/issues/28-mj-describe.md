@@ -16,4 +16,4 @@
 
 前端：`findDescribeProvider`（第一个已配置、绑了图片模型的 MJ 协议服务商）；成功的图片卡右键菜单「Midjourney 反推提示词」（存在这样的服务商时才出现），新建派生文本卡（`spawnDescribeCard`：来源图作为参考，`derivedFrom.operation = describe`，紫色派生连线，不再额外画参考连线）并立即提交；`handleTriggerGenerate` 对这类文本卡走任务流程（`compileDescribePayload`），其他文本卡仍走 LLM。结果由 `applyTaskToCard` 写入 `textOutput`，可直接连到图片卡当提示词。文本卡与属性面板对反推卡隐藏用途/模型选择，按钮为「反推提示词 / 重新反推」。
 
-验证：`TestMidjourneySubmitDescribe`、`TestMidjourneyPollTask_DescribeText`、`TestMidjourneyDescribe_EndToEnd`；`mjActions.test.ts` +3、`compiler.test.ts` +1；前端 106、Go 全部通过。
+验证：`TestMidjourneySubmitDescribe`、`TestMidjourneyPollTask_DescribeText`、`TestMidjourneyDescribe_EndToEnd`；`derivedCards.test.ts` +3、`compiler.test.ts` +1；前端 106、Go 全部通过。

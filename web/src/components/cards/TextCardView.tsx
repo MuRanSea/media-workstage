@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Check, Copy, FileText, Link2, Sparkles } from 'lucide-react';
 import { MISSING_PROVIDER_HINT, buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { getTextPreset } from '../../engine/textPresets.ts';
+import { isDescribeCard } from '../../types/canvas.ts';
 import { useChannels } from '../../services/channels.ts';
 import { Button } from '../ui/Button.tsx';
 import { OutputPort } from './CardPorts.tsx';
@@ -33,7 +34,7 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
   const preset = getTextPreset(card.textPreset);
   const isGenerating = card.status === 'running' || card.status === 'queued';
   // Describe cards run Midjourney on their source image instead of chatting with an LLM.
-  const isDescribe = card.derivedFrom?.operation === 'describe';
+  const isDescribe = isDescribeCard(card);
 
   // New cards start on the first bound chat model once channel config has loaded.
   useEffect(() => {

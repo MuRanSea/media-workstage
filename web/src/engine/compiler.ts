@@ -1,8 +1,8 @@
-import { SEEDREAM_PIXEL_MAP, type MjSpeed, type ReferenceItem, type SpatialCard } from '../types/canvas.ts';
+import { SEEDREAM_PIXEL_MAP, type MjOperation, type MjSpeed, type ReferenceItem, type SpatialCard } from '../types/canvas.ts';
 import type { CreateTaskPayload, ProviderId } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
 import { resolveReferenceAsset } from './videoCompiler.ts';
-import { MJ_MAX_REFERENCES } from './connections.ts';
+import { MJ_MAX_REFERENCES, MJ_MIN_BLEND_IMAGES } from './connections.ts';
 
 export interface ImageCompilationInput {
   /** Provider running the model; defaults to 'ark'. Ark-protocol providers get Seedream rules. */
@@ -19,7 +19,7 @@ export interface ImageCompilationInput {
   background?: 'opaque' | 'transparent';
   imageResolution?: '1K' | '2K' | '4K';
   mjSpeed?: MjSpeed;
-  mjOperation?: 'imagine' | 'blend';
+  mjOperation?: MjOperation;
   /** Midjourney reference images, resolved against `allCards`. */
   references?: ReferenceItem[];
   allCards?: SpatialCard[];
@@ -111,7 +111,9 @@ function compileChannelImagePayload(provider: ProviderId, input: ImageCompilatio
   if (input.references?.length) payload.reference_assets = compileReferenceImages(input.references, input.allCards);
   if (input.mjOperation === 'blend') {
     const count = input.references?.length ?? 0;
-    if (count < 2 || count > MJ_MAX_REFERENCES) throw new Error(`Blend 需要连入 2–5 张图片，当前 ${count} 张`);
+    if (count < MJ_MIN_BLEND_IMAGES || count > MJ_MAX_REFERENCES) {
+      throw new Error(`Blend 需要连入 ${MJ_MIN_BLEND_IMAGES}–${MJ_MAX_REFERENCES} 张图片，当前 ${count} 张`);
+    }
     // Blend takes no prompt; the backend still records one.
     payload.task_mode = 'blend';
     payload.prompt = input.prompt.trim() || 'Blend';
@@ -181,7 +183,7 @@ function compileActionPayload(card: SpatialCard): CreateTaskPayload {
 export function compileDescribePayload(card: SpatialCard, allCards: SpatialCard[] = []): CreateTaskPayload {
   if (!card.references?.length) throw new Error(`「${card.title}」没有要反推的图片`);
   return {
-    provider: card.provider ?? '',
+    provider: card.provider ?? 'ark',
     model: card.model,
     task_type: 'image_generation',
     task_mode: 'describe',

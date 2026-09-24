@@ -3,7 +3,7 @@ import { IMAGE_MODELS, MJ_SPEED_LABELS, SEEDREAM_PIXEL_MAP, type MjSpeed, type S
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
 import { imageModelPatch, removeReferencePatch } from '../../engine/cardParams.ts';
-import { MJ_MAX_REFERENCES } from '../../engine/connections.ts';
+import { MJ_MAX_REFERENCES, MJ_MIN_BLEND_IMAGES } from '../../engine/connections.ts';
 import { compileCardImagePayload } from '../../engine/compiler.ts';
 import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from '../cards/ProviderModelPicker.tsx';
@@ -141,7 +141,7 @@ const ImageSettings: React.FC<Props> = ({ card, cards, update, linkedPromptText 
             label="生成方式"
             hint={
               card.mjOperation === 'blend'
-                ? '把连入的 2–5 张图片混合成一张四宫格，不使用提示词；比例只分竖、方、横三种。'
+                ? `把连入的 ${MJ_MIN_BLEND_IMAGES}–${MJ_MAX_REFERENCES} 张图片混合成一张四宫格，不使用提示词；比例只分竖、方、横三种。`
                 : '按提示词生成；连入的图片作为垫图。'
             }
           >
@@ -154,8 +154,8 @@ const ImageSettings: React.FC<Props> = ({ card, cards, update, linkedPromptText 
                 {
                   value: 'blend',
                   label: 'Blend 混合',
-                  disabled: (card.references?.length ?? 0) < 2 && card.mjOperation !== 'blend',
-                  title: '需要连入至少 2 张图片',
+                  disabled: (card.references?.length ?? 0) < MJ_MIN_BLEND_IMAGES && card.mjOperation !== 'blend',
+                  title: `需要连入至少 ${MJ_MIN_BLEND_IMAGES} 张图片`,
                 },
               ]}
             />

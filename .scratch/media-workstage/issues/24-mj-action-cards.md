@@ -15,8 +15,8 @@
 
 类型：`TaskActionDto`、`DerivedFrom{cardId, taskId, actionId, label, operation}`，`SpatialCard.resultActions` / `derivedFrom`；`BackendTaskResponse.result_actions` / `result_text`。`applyTaskToCard` 成功时以新结果的按钮替换旧按钮，文本卡写入 `result_text`。复制卡片丢弃结果时一并丢掉 `resultActions`，保留 `derivedFrom`。
 
-`engine/mjActions.ts`：`actionLabel`（🔄 → 「重绘」）、`groupActions`、`spawnActionCard`（原卡右侧 80px，同源派生卡依次错开 40px，沿用服务商/模型/比例，提示词取来源卡的有效提示词）。`compileCardImagePayload` 对派生动作卡输出 `task_mode: action` + `{source_task_id, action_id}`。
+`engine/derivedCards.ts`：`actionLabel`（🔄 → 「重绘」）、`groupActions`、`spawnActionCard`（原卡右侧 80px，同源派生卡依次错开 40px，沿用服务商/模型/比例，提示词取来源卡的有效提示词）。`compileCardImagePayload` 对派生动作卡输出 `task_mode: action` + `{source_task_id, action_id}`。
 
 UI：图片卡成功且有按钮时显示按钮条（U 行、V 行、其他），同一动作的派生卡生成中时该按钮禁用；点击后新建派生卡（一次撤销步骤）并立即生成——`handleTriggerGenerate(cardId, card?)` + `cardsRef` 解决同一帧新卡找不到的问题。派生连线为紫色虚线、标注动作名、不可断开。属性面板对派生卡只显示来源说明与请求 JSON。
 
-验证：`mjActions.test.ts`（6）、`projectDoc.test.ts` +2、`cardFactory.test.ts` +1、`compiler.test.ts` +1；前端 92 个单测、`tsc` 通过。界面走查放到全部工单完成后统一进行。
+验证：`derivedCards.test.ts`（6）、`projectDoc.test.ts` +2、`cardFactory.test.ts` +1、`compiler.test.ts` +1；前端 92 个单测、`tsc` 通过。界面走查放到全部工单完成后统一进行。

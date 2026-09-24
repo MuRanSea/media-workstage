@@ -27,9 +27,9 @@ type ReferenceItem struct {
 	RemoteURL string `json:"remote_url,omitempty"`
 }
 
-// TaskAction is a follow-up operation a provider offers on a finished task, such as
+// ResultAction is a follow-up operation a provider offers on a finished task, such as
 // Midjourney's U1-U4 / V1-V4 buttons. ID is the provider's own identifier for it.
-type TaskAction struct {
+type ResultAction struct {
 	ID    string `json:"id"`
 	Label string `json:"label,omitempty"`
 	Emoji string `json:"emoji,omitempty"`
@@ -37,28 +37,28 @@ type TaskAction struct {
 
 // MediaTask represents a generation job in the system.
 type MediaTask struct {
-	ID                 string       `gorm:"primaryKey;type:varchar(64)" json:"id"`
-	ProjectID          string       `gorm:"type:varchar(64);index" json:"project_id,omitempty"` // Owning project; empty for pre-project tasks
-	Provider           string       `gorm:"type:varchar(32);index;not null" json:"provider"`    // "ark" | "minimax"
-	ProviderTaskID     string       `gorm:"type:varchar(128);index" json:"provider_task_id"`
-	Model              string       `gorm:"type:varchar(64);not null" json:"model"`
-	TaskType           string       `gorm:"type:varchar(32);not null" json:"task_type"` // "video_generation" | "image_generation"
-	TaskMode           string       `gorm:"type:varchar(32);not null" json:"task_mode"` // "all_modal" | "first_last_frame" | "text_to_video" | "single" | "layer_decomp" | "sequential"
-	Prompt             string       `gorm:"type:text;not null" json:"prompt"`
-	ParamsJSON         string       `gorm:"type:text" json:"params_json"`
-	Status             string       `gorm:"type:varchar(32);index;not null" json:"status"`
-	Progress           int          `gorm:"default:0" json:"progress"`
-	ErrorCode          string       `gorm:"type:varchar(64)" json:"error_code,omitempty"`
-	ErrorMessage       string       `gorm:"type:text" json:"error_message,omitempty"`
-	UsageTokens        int          `gorm:"default:0" json:"usage_tokens"`
-	OutputDurationSec  float64      `gorm:"default:0" json:"output_duration_sec"` // Returned video duration
-	BillingDetailsJSON string       `gorm:"type:text" json:"billing_details_json,omitempty"`
-	ResultActions      []TaskAction `gorm:"serializer:json;type:text" json:"result_actions,omitempty"` // Follow-ups offered on the result
-	ResultText         string       `gorm:"type:text" json:"result_text,omitempty"`                    // Text output (e.g. Midjourney Describe)
-	CreatedAt          time.Time    `gorm:"index;not null" json:"created_at"`
-	UpdatedAt          time.Time    `gorm:"not null" json:"updated_at"`
-	CompletedAt        *time.Time   `json:"completed_at,omitempty"`
-	Assets             []TaskAsset  `gorm:"foreignKey:TaskID;constraint:OnDelete:CASCADE" json:"assets,omitempty"`
+	ID                 string         `gorm:"primaryKey;type:varchar(64)" json:"id"`
+	ProjectID          string         `gorm:"type:varchar(64);index" json:"project_id,omitempty"` // Owning project; empty for pre-project tasks
+	Provider           string         `gorm:"type:varchar(32);index;not null" json:"provider"`    // "ark" | "minimax"
+	ProviderTaskID     string         `gorm:"type:varchar(128);index" json:"provider_task_id"`
+	Model              string         `gorm:"type:varchar(64);not null" json:"model"`
+	TaskType           string         `gorm:"type:varchar(32);not null" json:"task_type"` // "video_generation" | "image_generation"
+	TaskMode           string         `gorm:"type:varchar(32);not null" json:"task_mode"` // "all_modal" | "first_last_frame" | "text_to_video" | "single" | "layer_decomp" | "sequential"
+	Prompt             string         `gorm:"type:text;not null" json:"prompt"`
+	ParamsJSON         string         `gorm:"type:text" json:"params_json"`
+	Status             string         `gorm:"type:varchar(32);index;not null" json:"status"`
+	Progress           int            `gorm:"default:0" json:"progress"`
+	ErrorCode          string         `gorm:"type:varchar(64)" json:"error_code,omitempty"`
+	ErrorMessage       string         `gorm:"type:text" json:"error_message,omitempty"`
+	UsageTokens        int            `gorm:"default:0" json:"usage_tokens"`
+	OutputDurationSec  float64        `gorm:"default:0" json:"output_duration_sec"` // Returned video duration
+	BillingDetailsJSON string         `gorm:"type:text" json:"billing_details_json,omitempty"`
+	ResultActions      []ResultAction `gorm:"serializer:json;type:text" json:"result_actions,omitempty"` // Follow-ups offered on the result
+	ResultText         string         `gorm:"type:text" json:"result_text,omitempty"`                    // Text output (e.g. Midjourney Describe)
+	CreatedAt          time.Time      `gorm:"index;not null" json:"created_at"`
+	UpdatedAt          time.Time      `gorm:"not null" json:"updated_at"`
+	CompletedAt        *time.Time     `json:"completed_at,omitempty"`
+	Assets             []TaskAsset    `gorm:"foreignKey:TaskID;constraint:OnDelete:CASCADE" json:"assets,omitempty"`
 }
 
 // TaskAsset represents a granular output file produced by a MediaTask.

@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import type { SpatialCard } from '../../types/canvas.ts';
+import { isDescribeCard, type SpatialCard } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { TEXT_PRESETS, getTextPreset } from '../../engine/textPresets.ts';
 import { useChannels } from '../../services/channels.ts';
@@ -20,7 +20,7 @@ interface Props {
 }
 
 export const TextInspector: React.FC<Props> = ({ card, update, derivedSourceTitle }) => {
-  if (card.derivedFrom?.operation === 'describe') {
+  if (isDescribeCard(card)) {
     return (
       <Section title="来源">
         <p className="text-xs text-slate-300 leading-relaxed">

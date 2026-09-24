@@ -40,7 +40,7 @@ export function imageModelPatch(card: SpatialCard, option: ModelOption): Partial
   };
 }
 
-/** Midjourney-only settings (speed, blend, reference images) do not carry over to other channels. */
+/** Midjourney-only settings (speed, blend, reference images) do not carry over to other providers. */
 function midjourneyOnlyReset(option: ModelOption): Partial<SpatialCard> {
   return option.protocol === 'midjourney' ? {} : { mjSpeed: undefined, mjOperation: undefined, references: undefined };
 }

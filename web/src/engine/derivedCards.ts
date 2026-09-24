@@ -1,6 +1,7 @@
-import type { SpatialCard, TaskActionDto } from '../types/canvas.ts';
+import type { SpatialCard, ResultActionDto } from '../types/canvas.ts';
 import type { ProviderConfigItem, ProviderId } from '../services/api.ts';
 import { newCardId, nextTagIndex } from './cardFactory.ts';
+import { referenceTo } from './connections.ts';
 
 /** Horizontal gap between a card and the cards derived from it. */
 const DERIVED_GAP = 80;
@@ -8,20 +9,20 @@ const DERIVED_GAP = 80;
 const DERIVED_CASCADE = 40;
 
 /** Display name of a follow-up; Midjourney's reroll button carries only 🔄. */
-export function actionLabel(action: TaskActionDto): string {
+export function actionLabel(action: ResultActionDto): string {
   if (action.label) return action.label;
   if (action.emoji === '🔄') return '重绘';
   return action.emoji || action.id;
 }
 
 export interface ActionGroups {
-  upscale: TaskActionDto[];
-  variation: TaskActionDto[];
-  other: TaskActionDto[];
+  upscale: ResultActionDto[];
+  variation: ResultActionDto[];
+  other: ResultActionDto[];
 }
 
 /** Splits a grid's buttons into the U row, the V row and everything else, keeping order. */
-export function groupActions(actions: TaskActionDto[]): ActionGroups {
+export function groupActions(actions: ResultActionDto[]): ActionGroups {
   const groups: ActionGroups = { upscale: [], variation: [], other: [] };
   for (const a of actions) {
     if (/^U\d$/.test(a.label ?? '')) groups.upscale.push(a);
@@ -36,7 +37,7 @@ export function groupActions(actions: TaskActionDto[]): ActionGroups {
  * It keeps the source's provider, model and ratio; `prompt` is the source's effective
  * prompt (a linked text card's output, if any). Results and links are not copied.
  */
-export function spawnActionCard(source: SpatialCard, action: TaskActionDto, cards: SpatialCard[], prompt: string): SpatialCard {
+export function spawnActionCard(source: SpatialCard, action: ResultActionDto, cards: SpatialCard[], prompt: string): SpatialCard {
   if (!source.taskId) throw new Error(`「${source.title}」还没有可以操作的生成结果`);
   const tagIndex = nextTagIndex(cards);
   const label = actionLabel(action);
@@ -100,6 +101,6 @@ export function spawnDescribeCard(
     status: 'idle',
     progress: 0,
     derivedFrom: { cardId: source.id, taskId: source.taskId, label: '反推', operation: 'describe' },
-    references: [{ cardId: source.id, tagIndex: source.tagIndex, role: 'reference_image', label: source.title.slice(0, 10), url: source.resultUrl }],
+    references: [referenceTo(source)],
   };
 }

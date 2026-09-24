@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { SpatialCard, TaskActionDto } from '../types/canvas.ts';
+import type { SpatialCard, ResultActionDto } from '../types/canvas.ts';
 import type { ProviderConfigItem } from '../services/api.ts';
-import { actionLabel, findDescribeProvider, groupActions, spawnActionCard, spawnDescribeCard } from './mjActions.ts';
+import { actionLabel, findDescribeProvider, groupActions, spawnActionCard, spawnDescribeCard } from './derivedCards.ts';
 
-const U1: TaskActionDto = { id: 'MJ::JOB::upsample::1::h', label: 'U1' };
-const U2: TaskActionDto = { id: 'MJ::JOB::upsample::2::h', label: 'U2' };
-const V1: TaskActionDto = { id: 'MJ::JOB::variation::1::h', label: 'V1' };
-const REROLL: TaskActionDto = { id: 'MJ::JOB::reroll::0::h::SOLO', emoji: '🔄' };
-const STRONG: TaskActionDto = { id: 'MJ::JOB::high_variation::1::h::SOLO', label: 'Vary (Strong)', emoji: '🪄' };
+const U1: ResultActionDto = { id: 'MJ::JOB::upsample::1::h', label: 'U1' };
+const U2: ResultActionDto = { id: 'MJ::JOB::upsample::2::h', label: 'U2' };
+const V1: ResultActionDto = { id: 'MJ::JOB::variation::1::h', label: 'V1' };
+const REROLL: ResultActionDto = { id: 'MJ::JOB::reroll::0::h::SOLO', emoji: '🔄' };
+const STRONG: ResultActionDto = { id: 'MJ::JOB::high_variation::1::h::SOLO', label: 'Vary (Strong)', emoji: '🪄' };
 
 const grid = (patch: Partial<SpatialCard> = {}): SpatialCard => ({
   id: 'card-grid',

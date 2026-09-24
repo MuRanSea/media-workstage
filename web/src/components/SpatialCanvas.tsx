@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, FileText, Film, Image as ImageIcon, ScanText, Sparkles, Trash2 } from 'lucide-react';
-import type { CardType, SpatialCard, TaskActionDto } from '../types/canvas.ts';
+import { isDescribeCard, type CardType, type SpatialCard, type ResultActionDto } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
 import { screenToWorld, type CanvasTransform, type Point } from '../engine/matrix.ts';
 import { connectCards, hasOutputPort, withEffectivePrompt } from '../engine/connections.ts';
-import { findDescribeProvider, spawnActionCard, spawnDescribeCard } from '../engine/mjActions.ts';
+import { findDescribeProvider, spawnActionCard, spawnDescribeCard } from '../engine/derivedCards.ts';
 import { useChannels } from '../services/channels.ts';
 import { createCard, duplicateCards, removeCards } from '../engine/cardFactory.ts';
 import { useHistory } from '../engine/useHistory.ts';
@@ -254,18 +254,12 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     duplicate(clipboardRef.current, inside ? toWorld(p.x, p.y) : viewportCenter());
   }, [duplicate, pointerRef, toWorld, viewportCenter]);
 
-  /** Runs a follow-up of `source`'s result on a new card beside it (one undo step). */
-  const runAction = useCallback(
-    (source: SpatialCard, action: TaskActionDto) => {
-      let prompt = source.prompt;
-      try {
-        prompt = withEffectivePrompt(source, cardsRef.current).prompt;
-      } catch {
-        // The linked text card is empty; the source's own prompt is only a record here.
-      }
+  /** Adds the derived card `spawn` builds (one undo step) and starts generating it. */
+  const addDerivedCard = useCallback(
+    (spawn: (cards: SpatialCard[]) => SpatialCard) => {
       let card: SpatialCard;
       try {
-        card = spawnActionCard(source, action, cardsRef.current, prompt);
+        card = spawn(cardsRef.current);
       } catch (err) {
         toast((err as Error).message, { tone: 'error' });
         return;
@@ -276,24 +270,30 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     [editCards, onTriggerGenerate, toast]
   );
 
-  const channels = useChannels();
-  const describeWith = useMemo(() => findDescribeProvider(channels), [channels]);
+  /** Runs a follow-up of `source`'s result on a new card beside it. */
+  const runAction = useCallback(
+    (source: SpatialCard, action: ResultActionDto) =>
+      addDerivedCard((cards) => {
+        let prompt = source.prompt;
+        try {
+          prompt = withEffectivePrompt(source, cards).prompt;
+        } catch {
+          // The linked text card is empty; the source's own prompt is only a record here.
+        }
+        return spawnActionCard(source, action, cards, prompt);
+      }),
+    [addDerivedCard]
+  );
+
+  const providers = useChannels();
+  const describeWith = useMemo(() => findDescribeProvider(providers), [providers]);
 
   /** Asks Midjourney for prompts matching `source`'s image, on a new text card beside it. */
   const runDescribe = useCallback(
     (source: SpatialCard) => {
-      if (!describeWith) return;
-      let card: SpatialCard;
-      try {
-        card = spawnDescribeCard(source, describeWith, cardsRef.current);
-      } catch (err) {
-        toast((err as Error).message, { tone: 'error' });
-        return;
-      }
-      editCards((prev) => [...prev, card]);
-      onTriggerGenerate(card.id, card);
+      if (describeWith) addDerivedCard((cards) => spawnDescribeCard(source, describeWith, cards));
     },
-    [describeWith, editCards, onTriggerGenerate, toast]
+    [addDerivedCard, describeWith]
   );
 
   /** Actions of `card` whose derived card is still generating, so they are not run twice. */
@@ -443,7 +443,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       const tgtY = card.y + PORT_Y;
 
       // A describe card's image is its origin, drawn as the derived link below.
-      const refs = card.derivedFrom?.operation === 'describe' ? [] : card.references;
+      const refs = isDescribeCard(card) ? [] : card.references;
       refs?.forEach((ref) => {
         const src = byId.get(ref.cardId);
         if (!src) return;

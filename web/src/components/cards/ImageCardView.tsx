@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Image as ImageIcon, Layers, LayoutGrid, Maximize2, Sparkles } from 'lucide-react';
-import { IMAGE_MODELS, type TaskActionDto } from '../../types/canvas.ts';
-import { actionLabel, groupActions } from '../../engine/mjActions.ts';
+import { IMAGE_MODELS, type ResultActionDto } from '../../types/canvas.ts';
+import { actionLabel, groupActions } from '../../engine/derivedCards.ts';
+import { MJ_MAX_REFERENCES, MJ_MIN_BLEND_IMAGES } from '../../engine/connections.ts';
 import {
   MISSING_PROVIDER_HINT,
   buildProviderGroups,
@@ -35,7 +36,7 @@ interface ImageCardViewProps extends CardViewProps {
   onUnlinkPrompt?: () => void;
   onStartConnect?: (e: React.MouseEvent<HTMLDivElement>) => void;
   /** Runs one of the result's follow-ups on a new card. */
-  onRunAction?: (action: TaskActionDto) => void;
+  onRunAction?: (action: ResultActionDto) => void;
   /** Follow-ups already running on a derived card. */
   busyActionIds?: ReadonlySet<string>;
 }
@@ -166,7 +167,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
 
       {card.mjOperation === 'blend' && protocolOf(provider) === 'midjourney' ? (
         <p className="text-[11px] leading-relaxed text-slate-500 px-1">
-          Blend 混合连入的 {card.references?.length ?? 0} 张图片，不使用提示词（需要 2–5 张）。
+          Blend 混合连入的 {card.references?.length ?? 0} 张图片，不使用提示词（需要 {MJ_MIN_BLEND_IMAGES}–{MJ_MAX_REFERENCES} 张）。
         </p>
       ) : linkedPrompt ? (
         <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
@@ -197,12 +198,12 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
 
 /** The result's follow-ups (Midjourney U / V rows, then the rest); each opens a new card. */
 const ResultActions: React.FC<{
-  actions: TaskActionDto[];
+  actions: ResultActionDto[];
   busy?: ReadonlySet<string>;
-  onRun: (action: TaskActionDto) => void;
+  onRun: (action: ResultActionDto) => void;
 }> = ({ actions, busy, onRun }) => {
   const { upscale, variation, other } = groupActions(actions);
-  const row = (items: TaskActionDto[], columns: boolean) =>
+  const row = (items: ResultActionDto[], columns: boolean) =>
     items.length > 0 && (
       <div className={columns ? 'grid grid-cols-4 gap-1' : 'flex flex-wrap gap-1'}>
         {items.map((a) => (

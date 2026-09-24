@@ -264,12 +264,12 @@ func TestMidjourneyPollTask_SuccessReturnsActions(t *testing.T) {
 	res, err := a.PollTask(context.Background(), task)
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStatusSucceeded, res.Status)
-	assert.Equal(t, []model.TaskAction{
+	assert.Equal(t, []model.ResultAction{
 		{ID: "MJ::JOB::upsample::1::ade29d25", Label: "U1"},
 		{ID: "MJ::JOB::upsample::2::ade29d25", Label: "U2"},
 		{ID: "MJ::JOB::reroll::0::ade29d25::SOLO", Emoji: "🔄"},
 		{ID: "MJ::JOB::variation::1::ade29d25", Label: "V1"},
-	}, res.Actions, "buttons needing user input (custom zoom, region, bookmark) are dropped")
+	}, res.ResultActions, "buttons needing user input (custom zoom, region, bookmark) are dropped")
 }
 
 func actionTask(sourceProviderTaskID, actionID string) *model.MediaTask {

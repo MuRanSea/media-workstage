@@ -7,6 +7,8 @@ export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video';
 export type ImageTaskMode = 'single' | 'layer_decomp' | 'sequential';
 export type CanvasTool = 'select' | 'hand';
 export type MjSpeed = 'FAST' | 'RELAX' | 'TURBO';
+/** Midjourney: imagine from the prompt, or blend the reference images. */
+export type MjOperation = 'imagine' | 'blend';
 
 export const MJ_SPEED_LABELS: Record<MjSpeed, string> = { FAST: 'Fast', RELAX: 'Relax', TURBO: 'Turbo' };
 
@@ -26,7 +28,7 @@ export interface TaskAssetDto {
 }
 
 /** A follow-up a provider offers on a finished result (Midjourney's U1–U4 / V1–V4 …). */
-export interface TaskActionDto {
+export interface ResultActionDto {
   /** The provider's own identifier, sent back to run the action. */
   id: string;
   label?: string;
@@ -77,7 +79,7 @@ export interface SpatialCard {
   resultUrl?: string;
   outputAssets?: TaskAssetDto[];
   /** Follow-ups the finished result offers (Midjourney buttons). */
-  resultActions?: TaskActionDto[];
+  resultActions?: ResultActionDto[];
   /** Set on cards created by running an operation on another card's result. */
   derivedFrom?: DerivedFrom;
 
@@ -108,7 +110,7 @@ export interface SpatialCard {
   /** Midjourney speed mode; unset leaves it to the gateway. */
   mjSpeed?: MjSpeed;
   /** Midjourney: imagine from the prompt (default), or blend the reference images. */
-  mjOperation?: 'imagine' | 'blend';
+  mjOperation?: MjOperation;
 
   // Image specific parameters (Seedream 5.0 Series)
   imageMode?: ImageTaskMode;

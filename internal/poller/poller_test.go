@@ -532,8 +532,8 @@ func TestTaskPoller_StoresResultActionsAndTextWithoutAssets(t *testing.T) {
 	// A text-only result (Describe) succeeds without any file to download.
 	fake.SetNextPollResult(taskID, &adapter.PollResult{
 		Status: model.TaskStatusSucceeded, Progress: 100,
-		Text:    "1️⃣ a cat --ar 1:1",
-		Actions: []model.TaskAction{{ID: "MJ::JOB::upsample::1::h", Label: "U1"}},
+		Text:          "1️⃣ a cat --ar 1:1",
+		ResultActions: []model.ResultAction{{ID: "MJ::JOB::upsample::1::h", Label: "U1"}},
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

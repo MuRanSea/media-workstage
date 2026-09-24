@@ -46,8 +46,14 @@ export function connectCards(source: SpatialCard, target: SpatialCard): ConnectR
   return { ok: false, reason: '视频卡片没有输出端口' };
 }
 
-/** Midjourney's reference-image limit (midjourney-proxy base64Array). */
+/** Midjourney's reference-image limit (midjourney-proxy base64Array); Blend needs at least 2. */
 export const MJ_MAX_REFERENCES = 5;
+export const MJ_MIN_BLEND_IMAGES = 2;
+
+/** `image`'s result as a reference image of another card. */
+export function referenceTo(image: SpatialCard): ReferenceItem {
+  return { cardId: image.id, tagIndex: image.tagIndex, role: 'reference_image', label: image.title.slice(0, 10), url: image.resultUrl };
+}
 
 /** Midjourney takes reference images as data, so no @图N tag is added to its prompt. */
 function attachImageToMidjourney(image: SpatialCard, target: SpatialCard): ConnectResult {
@@ -55,14 +61,7 @@ function attachImageToMidjourney(image: SpatialCard, target: SpatialCard): Conne
   const refs = target.references ?? [];
   if (refs.some((r) => r.cardId === image.id)) return { ok: false, reason: '已经连接过了' };
   if (refs.length >= MJ_MAX_REFERENCES) return { ok: false, reason: `Midjourney 最多 ${MJ_MAX_REFERENCES} 张参考图` };
-  const ref: ReferenceItem = {
-    cardId: image.id,
-    tagIndex: image.tagIndex,
-    role: 'reference_image',
-    label: image.title.slice(0, 10),
-    url: image.resultUrl,
-  };
-  return { ok: true, patch: { references: [...refs, ref] } };
+  return { ok: true, patch: { references: [...refs, referenceTo(image)] } };
 }
 
 function attachImageToVideo(image: SpatialCard, video: SpatialCard): ConnectResult {

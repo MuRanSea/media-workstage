@@ -61,6 +61,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const meta = single ? TYPE_META[single.type] : null;
   const Icon = meta?.icon;
   const update = (patch: Partial<SpatialCard>) => single && onUpdateCard(single.id, patch);
+  const derivedSourceTitle = single?.derivedFrom ? cards.find((c) => c.id === single.derivedFrom!.cardId)?.title : undefined;
 
   return (
     <aside
@@ -92,14 +93,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             cards={cards}
             update={update}
             linkedPromptText={linkedPromptFor(single)?.text}
-            derivedSourceTitle={cards.find((c) => c.id === single.derivedFrom?.cardId)?.title}
+            derivedSourceTitle={derivedSourceTitle}
           />
         )}
         {single?.type === 'video' && (
           <VideoInspector card={single} cards={cards} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
         )}
         {single?.type === 'text' && (
-          <TextInspector card={single} update={update} derivedSourceTitle={cards.find((c) => c.id === single.derivedFrom?.cardId)?.title} />
+          <TextInspector card={single} update={update} derivedSourceTitle={derivedSourceTitle} />
         )}
 
         {!single && (

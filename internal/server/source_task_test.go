@@ -19,7 +19,7 @@ func seedSourceTask(t *testing.T, srv *Server, mutate func(*model.MediaTask)) *m
 		ID: "src-1", Provider: "midjourney", ProviderTaskID: "1790217491102846", Model: "mj_imagine",
 		TaskType: "image_generation", TaskMode: "single", Prompt: "a red fox", ParamsJSON: `{}`,
 		Status: model.TaskStatusSucceeded, CreatedAt: now, UpdatedAt: now,
-		ResultActions: []model.TaskAction{{ID: "MJ::JOB::upsample::1::h", Label: "U1"}},
+		ResultActions: []model.ResultAction{{ID: "MJ::JOB::upsample::1::h", Label: "U1"}},
 	}
 	if mutate != nil {
 		mutate(task)
