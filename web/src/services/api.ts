@@ -80,6 +80,8 @@ export interface GetConfigResponse {
 
 export interface UpdateConfigPayload {
   provider: ProviderId;
+  /** Renames the provider; must stay unique across providers. */
+  name?: string;
   base_url?: string;
   api_key?: string;
   extra?: Record<string, string>;
@@ -184,6 +186,40 @@ export async function apiUpdateConfig(payload: UpdateConfigPayload): Promise<{ s
   }
 
   return resp.json();
+}
+
+export interface CreateProviderPayload {
+  protocol: Protocol;
+  name: string;
+  base_url: string;
+  api_key?: string;
+}
+
+/**
+ * Adds a custom provider via POST /api/providers; the backend assigns its ID.
+ */
+export async function apiCreateProvider(payload: CreateProviderPayload): Promise<{ config: ProviderConfigItem }> {
+  const resp = await fetch('/api/providers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const errData = await resp.json().catch(() => ({ error: 'Create failed' }));
+    throw new Error(errData.error || `Create provider failed (${resp.status})`);
+  }
+  return resp.json();
+}
+
+/**
+ * Deletes a custom provider via DELETE /api/providers/:id (preset providers cannot be deleted).
+ */
+export async function apiDeleteProvider(id: ProviderId): Promise<void> {
+  const resp = await fetch(`/api/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!resp.ok) {
+    const errData = await resp.json().catch(() => ({ error: 'Delete failed' }));
+    throw new Error(errData.error || `Delete provider failed (${resp.status})`);
+  }
 }
 
 /**

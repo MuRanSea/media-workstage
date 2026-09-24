@@ -38,7 +38,7 @@ func TestProtocolProbes_BuildAuthenticatedRequests(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.id, func(t *testing.T) {
-			spec, ok := findProvider(tc.id)
+			spec, ok := findProvider(nil, tc.id)
 			require.True(t, ok)
 			req, err := spec.protocol().newProbe(context.Background(), "https://base", " k ", nil)
 			require.NoError(t, err)
@@ -50,7 +50,7 @@ func TestProtocolProbes_BuildAuthenticatedRequests(t *testing.T) {
 }
 
 func TestProtocolProbes_MidjourneySendsQueryBody(t *testing.T) {
-	spec, _ := findProvider("midjourney")
+	spec, _ := findProvider(nil, "midjourney")
 	req, err := spec.protocol().newProbe(context.Background(), "https://base", "k", nil)
 	require.NoError(t, err)
 	body, err := io.ReadAll(req.Body)
@@ -61,7 +61,7 @@ func TestProtocolProbes_MidjourneySendsQueryBody(t *testing.T) {
 }
 
 func TestResolveProvider_StoredOverridesEnvOverridesDefault(t *testing.T) {
-	spec, _ := findProvider("openai")
+	spec, _ := findProvider(nil, "openai")
 
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("OPENAI_BASE_URL", "")
@@ -261,7 +261,7 @@ func TestUpdateConfig_BindsModelsAndRegistersImageAdapter(t *testing.T) {
 	require.True(t, ok)
 	assert.IsType(t, &adapter.OpenAIImageAdapter{}, a)
 
-	openaiSpec, _ := findProvider("openai")
+	openaiSpec, _ := findProvider(nil, "openai")
 	assert.Equal(t, []boundModel{img("gpt-image-2"), {ID: "gpt-5", Type: "chat"}}, resolveProvider(openaiSpec, srv.storedConfig()).Models,
 		"image and chat bindings are kept; blanks and duplicates dropped")
 
@@ -275,7 +275,7 @@ func TestUpdateConfig_KeepsPresetsUntilModelsSent(t *testing.T) {
 	srv, r := newProviderTestServer(t)
 	w := postJSON(r, "/api/config", map[string]any{"provider": "kling", "api_key": "kling-key-123456"})
 	require.Equal(t, http.StatusOK, w.Code)
-	spec, _ := findProvider("kling")
+	spec, _ := findProvider(nil, "kling")
 	assert.Equal(t, spec.Presets, resolveProvider(spec, srv.storedConfig()).Models)
 	_, ok := srv.registry.Get("kling")
 	assert.False(t, ok, "kling only stores configuration for now")
@@ -371,12 +371,12 @@ func TestInferModelType_CoversAggregatorFamilies(t *testing.T) {
 // Channels with a live catalog must not bind anything the user did not tick.
 func TestBoundModels_ListableProvidersStartEmpty(t *testing.T) {
 	for _, id := range []string{"openai", "google", "apimart"} {
-		spec, _ := findProvider(id)
+		spec, _ := findProvider(nil, id)
 		models := resolveProvider(spec, nil).Models
 		assert.NotNil(t, models, id)
 		assert.Empty(t, models, id)
 	}
-	ark, _ := findProvider("ark")
+	ark, _ := findProvider(nil, "ark")
 	assert.NotEmpty(t, resolveProvider(ark, nil).Models, "channels with presets bind them until the user saves a binding")
 }
 
@@ -453,7 +453,7 @@ func TestGenerateText_UsesStoredProviderCredentials(t *testing.T) {
 // Ark binds its Doubao chat presets by default and, when its /models is absent,
 // "获取模型" falls back to those presets instead of failing.
 func TestArkChatPresetsAndListFallback(t *testing.T) {
-	ark, _ := findProvider("ark")
+	ark, _ := findProvider(nil, "ark")
 	var chats []string
 	for _, m := range resolveProvider(ark, nil).Models {
 		if m.Type == "chat" {
@@ -512,7 +512,7 @@ func TestUpdateConfig_ClearRemovesProvider(t *testing.T) {
 	for _, id := range []string{"openai", "minimax"} {
 		w := postJSON(r, "/api/config", map[string]any{"provider": id, "clear": true})
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-		spec, _ := findProvider(id)
+		spec, _ := findProvider(nil, id)
 		view := resolveProvider(spec, srv.storedConfig())
 		assert.False(t, view.IsConfigured, id)
 		assert.Equal(t, spec.DefaultBaseURL, view.BaseURL, id)
@@ -561,16 +561,16 @@ func TestGetConfig_ListsProtocolAndPresetFlag(t *testing.T) {
 	}
 }
 
-func TestPresetAdapters_MockOnlyWhereTheProviderRunsMocked(t *testing.T) {
+func TestProviderAdapters_MockOnlyWhereTheProviderRunsMocked(t *testing.T) {
 	for _, spec := range presetProviders {
 		t.Setenv(spec.APIKeyEnv, "")
 	}
-	adapters := PresetAdapters(nil)
+	adapters := ProviderAdapters(nil)
 	assert.Len(t, adapters, 2)
 	assert.IsType(t, &adapter.FakeProviderAdapter{}, adapters["ark"])
 	assert.IsType(t, &adapter.FakeProviderAdapter{}, adapters["minimax"])
 
-	adapters = PresetAdapters(map[string]string{
+	adapters = ProviderAdapters(map[string]string{
 		"openai_api_key":   "sk-db",
 		"kling_api_key":    "kling-db",
 		"minimax_api_key":  "mm-db",

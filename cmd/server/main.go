@@ -104,9 +104,9 @@ func main() {
 		configMap[c.Key] = c.Value
 	}
 
-	// Preset providers get their adapters from stored config, then env; Ark and MiniMax
+	// Providers get their adapters from stored config, then env; preset Ark and MiniMax
 	// run on mock adapters until they have a key, the rest stay unregistered.
-	adapters := server.PresetAdapters(configMap)
+	adapters := server.ProviderAdapters(configMap)
 
 	// One registry shared by the poller and the server, so adapters swapped in by
 	// config saves at runtime are the ones the poller dispatches to.

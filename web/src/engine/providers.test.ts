@@ -3,7 +3,7 @@ import type { ProviderConfigItem } from '../services/api.ts';
 import { buildProviderGroups, isModelReady } from './channelModels.ts';
 import { imageModelPatch, imageSizeSummary } from './cardParams.ts';
 import { compileImageTaskPayload } from './compiler.ts';
-import { protocolOf, providerName, rememberProviders } from './providers.ts';
+import { defaultProviderName, isNameTaken, protocolOf, providerName, rememberProviders } from './providers.ts';
 
 const relay: ProviderConfigItem = {
   id: 'custom-7f3a2c',
@@ -78,5 +78,24 @@ describe('branching on protocol, not provider ID', () => {
         provider: relay.id, model: 'gpt-image-2', status: 'idle', progress: 0, imageRatioPreset: '1:1',
       })
     ).toBe('2K · 1:1');
+  });
+});
+
+describe('provider names', () => {
+  const providers = [
+    { id: 'openai', name: 'OpenAI' },
+    { id: 'custom-1', name: 'OpenAI 兼容' },
+    { id: 'custom-2', name: 'OpenAI 兼容 2' },
+  ];
+
+  it('compares names trimmed and case-insensitively, ignoring the provider itself', () => {
+    expect(isNameTaken(' openai ', providers)).toBe(true);
+    expect(isNameTaken('OpenAI', providers, 'openai')).toBe(false);
+    expect(isNameTaken('中转 A', providers)).toBe(false);
+  });
+
+  it('suggests the first free default name', () => {
+    expect(defaultProviderName('OpenAI 兼容', [])).toBe('OpenAI 兼容');
+    expect(defaultProviderName('OpenAI 兼容', providers)).toBe('OpenAI 兼容 3');
   });
 });

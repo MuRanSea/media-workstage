@@ -39,6 +39,9 @@ type protocolSpec struct {
 
 	// listModels fetches the provider's live model catalog; nil means presets only.
 	listModels func(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]boundModel, error)
+	// notFoundHint replaces the generic "wrong path" message when the probe gets a 404;
+	// %s is the probed path.
+	notFoundHint string
 }
 
 var protocolSpecs = map[model.Protocol]protocolSpec{
@@ -98,6 +101,8 @@ var protocolSpecs = map[model.Protocol]protocolSpec{
 		},
 		probeNeeds2xx: true,
 		listModels:    listOpenAIModels,
+		// Some OpenAI-compatible services generate and chat fine but have no model list.
+		notFoundHint: "无法获取模型列表 (HTTP 404: %s)：该服务可能不提供 /models 接口，仍可保存并在下方手动添加模型 ID；也请确认 Base URL 是否包含 /v1",
 	},
 	model.ProtocolAPIMart: {
 		// Model list rather than /balance: relays (e.g. new-api style ".../apimart/v1")
@@ -110,9 +115,11 @@ var protocolSpecs = map[model.Protocol]protocolSpec{
 	},
 }
 
-// providerSpec declares a Preset Provider: its Protocol, where its credentials live
+// providerSpec declares a Provider: its Protocol, where its credentials live
 // (system_configs keys "<id>_api_key" / "<id>_base_url" / "<id>_<extra>", then env)
-// and how it is listed by GET /api/config.
+// and how it is listed by GET /api/config. Preset Providers are declared below;
+// Custom Providers are rebuilt from the "custom_providers" config entry.
+// A saved "<id>_name" overrides Name for both.
 // Bound models are stored under "<id>_models". Until the user saves a binding, providers
 // without a live catalog bind their Presets; providers with one (listModels) bind nothing,
 // so the binding is exactly what the user ticked.
@@ -127,6 +134,8 @@ type providerSpec struct {
 	Presets        []boundModel      // catalog for providers without listModels
 	// MockWhenUnset runs the provider on the mock adapter until it has a key.
 	MockWhenUnset bool
+	// Custom marks a user-added provider, which can be deleted (presets cannot).
+	Custom bool
 }
 
 func (s providerSpec) protocol() protocolSpec { return protocolSpecs[s.Protocol] }
@@ -224,9 +233,56 @@ var presetProviders = []providerSpec{
 	},
 }
 
-func findProvider(id string) (providerSpec, bool) {
-	for _, spec := range presetProviders {
+// customProvidersKey holds the Custom Providers, in creation order, as JSON.
+const customProvidersKey = "custom_providers"
+
+// customProviderRecord is one Custom Provider's identity; everything else lives
+// under its "<id>_*" config keys like a preset's.
+type customProviderRecord struct {
+	ID       string         `json:"id"`
+	Protocol model.Protocol `json:"protocol"`
+}
+
+func customProviderRecords(stored map[string]string) []customProviderRecord {
+	var records []customProviderRecord
+	if raw := stored[customProvidersKey]; raw != "" {
+		_ = json.Unmarshal([]byte(raw), &records)
+	}
+	return records
+}
+
+// allProviders lists the preset providers, then the custom ones in creation order.
+func allProviders(stored map[string]string) []providerSpec {
+	specs := append([]providerSpec(nil), presetProviders...)
+	for _, r := range customProviderRecords(stored) {
+		specs = append(specs, providerSpec{ID: r.ID, Name: r.ID, Protocol: r.Protocol, Custom: true})
+	}
+	return specs
+}
+
+func findProvider(stored map[string]string, id string) (providerSpec, bool) {
+	for _, spec := range allProviders(stored) {
 		if spec.ID == id {
+			return spec, true
+		}
+	}
+	return providerSpec{}, false
+}
+
+// providerName is the provider's display name: the saved one, else its default.
+func providerName(spec providerSpec, stored map[string]string) string {
+	if v := strings.TrimSpace(stored[spec.ID+"_name"]); v != "" {
+		return v
+	}
+	return spec.Name
+}
+
+// nameTakenBy returns the provider other than exceptID already using name
+// (compared trimmed and case-insensitively), if any.
+func nameTakenBy(stored map[string]string, name, exceptID string) (providerSpec, bool) {
+	name = strings.TrimSpace(name)
+	for _, spec := range allProviders(stored) {
+		if spec.ID != exceptID && strings.EqualFold(providerName(spec, stored), name) {
 			return spec, true
 		}
 	}
@@ -264,7 +320,7 @@ func providerValue(spec providerSpec, stored map[string]string, key, env string)
 // ProviderCredentials resolves a provider's base URL and API key from stored config
 // and env, falling back to the provider's default base URL.
 func ProviderCredentials(stored map[string]string, id string) (baseURL, apiKey string) {
-	spec, ok := findProvider(id)
+	spec, ok := findProvider(stored, id)
 	if !ok {
 		return "", ""
 	}
@@ -293,9 +349,9 @@ func resolveProvider(spec providerSpec, stored map[string]string) providerView {
 	baseURL, apiKey := ProviderCredentials(stored, spec.ID)
 	return providerView{
 		ID:            spec.ID,
-		Name:          spec.Name,
+		Name:          providerName(spec, stored),
 		Protocol:      spec.Protocol,
-		Preset:        true,
+		Preset:        !spec.Custom,
 		BaseURL:       baseURL,
 		IsConfigured:  apiKey != "",
 		MaskedKey:     adapter.MaskSecret(apiKey),
@@ -320,11 +376,11 @@ func liveAdapter(spec providerSpec, stored map[string]string) (adapter.ProviderA
 	return nil, false
 }
 
-// PresetAdapters builds the startup adapter set for every preset provider from stored
-// config and env (DB -> ENV precedence).
-func PresetAdapters(stored map[string]string) map[string]adapter.ProviderAdapter {
+// ProviderAdapters builds the startup adapter set for every provider, preset and
+// custom, from stored config and env (DB -> ENV precedence).
+func ProviderAdapters(stored map[string]string) map[string]adapter.ProviderAdapter {
 	adapters := make(map[string]adapter.ProviderAdapter)
-	for _, spec := range presetProviders {
+	for _, spec := range allProviders(stored) {
 		if a, ok := liveAdapter(spec, stored); ok {
 			if _, isFake := a.(*adapter.FakeProviderAdapter); isFake {
 				log.Printf("[INFO] %s has no API key; using the mock adapter", spec.ID)

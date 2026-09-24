@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"media-workstage/internal/adapter"
@@ -21,7 +22,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // Server coordinates HTTP API routing, database persistence, static assets, and SSE event streaming.
@@ -32,6 +32,10 @@ type Server struct {
 	poller      *poller.TaskPoller
 	projects    *project.Store
 	staticFS    fs.FS
+
+	// providersMu serializes provider list and name changes, which read-check-write
+	// the config table (creating, deleting and renaming providers).
+	providersMu sync.Mutex
 }
 
 func NewServer(
@@ -189,6 +193,8 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.POST("/config", s.sameOriginOnlyMiddleware(), s.handleUpdateConfig)
 		api.POST("/config/test", s.sameOriginOnlyMiddleware(), s.handleTestConfig)
 		api.POST("/config/models", s.sameOriginOnlyMiddleware(), s.handleListModels)
+		api.POST("/providers", s.sameOriginOnlyMiddleware(), s.handleCreateProvider)
+		api.DELETE("/providers/:id", s.sameOriginOnlyMiddleware(), s.handleDeleteProvider)
 		// Spends the user's tokens with stored keys, so same-origin only as well.
 		api.POST("/llm/generate", s.sameOriginOnlyMiddleware(), s.handleGenerateText)
 		api.POST("/tasks", s.handleCreateTask)
@@ -327,8 +333,9 @@ func (s *Server) storedConfig() map[string]string {
 
 func (s *Server) handleGetConfig(c *gin.Context) {
 	stored := s.storedConfig()
-	providers := make([]providerView, 0, len(presetProviders))
-	for _, spec := range presetProviders {
+	specs := allProviders(stored)
+	providers := make([]providerView, 0, len(specs))
+	for _, spec := range specs {
 		providers = append(providers, resolveProvider(spec, stored))
 	}
 
@@ -338,10 +345,12 @@ func (s *Server) handleGetConfig(c *gin.Context) {
 }
 
 type UpdateConfigPayload struct {
-	Provider string            `json:"provider" binding:"required"`
-	BaseURL  string            `json:"base_url"`
-	APIKey   string            `json:"api_key"`
-	Extra    map[string]string `json:"extra"`
+	Provider string `json:"provider" binding:"required"`
+	// Name renames the provider when present; it must stay unique across providers.
+	Name    *string           `json:"name"`
+	BaseURL string            `json:"base_url"`
+	APIKey  string            `json:"api_key"`
+	Extra   map[string]string `json:"extra"`
 	// Models replaces the provider's bound models when present (nil leaves them as is).
 	Models *[]boundModel `json:"models"`
 	// Clear wipes the provider's saved key, base URL, extras and bindings.
@@ -355,8 +364,12 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 		return
 	}
 
+	s.providersMu.Lock()
+	defer s.providersMu.Unlock()
+
+	stored := s.storedConfig()
 	provider := strings.ToLower(strings.TrimSpace(payload.Provider))
-	spec, ok := findProvider(provider)
+	spec, ok := findProvider(stored, provider)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider: " + payload.Provider})
 		return
@@ -374,10 +387,16 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 		}
 	}
 
-	now := time.Now().UTC()
-
 	// Persist to system_configs table
 	configsToSave := make(map[string]string)
+	if payload.Name != nil {
+		name, status, err := validateProviderName(stored, *payload.Name, spec.ID)
+		if err != nil {
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
+		configsToSave[provider+"_name"] = name
+	}
 	if strings.TrimSpace(payload.BaseURL) != "" {
 		configsToSave[provider+"_base_url"] = strings.TrimRight(strings.TrimSpace(payload.BaseURL), "/")
 	}
@@ -394,19 +413,9 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 		configsToSave[provider+"_models"] = string(modelsJSON)
 	}
 
-	for k, v := range configsToSave {
-		sysCfg := model.SystemConfig{
-			Key:       k,
-			Value:     v,
-			UpdatedAt: now,
-		}
-		if err := s.db.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "key"}},
-			DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
-		}).Create(&sysCfg).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save configuration: " + err.Error()})
-			return
-		}
+	if err := upsertConfigs(s.db, configsToSave); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save configuration: " + err.Error()})
+		return
 	}
 
 	s.hotReloadAdapter(spec, payload)
@@ -476,7 +485,7 @@ func (s *Server) handleListModels(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	spec, ok := findProvider(strings.ToLower(strings.TrimSpace(payload.Provider)))
+	spec, ok := findProvider(s.storedConfig(), strings.ToLower(strings.TrimSpace(payload.Provider)))
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider: " + payload.Provider})
 		return
@@ -504,10 +513,14 @@ func (s *Server) handleListModels(c *gin.Context) {
 
 	models, err := spec.protocol().listModels(c.Request.Context(), newSafeClient(20*time.Second), strings.TrimRight(baseURL, "/"), apiKey)
 	if err != nil {
-		// A provider without a list endpoint still offers its presets.
+		// A provider without a list endpoint still offers its presets, or manual entry.
 		var statusErr *httpStatusError
-		if errors.As(err, &statusErr) && (statusErr.Status == http.StatusNotFound || statusErr.Status == http.StatusMethodNotAllowed) && len(spec.Presets) > 0 {
-			c.JSON(http.StatusOK, gin.H{"models": spec.Presets, "source": "preset"})
+		if errors.As(err, &statusErr) && (statusErr.Status == http.StatusNotFound || statusErr.Status == http.StatusMethodNotAllowed) {
+			if len(spec.Presets) > 0 {
+				c.JSON(http.StatusOK, gin.H{"models": spec.Presets, "source": "preset"})
+				return
+			}
+			c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("无法获取模型列表：服务没有提供 /models 接口 (HTTP %d)，请在下方手动添加模型 ID", statusErr.Status)})
 			return
 		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -553,7 +566,7 @@ func (s *Server) handleTestConfig(c *gin.Context) {
 		return
 	}
 
-	spec, ok := findProvider(strings.ToLower(strings.TrimSpace(payload.Provider)))
+	spec, ok := findProvider(s.storedConfig(), strings.ToLower(strings.TrimSpace(payload.Provider)))
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "unsupported provider: " + payload.Provider})
 		return
@@ -593,6 +606,10 @@ func (s *Server) handleTestConfig(c *gin.Context) {
 	// 404 always means a wrong path, even for probes that query a dummy task
 	// (e.g. the MiniMax provider pointed at an APIMart relay).
 	if resp.StatusCode == http.StatusNotFound {
+		if hint := spec.protocol().notFoundHint; hint != "" {
+			c.JSON(http.StatusOK, gin.H{"ok": false, "error": fmt.Sprintf(hint, req.URL.Path)})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"ok":    false,
 			"error": fmt.Sprintf("接口路径不存在 (HTTP 404: %s)，请确认 Base URL 的路径部分是否正确", req.URL.Path),
@@ -637,14 +654,15 @@ func (s *Server) handleGenerateText(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	spec, ok := findProvider(strings.ToLower(strings.TrimSpace(payload.Provider)))
+	stored := s.storedConfig()
+	spec, ok := findProvider(stored, strings.ToLower(strings.TrimSpace(payload.Provider)))
 	if !ok || !llm.Supported(spec.Protocol) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "服务商 " + payload.Provider + " 不支持文本生成"})
 		return
 	}
-	baseURL, apiKey := ProviderCredentials(s.storedConfig(), spec.ID)
+	baseURL, apiKey := ProviderCredentials(stored, spec.ID)
 	if apiKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "服务商 " + spec.Name + " 未配置 API Key"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "服务商 " + providerName(spec, stored) + " 未配置 API Key"})
 		return
 	}
 

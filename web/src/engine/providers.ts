@@ -34,3 +34,18 @@ export function protocolOf(provider: ProviderId | undefined): Protocol | undefin
 export function providerName(provider: ProviderId): string {
   return known.get(provider)?.name ?? provider;
 }
+
+/** Whether a display name is already used by another provider (trimmed, case-insensitive, like the backend). */
+export function isNameTaken(name: string, providers: Pick<ProviderConfigItem, 'id' | 'name'>[], exceptId?: ProviderId): boolean {
+  const n = name.trim().toLowerCase();
+  return providers.some((p) => p.id !== exceptId && p.name.trim().toLowerCase() === n);
+}
+
+/** First free default name for a new provider: "<label>", then "<label> 2", "<label> 3", … */
+export function defaultProviderName(label: string, providers: Pick<ProviderConfigItem, 'id' | 'name'>[]): string {
+  if (!isNameTaken(label, providers)) return label;
+  for (let n = 2; ; n++) {
+    const name = `${label} ${n}`;
+    if (!isNameTaken(name, providers)) return name;
+  }
+}

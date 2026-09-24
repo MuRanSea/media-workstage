@@ -32,6 +32,7 @@
 - [16-project-ui-and-autosave](issues/16-project-ui-and-autosave.md): 工程列表页、顶栏工程切换与改名、防抖自动保存 + Ctrl+S + 冲突提示、打开工程时补齐任务状态。
 - [17-ui-overhaul](issues/17-ui-overhaul.md): 卡片精简 + 右侧属性面板、双击/右键添加、Delete/撤销/复制粘贴、精简顶栏、应用内对话框与提示条、工程封面、设置页文案与未保存提示。
 - [18-provider-protocol-refactor](issues/18-provider-protocol-refactor.md): 服务商标上接入协议，前后端所有按服务商 ID 的分支改为按协议；`channels.go` 更名为 `providers.go`，设置页文案按协议取。
+- [19-custom-openai-compatible-providers](issues/19-custom-openai-compatible-providers.md): 可新增多个"OpenAI 兼容"自定义服务商（`POST/DELETE /api/providers`），所有服务商可改唯一显示名；设置页"添加服务商"、改名与删除，自定义服务商驱动文本卡与图片卡。
 ## Not yet specified
 
 - 视频后处理工具扩展（火山 AI MediaKit 智能剪辑、画质增强集成）
