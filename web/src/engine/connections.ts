@@ -1,5 +1,6 @@
 import { resolveVideoModelDef, type ReferenceItem, type SpatialCard } from '../types/canvas.ts';
 import { inferVideoProvider } from './videoCompiler.ts';
+import { protocolOf } from './providers.ts';
 
 export type ConnectResult =
   | { ok: true; patch: Partial<SpatialCard> }
@@ -44,7 +45,7 @@ function attachImageToVideo(image: SpatialCard, video: SpatialCard): ConnectResu
   if (refs.some((r) => r.cardId === image.id)) return { ok: false, reason: '已经连接过了' };
 
   const provider = video.provider ?? inferVideoProvider(video.model);
-  const def = resolveVideoModelDef(provider, video.model);
+  const def = resolveVideoModelDef(protocolOf(provider), video.model);
   const supports = (m: NonNullable<SpatialCard['mode']>) => !def.modes || def.modes.includes(m);
 
   // A text-only card switches to a mode that takes images.

@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { IMAGE_MODELS, SEEDREAM_PIXEL_MAP, type SpatialCard } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption } from '../../engine/channelModels.ts';
+import { protocolOf } from '../../engine/providers.ts';
 import { imageModelPatch } from '../../engine/cardParams.ts';
 import { compileCardImagePayload } from '../../engine/compiler.ts';
 import { useChannels } from '../../services/channels.ts';
@@ -22,7 +23,7 @@ export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText
   const channels = useChannels();
   const groups = useMemo(() => buildProviderGroups(channels, 'image'), [channels]);
   const provider = card.provider ?? 'ark';
-  const isSeedream = provider === 'ark';
+  const isSeedream = protocolOf(provider) === 'ark';
   const def = IMAGE_MODELS.find((m) => m.id === card.model) ?? IMAGE_MODELS[0];
   const ratio = card.imageRatioPreset ?? '16:9';
   const tier = card.imageTier ?? def.defaultTier;

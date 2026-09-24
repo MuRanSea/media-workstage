@@ -1,11 +1,8 @@
 import React, { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import type { ChannelId } from '../../services/api.ts';
-import {
-  CHANNEL_SHORT_NAMES,
-  type ModelOption,
-  type ProviderGroup,
-} from '../../engine/channelModels.ts';
+import type { ProviderId } from '../../services/api.ts';
+import type { ModelOption, ProviderGroup } from '../../engine/channelModels.ts';
+import { providerName } from '../../engine/providers.ts';
 
 type Accent = 'pink' | 'indigo' | 'emerald';
 
@@ -18,7 +15,7 @@ const ACCENTS: Record<Accent, { text: string; active: string; ring: string }> = 
 
 interface ProviderModelPickerProps {
   groups: ProviderGroup[];
-  provider: ChannelId;
+  provider: ProviderId;
   model: string;
   /** Shown when the card's model is not among the channel's bound models. */
   modelLabel: string;
@@ -64,7 +61,7 @@ export const ProviderModelPicker: React.FC<ProviderModelPickerProps> = ({
         <button type="button" onClick={() => setOpen(open === 'provider' ? null : 'provider')} className={fieldClass('provider')}>
           <span className="text-[11px] text-slate-500">服务商</span>
           <span className={`w-full flex items-center justify-between gap-1 text-xs font-semibold ${colors.text}`}>
-            <span className="truncate">{currentGroup?.name ?? CHANNEL_SHORT_NAMES[provider]}</span>
+            <span className="truncate">{currentGroup?.name ?? providerName(provider)}</span>
             <ChevronDown className="w-3 h-3 text-slate-400 flex-shrink-0" />
           </span>
         </button>

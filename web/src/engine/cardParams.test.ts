@@ -9,6 +9,7 @@ import {
 } from './cardParams.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 import type { ModelOption } from './channelModels.ts';
+import { protocolOf } from './providers.ts';
 
 const base = (patch: Partial<SpatialCard>): SpatialCard => ({
   id: 'c',
@@ -26,7 +27,13 @@ const base = (patch: Partial<SpatialCard>): SpatialCard => ({
   ...patch,
 });
 
-const opt = (provider: ModelOption['provider'], id: string): ModelOption => ({ provider, id, label: id, ready: true });
+const opt = (provider: ModelOption['provider'], id: string): ModelOption => ({
+  provider,
+  protocol: protocolOf(provider)!,
+  id,
+  label: id,
+  ready: true,
+});
 
 const refs = [
   { cardId: 'a', tagIndex: 1, role: 'reference_image' as const, label: 'a' },

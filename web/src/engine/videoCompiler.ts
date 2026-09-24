@@ -1,5 +1,6 @@
 import { resolveVideoModelDef, type SpatialCard, type ReferenceItem, type VideoTaskMode } from '../types/canvas.ts';
 import type { CreateTaskPayload } from '../services/api.ts';
+import { protocolOf } from './providers.ts';
 
 export interface VideoCompilationInput {
   card: SpatialCard;
@@ -91,10 +92,11 @@ export function compileVideoTaskPayload(
   allCards: SpatialCard[] = []
 ): CreateTaskPayload {
   const provider = card.provider ?? inferVideoProvider(card.model);
-  const isMiniMax = provider === 'minimax';
+  const protocol = protocolOf(provider);
+  const isMiniMax = protocol === 'minimax';
 
   const mode: VideoTaskMode = card.mode ?? 'all_modal';
-  const modelDef = resolveVideoModelDef(provider, card.model);
+  const modelDef = resolveVideoModelDef(protocol, card.model);
   if (modelDef.modes && !modelDef.modes.includes(mode)) {
     throw new Error(`Model ${card.model} does not support ${mode} mode`);
   }

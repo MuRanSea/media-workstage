@@ -104,69 +104,9 @@ func main() {
 		configMap[c.Key] = c.Value
 	}
 
-	// Ark configuration (DB -> ENV fallback)
-	arkAPIKey := configMap["ark_api_key"]
-	if arkAPIKey == "" {
-		arkAPIKey = os.Getenv("ARK_API_KEY")
-	}
-	arkBaseURL := configMap["ark_base_url"]
-	if arkBaseURL == "" {
-		arkBaseURL = os.Getenv("ARK_BASE_URL")
-	}
-
-	var arkProvider adapter.ProviderAdapter
-	if arkAPIKey != "" {
-		arkProvider = adapter.NewArkAdapter(adapter.ArkConfig{
-			BaseURL: arkBaseURL,
-			APIKey:  arkAPIKey,
-		})
-	} else {
-		log.Println("[INFO] ARK_API_KEY not set; using configurable mock provider for ark adapter")
-		arkProvider = adapter.NewFakeProviderAdapter("ark")
-	}
-
-	// MiniMax configuration (DB -> ENV fallback)
-	minimaxAPIKey := configMap["minimax_api_key"]
-	if minimaxAPIKey == "" {
-		minimaxAPIKey = os.Getenv("MINIMAX_API_KEY")
-	}
-	minimaxBaseURL := configMap["minimax_base_url"]
-	if minimaxBaseURL == "" {
-		minimaxBaseURL = os.Getenv("MINIMAX_BASE_URL")
-	}
-	minimaxGroupID := configMap["minimax_group_id"]
-	if minimaxGroupID == "" {
-		minimaxGroupID = os.Getenv("MINIMAX_GROUP_ID")
-	}
-
-	var minimaxProvider adapter.ProviderAdapter
-	if minimaxAPIKey != "" {
-		minimaxProvider = adapter.NewMiniMaxAdapter(adapter.MiniMaxConfig{
-			BaseURL: minimaxBaseURL,
-			APIKey:  minimaxAPIKey,
-			GroupID: minimaxGroupID,
-		})
-	} else {
-		log.Println("[INFO] MINIMAX_API_KEY not set; using configurable mock provider for minimax adapter")
-		minimaxProvider = adapter.NewFakeProviderAdapter("minimax")
-	}
-
-	// Register Provider Adapters
-	adapters := map[string]adapter.ProviderAdapter{
-		"ark":     arkProvider,
-		"minimax": minimaxProvider,
-	}
-
-	// Image channels run only with a real key; unconfigured ones stay unregistered.
-	for _, name := range []string{"openai", "google", "apimart"} {
-		baseURL, apiKey := server.ChannelCredentials(configMap, name)
-		if apiKey == "" {
-			continue
-		}
-		if a, ok := adapter.NewChannelAdapter(name, baseURL, apiKey, nil); ok {
-			adapters[name] = a
-		}
-	}
+	// Preset providers get their adapters from stored config, then env; Ark and MiniMax
+	// run on mock adapters until they have a key, the rest stay unregistered.
+	adapters := server.PresetAdapters(configMap)
 
 	// One registry shared by the poller and the server, so adapters swapped in by
 	// config saves at runtime are the ones the poller dispatches to.

@@ -42,28 +42,36 @@ export interface BackendTaskResponse {
   assets?: TaskAssetDto[];
 }
 
-export type ChannelId = 'ark' | 'minimax' | 'kling' | 'midjourney' | 'google' | 'openai' | 'apimart';
+/** Stable ID of a configured provider: a preset ID ('ark', 'openai', …) or a generated one. */
+export type ProviderId = string;
+
+/** API dialect a provider speaks; decides the adapter and which card kinds it can run. */
+export type Protocol = 'ark' | 'minimax' | 'kling' | 'midjourney' | 'gemini' | 'openai_compatible' | 'apimart';
 
 export type ModelType = 'image' | 'video' | 'chat' | 'audio' | 'other';
 
-export interface ChannelModel {
+export interface BoundModel {
   id: string;
   type: ModelType;
 }
 
 export interface ProviderConfigItem {
-  id: ChannelId;
+  id: ProviderId;
+  /** Display name, unique across providers. */
   name: string;
+  protocol: Protocol;
+  /** Preset providers ship with the app and cannot be deleted. */
+  preset: boolean;
   base_url: string;
   is_configured: boolean;
   masked_key?: string;
   extra?: Record<string, string>;
-  /** Models bound to this channel (presets until the user saves a binding). */
-  models: ChannelModel[];
-  /** Whether the channel exposes a live model catalog (otherwise presets only). */
+  /** Models bound to this provider (presets until the user saves a binding). */
+  models: BoundModel[];
+  /** Whether the provider exposes a live model catalog (otherwise presets only). */
   can_list_models: boolean;
   /** Built-in models the binding panel can restore with 「恢复默认」. */
-  presets?: ChannelModel[];
+  presets?: BoundModel[];
 }
 
 export interface GetConfigResponse {
@@ -71,29 +79,29 @@ export interface GetConfigResponse {
 }
 
 export interface UpdateConfigPayload {
-  provider: ChannelId;
+  provider: ProviderId;
   base_url?: string;
   api_key?: string;
   extra?: Record<string, string>;
-  /** Replaces the channel's bound models; omit to leave them unchanged. */
-  models?: ChannelModel[];
-  /** Wipes the channel's saved key, base URL, extras and bindings. */
+  /** Replaces the provider's bound models; omit to leave them unchanged. */
+  models?: BoundModel[];
+  /** Wipes the provider's saved key, base URL, extras and bindings. */
   clear?: boolean;
 }
 
 export interface ListModelsPayload {
-  provider: ChannelId;
+  provider: ProviderId;
   base_url?: string;
   api_key?: string;
 }
 
 export interface ListModelsResponse {
-  models: ChannelModel[];
+  models: BoundModel[];
   source: 'remote' | 'preset';
 }
 
 export interface TestConfigPayload {
-  provider: ChannelId;
+  provider: ProviderId;
   base_url: string;
   api_key: string;
   extra?: Record<string, string>;
@@ -199,10 +207,10 @@ export async function apiTestConfig(payload: TestConfigPayload): Promise<TestCon
 }
 
 /**
- * Fetches a channel's model catalog via POST /api/config/models: live from the
+ * Fetches a provider's model catalog via POST /api/config/models: live from the
  * provider where supported (using the typed or saved key), otherwise its presets.
  */
-export async function apiListChannelModels(payload: ListModelsPayload): Promise<ListModelsResponse> {
+export async function apiListProviderModels(payload: ListModelsPayload): Promise<ListModelsResponse> {
   const resp = await fetch('/api/config/models', {
     method: 'POST',
     headers: {
@@ -220,7 +228,7 @@ export async function apiListChannelModels(payload: ListModelsPayload): Promise<
 }
 
 export interface GenerateTextPayload {
-  provider: ChannelId;
+  provider: ProviderId;
   model: string;
   system?: string;
   prompt: string;

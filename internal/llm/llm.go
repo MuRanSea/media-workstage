@@ -1,4 +1,4 @@
-// Package llm sends single-turn text generation requests to the configured channels,
+// Package llm sends single-turn text generation requests to the configured providers,
 // for text cards that write prompts for image and video cards.
 package llm
 
@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"media-workstage/internal/model"
 )
 
 // Request is one system + user turn.
@@ -22,36 +24,36 @@ type Request struct {
 	Prompt string
 }
 
-// Supported reports whether a channel can run text generation.
-func Supported(provider string) bool {
-	switch provider {
-	case "openai", "apimart", "ark", "minimax", "google":
+// Supported reports whether providers speaking protocol can run text generation.
+func Supported(protocol model.Protocol) bool {
+	switch protocol {
+	case model.ProtocolOpenAICompatible, model.ProtocolAPIMart, model.ProtocolArk, model.ProtocolMiniMax, model.ProtocolGemini:
 		return true
 	}
 	return false
 }
 
-// Generate runs req against the channel and returns the model's text.
-func Generate(ctx context.Context, client *http.Client, provider, baseURL, apiKey string, req Request) (string, error) {
+// Generate runs req against a provider speaking protocol and returns the model's text.
+func Generate(ctx context.Context, client *http.Client, protocol model.Protocol, baseURL, apiKey string, req Request) (string, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	var (
 		text string
 		err  error
 	)
-	switch provider {
-	case "openai", "apimart":
+	switch protocol {
+	case model.ProtocolOpenAICompatible, model.ProtocolAPIMart:
 		text, err = chatCompletions(ctx, client, baseURL+"/chat/completions", apiKey, req, nil)
-	case "ark":
+	case model.ProtocolArk:
 		// Doubao Seed models think by default; prompt writing is plain text generation,
 		// so switch it off as Ark documents (faster, no reasoning tokens billed).
 		text, err = chatCompletions(ctx, client, baseURL+"/chat/completions", apiKey, req,
 			map[string]any{"thinking": map[string]string{"type": "disabled"}})
-	case "minimax":
+	case model.ProtocolMiniMax:
 		text, err = chatCompletions(ctx, client, baseURL+"/text/chatcompletion_v2", apiKey, req, nil)
-	case "google":
+	case model.ProtocolGemini:
 		text, err = geminiGenerate(ctx, client, baseURL, apiKey, req)
 	default:
-		return "", fmt.Errorf("渠道 %s 不支持文本生成", provider)
+		return "", fmt.Errorf("接入协议 %s 不支持文本生成", protocol)
 	}
 	if err != nil {
 		return "", err

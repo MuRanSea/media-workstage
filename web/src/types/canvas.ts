@@ -1,4 +1,4 @@
-import type { ChannelId } from '../services/api.ts';
+import type { Protocol, ProviderId } from '../services/api.ts';
 
 export type CardType = 'image' | 'video' | 'text';
 export type TextPreset = 'image_prompt' | 'video_prompt' | 'free';
@@ -41,8 +41,8 @@ export interface SpatialCard {
   y: number;
   width: number;
   prompt: string;
-  /** Channel that runs this card's model; defaults to 'ark' (inferred from the model for legacy video cards). */
-  provider?: ChannelId;
+  /** Provider that runs this card's model; defaults to 'ark' (inferred from the model for legacy video cards). */
+  provider?: ProviderId;
   model: string;
   status: 'idle' | 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'expired';
   progress: number;
@@ -91,7 +91,8 @@ export interface VideoModelDef {
   id: string;
   name: string;
   tag: string;
-  provider: ChannelId;
+  /** Protocol whose API these limits describe. */
+  protocol: Protocol;
   resolutions: string[];
   durations: number[];
   ratios: string[];
@@ -121,7 +122,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     id: 'doubao-seedance-2-5-260628',
     name: 'Seedance 2.5',
     tag: '旗舰30s全模态',
-    provider: 'ark',
+    protocol: 'ark',
     resolutions: ['480p', '720p', '1080p'],
     durations: [4, 5, 10, 15, 20, 30, -1],
     ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'],
@@ -133,7 +134,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     id: 'doubao-seedance-2-0-260128',
     name: 'Seedance 2.0 Pro',
     tag: '4K专业版',
-    provider: 'ark',
+    protocol: 'ark',
     resolutions: ['480p', '720p', '1080p', '4k'],
     durations: [4, 5, 10, 15, -1],
     ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'],
@@ -145,7 +146,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     id: 'MiniMax-H3',
     name: 'MiniMax H3',
     tag: '海螺2K高动态',
-    provider: 'minimax',
+    protocol: 'minimax',
     resolutions: ['720P', '1080P', '2K'],
     durations: [5, 6, 10, 15],
     ratios: ['16:9', '9:16', '1:1'],
@@ -157,7 +158,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     id: 'video-01',
     name: 'MiniMax Video-01',
     tag: '海螺基础版',
-    provider: 'minimax',
+    protocol: 'minimax',
     resolutions: ['720P', '1080P'],
     durations: [6],
     ratios: ['16:9', '9:16'],
@@ -170,7 +171,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     id: 'kling-v3',
     name: 'Kling v3',
     tag: '首尾帧/4K',
-    provider: 'apimart',
+    protocol: 'apimart',
     resolutions: ['720p', '1080p', '4k'],
     durations: [3, 5, 10, 15],
     ratios: ['16:9', '9:16', '1:1'],
@@ -183,7 +184,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     id: 'kling-v3-omni',
     name: 'Kling v3 Omni',
     tag: '多图参考/4K',
-    provider: 'apimart',
+    protocol: 'apimart',
     resolutions: ['720p', '1080p', '4k'],
     durations: [3, 5, 10, 15],
     ratios: ['16:9', '9:16', '1:1'],
@@ -195,7 +196,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     id: 'kling-3.0-turbo',
     name: 'Kling 3.0 Turbo',
     tag: '首帧/极速',
-    provider: 'apimart',
+    protocol: 'apimart',
     resolutions: ['720p', '1080p'],
     durations: [3, 5, 10, 15],
     ratios: ['16:9', '9:16', '1:1'],
@@ -208,7 +209,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     id: 'kling-v2-6',
     name: 'Kling 2.6',
     tag: '首尾帧',
-    provider: 'apimart',
+    protocol: 'apimart',
     resolutions: ['720p', '1080p'],
     durations: [5, 10],
     ratios: ['16:9', '9:16', '1:1'],
@@ -221,7 +222,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     id: 'kling-video-o1',
     name: 'Kling O1',
     tag: '多图参考',
-    provider: 'apimart',
+    protocol: 'apimart',
     resolutions: ['720p', '1080p'],
     durations: [5, 10],
     ratios: ['16:9', '9:16', '1:1'],
@@ -234,7 +235,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     id: 'MiniMax-H3',
     name: 'MiniMax H3',
     tag: '2K/多图参考',
-    provider: 'apimart',
+    protocol: 'apimart',
     resolutions: ['768P', '2K'],
     durations: [4, 5, 6, 8, 10, 15],
     ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
@@ -251,17 +252,17 @@ export function isAPIMartVideoModel(modelId: string): boolean {
 }
 
 /**
- * Parameter limits for a video model. Bound models without a built-in definition
- * borrow their provider's flagship limits (Seedance 2.5 for anything not MiniMax).
+ * Parameter limits for a video model on a protocol. Bound models without a built-in
+ * definition borrow their protocol's flagship limits (Seedance 2.5 for anything not MiniMax).
  */
-export function resolveVideoModelDef(provider: string, modelId: string): VideoModelDef {
+export function resolveVideoModelDef(protocol: Protocol | undefined, modelId: string): VideoModelDef {
   const known =
-    VIDEO_MODELS.find((m) => m.id === modelId && m.provider === provider) ??
+    VIDEO_MODELS.find((m) => m.id === modelId && m.protocol === protocol) ??
     VIDEO_MODELS.find((m) => m.id === modelId);
   if (known) return known;
 
-  let baseId = provider === 'minimax' ? 'MiniMax-H3' : VIDEO_MODELS[0].id;
-  if (provider === 'apimart' && isAPIMartVideoModel(modelId)) {
+  let baseId = protocol === 'minimax' ? 'MiniMax-H3' : VIDEO_MODELS[0].id;
+  if (protocol === 'apimart' && isAPIMartVideoModel(modelId)) {
     // Unlisted variants take after the family they belong to (as the backend does).
     const m = modelId.toLowerCase();
     baseId = m.startsWith('minimax-h3')
@@ -273,7 +274,7 @@ export function resolveVideoModelDef(provider: string, modelId: string): VideoMo
       : 'kling-v3';
   }
   const base =
-    VIDEO_MODELS.find((m) => m.id === baseId && m.provider === provider) ??
+    VIDEO_MODELS.find((m) => m.id === baseId && m.protocol === protocol) ??
     VIDEO_MODELS.find((m) => m.id === baseId) ??
     VIDEO_MODELS[0];
   return { ...base, id: modelId, name: modelId, tag: '' };

@@ -327,9 +327,9 @@ func (s *Server) storedConfig() map[string]string {
 
 func (s *Server) handleGetConfig(c *gin.Context) {
 	stored := s.storedConfig()
-	providers := make([]channelView, 0, len(channelSpecs))
-	for _, spec := range channelSpecs {
-		providers = append(providers, resolveChannel(spec, stored))
+	providers := make([]providerView, 0, len(presetProviders))
+	for _, spec := range presetProviders {
+		providers = append(providers, resolveProvider(spec, stored))
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -342,9 +342,9 @@ type UpdateConfigPayload struct {
 	BaseURL  string            `json:"base_url"`
 	APIKey   string            `json:"api_key"`
 	Extra    map[string]string `json:"extra"`
-	// Models replaces the channel's bound models when present (nil leaves them as is).
-	Models *[]channelModel `json:"models"`
-	// Clear wipes the channel's saved key, base URL, extras and bindings.
+	// Models replaces the provider's bound models when present (nil leaves them as is).
+	Models *[]boundModel `json:"models"`
+	// Clear wipes the provider's saved key, base URL, extras and bindings.
 	Clear bool `json:"clear"`
 }
 
@@ -356,14 +356,14 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 	}
 
 	provider := strings.ToLower(strings.TrimSpace(payload.Provider))
-	spec, ok := findChannel(provider)
+	spec, ok := findProvider(provider)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider: " + payload.Provider})
 		return
 	}
 
 	if payload.Clear {
-		s.clearChannel(c, spec)
+		s.clearProvider(c, spec)
 		return
 	}
 
@@ -409,18 +409,18 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 		}
 	}
 
-	s.hotReloadAdapter(provider, payload)
+	s.hotReloadAdapter(spec, payload)
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "ok",
-		"config": resolveChannel(spec, s.storedConfig()),
+		"config": resolveProvider(spec, s.storedConfig()),
 	})
 }
 
-// clearChannel deletes a channel's saved configuration and its live adapter, so a
-// misconfigured channel stops being offered on cards. Ark and MiniMax fall back to
-// their mock adapters; keys set through environment variables still apply.
-func (s *Server) clearChannel(c *gin.Context, spec channelSpec) {
+// clearProvider deletes a provider's saved configuration and its live adapter, so a
+// misconfigured provider stops being offered on cards. Providers that run mocked fall
+// back to the mock; keys set through environment variables still apply.
+func (s *Server) clearProvider(c *gin.Context, spec providerSpec) {
 	keys := []string{spec.ID + "_api_key", spec.ID + "_base_url", spec.ID + "_models"}
 	for extra := range spec.ExtraEnv {
 		keys = append(keys, spec.ID+"_"+extra)
@@ -430,36 +430,29 @@ func (s *Server) clearChannel(c *gin.Context, spec channelSpec) {
 		return
 	}
 
-	baseURL, apiKey := ChannelCredentials(s.storedConfig(), spec.ID)
-	switch {
-	case apiKey != "":
-		// An env var still provides a key: rebuild the adapter from it.
-		if a, ok := adapter.NewChannelAdapter(spec.ID, baseURL, apiKey, nil); ok {
-			s.registry.Set(spec.ID, a)
-		}
-	case spec.ID == "ark" || spec.ID == "minimax":
-		s.registry.Set(spec.ID, adapter.NewFakeProviderAdapter(spec.ID))
-	default:
+	stored := s.storedConfig()
+	if a, ok := liveAdapter(spec, stored); ok {
+		s.registry.Set(spec.ID, a)
+	} else {
 		s.registry.Delete(spec.ID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "ok",
-		"config": resolveChannel(spec, s.storedConfig()),
+		"config": resolveProvider(spec, stored),
 	})
 }
 
 // hotReloadAdapter keeps the live adapter in step with saved credentials: a new key
 // replaces a missing or mock adapter, otherwise the existing adapter is updated in place.
-// Channels without generation support (kling, midjourney) only persist configuration.
-func (s *Server) hotReloadAdapter(provider string, payload UpdateConfigPayload) {
-	provAdapter, ok := s.registry.Get(provider)
+// Protocols without generation support (kling, midjourney) only persist configuration.
+func (s *Server) hotReloadAdapter(spec providerSpec, payload UpdateConfigPayload) {
+	provAdapter, ok := s.registry.Get(spec.ID)
 	_, isFake := provAdapter.(*adapter.FakeProviderAdapter)
 
 	if (!ok || isFake) && strings.TrimSpace(payload.APIKey) != "" {
-		baseURL, _ := ChannelCredentials(s.storedConfig(), provider)
-		if real, built := adapter.NewChannelAdapter(provider, baseURL, payload.APIKey, payload.Extra); built {
-			s.registry.Set(provider, real)
+		if real, built := liveAdapter(spec, s.storedConfig()); built {
+			s.registry.Set(spec.ID, real)
 		}
 		return
 	}
@@ -475,7 +468,7 @@ type ListModelsPayload struct {
 	APIKey   string `json:"api_key"`
 }
 
-// handleListModels returns a channel's model catalog: fetched live where the channel
+// handleListModels returns a provider's model catalog: fetched live where its protocol
 // has a list endpoint (using the typed key, or the saved one), otherwise its presets.
 func (s *Server) handleListModels(c *gin.Context) {
 	var payload ListModelsPayload
@@ -483,17 +476,17 @@ func (s *Server) handleListModels(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	spec, ok := findChannel(strings.ToLower(strings.TrimSpace(payload.Provider)))
+	spec, ok := findProvider(strings.ToLower(strings.TrimSpace(payload.Provider)))
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported provider: " + payload.Provider})
 		return
 	}
-	if spec.listModels == nil {
+	if spec.protocol().listModels == nil {
 		c.JSON(http.StatusOK, gin.H{"models": spec.Presets, "source": "preset"})
 		return
 	}
 
-	baseURL, apiKey := ChannelCredentials(s.storedConfig(), spec.ID)
+	baseURL, apiKey := ProviderCredentials(s.storedConfig(), spec.ID)
 	if v := strings.TrimSpace(payload.BaseURL); v != "" {
 		baseURL = v
 	}
@@ -509,9 +502,9 @@ func (s *Server) handleListModels(c *gin.Context) {
 		return
 	}
 
-	models, err := spec.listModels(c.Request.Context(), newSafeClient(20*time.Second), strings.TrimRight(baseURL, "/"), apiKey)
+	models, err := spec.protocol().listModels(c.Request.Context(), newSafeClient(20*time.Second), strings.TrimRight(baseURL, "/"), apiKey)
 	if err != nil {
-		// A channel without a list endpoint still offers its presets.
+		// A provider without a list endpoint still offers its presets.
 		var statusErr *httpStatusError
 		if errors.As(err, &statusErr) && (statusErr.Status == http.StatusNotFound || statusErr.Status == http.StatusMethodNotAllowed) && len(spec.Presets) > 0 {
 			c.JSON(http.StatusOK, gin.H{"models": spec.Presets, "source": "preset"})
@@ -560,7 +553,7 @@ func (s *Server) handleTestConfig(c *gin.Context) {
 		return
 	}
 
-	spec, ok := findChannel(strings.ToLower(strings.TrimSpace(payload.Provider)))
+	spec, ok := findProvider(strings.ToLower(strings.TrimSpace(payload.Provider)))
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "unsupported provider: " + payload.Provider})
 		return
@@ -568,7 +561,7 @@ func (s *Server) handleTestConfig(c *gin.Context) {
 
 	safeClient := newSafeClient(10 * time.Second)
 
-	req, err := spec.newProbe(c.Request.Context(), strings.TrimRight(strings.TrimSpace(payload.BaseURL), "/"), payload.APIKey, payload.Extra)
+	req, err := spec.protocol().newProbe(c.Request.Context(), strings.TrimRight(strings.TrimSpace(payload.BaseURL), "/"), payload.APIKey, payload.Extra)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"ok": false, "error": err.Error()})
 		return
@@ -598,7 +591,7 @@ func (s *Server) handleTestConfig(c *gin.Context) {
 	}
 
 	// 404 always means a wrong path, even for probes that query a dummy task
-	// (e.g. the MiniMax channel pointed at an APIMart relay).
+	// (e.g. the MiniMax provider pointed at an APIMart relay).
 	if resp.StatusCode == http.StatusNotFound {
 		c.JSON(http.StatusOK, gin.H{
 			"ok":    false,
@@ -607,7 +600,7 @@ func (s *Server) handleTestConfig(c *gin.Context) {
 		return
 	}
 
-	if spec.probeNeeds2xx && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+	if spec.protocol().probeNeeds2xx && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
 		c.JSON(http.StatusOK, gin.H{
 			"ok":    false,
 			"error": fmt.Sprintf("服务商返回 HTTP %d，请检查 Base URL 与 API Key", resp.StatusCode),
@@ -637,26 +630,26 @@ type GenerateTextPayload struct {
 	Prompt   string `json:"prompt" binding:"required"`
 }
 
-// handleGenerateText runs a text card: one system + user turn against the channel's LLM.
+// handleGenerateText runs a text card: one system + user turn against the provider's LLM.
 func (s *Server) handleGenerateText(c *gin.Context) {
 	var payload GenerateTextPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	provider := strings.ToLower(strings.TrimSpace(payload.Provider))
-	if !llm.Supported(provider) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "渠道 " + payload.Provider + " 不支持文本生成"})
+	spec, ok := findProvider(strings.ToLower(strings.TrimSpace(payload.Provider)))
+	if !ok || !llm.Supported(spec.Protocol) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "服务商 " + payload.Provider + " 不支持文本生成"})
 		return
 	}
-	baseURL, apiKey := ChannelCredentials(s.storedConfig(), provider)
+	baseURL, apiKey := ProviderCredentials(s.storedConfig(), spec.ID)
 	if apiKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "渠道 " + provider + " 未配置 API Key"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "服务商 " + spec.Name + " 未配置 API Key"})
 		return
 	}
 
 	client := &http.Client{Timeout: 3 * time.Minute}
-	text, err := llm.Generate(c.Request.Context(), client, provider, baseURL, apiKey, llm.Request{
+	text, err := llm.Generate(c.Request.Context(), client, spec.Protocol, baseURL, apiKey, llm.Request{
 		Model:  payload.Model,
 		System: payload.System,
 		Prompt: payload.Prompt,

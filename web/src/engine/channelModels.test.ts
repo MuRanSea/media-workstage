@@ -2,9 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { buildProviderGroups, findModelOption } from './channelModels.ts';
 import type { ProviderConfigItem } from '../services/api.ts';
 import { resolveVideoModelDef } from '../types/canvas.ts';
+import { protocolOf, providerName } from './providers.ts';
 
+// Preset providers, as GET /api/config lists them.
 const channel = (p: Partial<ProviderConfigItem> & Pick<ProviderConfigItem, 'id'>): ProviderConfigItem => ({
-  name: p.id,
+  name: providerName(p.id),
+  protocol: protocolOf(p.id)!,
+  preset: true,
   base_url: '',
   is_configured: false,
   models: [],

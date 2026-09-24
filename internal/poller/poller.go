@@ -244,7 +244,7 @@ func (p *TaskPoller) ProcessTask(ctx context.Context, taskID string) {
 
 	provAdapter, ok := p.registry.GetForTask(task.Provider, task.ProviderTaskID)
 	if !ok {
-		p.failTask(taskCtx, &task, "UnsupportedProvider", fmt.Sprintf("渠道 %s 未配置 API Key 或尚未接入生成，请在设置中检查", task.Provider))
+		p.failTask(taskCtx, &task, "UnsupportedProvider", fmt.Sprintf("服务商 %s 未配置 API Key 或尚未接入生成，请在设置中检查", task.Provider))
 		return
 	}
 

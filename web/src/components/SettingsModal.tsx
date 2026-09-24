@@ -22,10 +22,13 @@ import {
 import {
   apiUpdateConfig,
   apiTestConfig,
-  type ChannelId,
-  type ChannelModel,
+  type BoundModel,
+  type Protocol,
+  type ProviderConfigItem,
+  type ProviderId,
 } from '../services/api.ts';
 import { refreshChannels, useChannels } from '../services/channels.ts';
+import { runsMockedWithoutKey } from '../engine/channelModels.ts';
 import { ModelBindingPanel } from './ModelBindingPanel.tsx';
 import { Button, IconButton, inputClass, useDialogs } from './ui/index.ts';
 
@@ -34,9 +37,8 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-interface ChannelMeta {
-  id: ChannelId;
-  label: string;
+/** Settings copy and fields for every provider speaking a protocol. */
+interface ProtocolMeta {
   title: string;
   subtitle: string;
   icon: LucideIcon;
@@ -47,16 +49,12 @@ interface ChannelMeta {
   keyPlaceholder: string;
   extraFields?: { key: string; label: string; placeholder: string }[];
   hint?: string;
-  // Whether a generation adapter exists yet; channels without one only store credentials.
+  // Whether a generation adapter exists yet; protocols without one only store credentials.
   adapterReady: boolean;
-  // Ark and MiniMax run against a mock adapter until a key is saved.
-  mockWhenUnset?: boolean;
 }
 
-const CHANNELS: ChannelMeta[] = [
-  {
-    id: 'ark',
-    label: '火山方舟',
+const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
+  ark: {
     title: '火山方舟原生 API',
     subtitle: 'Seedance 视频 • Seedream 生图 • Doubao Seed 文本',
     icon: Sparkles,
@@ -65,11 +63,8 @@ const CHANNELS: ChannelMeta[] = [
     keyLabel: 'API Key',
     keyPlaceholder: '请输入您的火山方舟 API Key (Bearer 令牌)',
     adapterReady: true,
-    mockWhenUnset: true,
   },
-  {
-    id: 'minimax',
-    label: 'MiniMax 海螺',
+  minimax: {
     title: 'MiniMax 海螺官方 API',
     subtitle: 'MiniMax-H3 2K 视频生成 • Video-01',
     icon: Building,
@@ -79,11 +74,8 @@ const CHANNELS: ChannelMeta[] = [
     keyPlaceholder: '请输入您的 MiniMax API Key',
     extraFields: [{ key: 'group_id', label: 'Group ID (可选)', placeholder: '仅企业/多租户账号需要填' }],
     adapterReady: true,
-    mockWhenUnset: true,
   },
-  {
-    id: 'kling',
-    label: '可灵 Kling',
+  kling: {
     title: '可灵 AI 开放平台',
     subtitle: 'Kling 3.0 / Omni 视频生成 • Kling Image 生图',
     icon: Clapperboard,
@@ -94,9 +86,7 @@ const CHANNELS: ChannelMeta[] = [
     hint: '默认中国区域名；国际区账号请改用国际站文档给出的域名。',
     adapterReady: false,
   },
-  {
-    id: 'midjourney',
-    label: 'Midjourney',
+  midjourney: {
     title: 'Midjourney (MJ Proxy)',
     subtitle: 'Imagine / Niji 生图 • midjourney-proxy 协议',
     icon: Palette,
@@ -107,9 +97,7 @@ const CHANNELS: ChannelMeta[] = [
     hint: 'Midjourney 无官方 API，请填写兼容 /mj 接口的代理或中转地址（不含 /mj），支持内网与本机地址。',
     adapterReady: false,
   },
-  {
-    id: 'google',
-    label: 'Google 生图',
+  gemini: {
     title: 'Google Gemini API',
     subtitle: 'Gemini 3 Pro Image • Gemini 3.1 Flash Image (Nano Banana)',
     icon: WandSparkles,
@@ -120,22 +108,18 @@ const CHANNELS: ChannelMeta[] = [
     hint: '密钥通过 x-goog-api-key 请求头发送；也可以填写中转地址（含内网），Base URL 需以 /v1beta 结尾，如 http://host:3000/v1beta。',
     adapterReady: true,
   },
-  {
-    id: 'openai',
-    label: 'GPT 生图',
-    title: 'OpenAI Images API',
-    subtitle: 'gpt-image-2.5 Sunburst / Flare • gpt-image-2',
+  openai_compatible: {
+    title: 'OpenAI 兼容 API',
+    subtitle: '生图 /images/generations • 文本 /chat/completions',
     icon: Bot,
     accent: { text: 'text-orange-400', key: 'text-orange-300', focus: 'focus:border-orange-500' },
     baseUrlPlaceholder: 'https://api.openai.com/v1',
     keyLabel: 'API Key',
-    keyPlaceholder: '请输入 OpenAI API Key (sk-...)',
+    keyPlaceholder: '请输入 API Key (sk-...)',
     hint: '官方地址或 OpenAI 兼容中转均可，Base URL 需包含 /v1。',
     adapterReady: true,
   },
-  {
-    id: 'apimart',
-    label: 'APIMart',
+  apimart: {
     title: 'APIMart 聚合 API',
     subtitle: '生图 • 可灵视频 • GPT / Claude / Gemini / DeepSeek 等文本模型',
     icon: Network,
@@ -146,14 +130,14 @@ const CHANNELS: ChannelMeta[] = [
     hint: '一个令牌可调用多家模型，模型 ID 以 APIMart 文档为准；Base URL 需包含 /v1。',
     adapterReady: true,
   },
-];
+};
 
-interface ChannelForm {
+interface ProviderForm {
   baseUrl: string;
   apiKey: string;
   extra: Record<string, string>;
   showKey: boolean;
-  models: ChannelModel[];
+  models: BoundModel[];
   // Unsaved model edits survive config reloads; only sent on save when true.
   modelsDirty: boolean;
 }
@@ -164,43 +148,37 @@ interface TestStatus {
   msg?: string;
 }
 
-const initialForms = (): Record<ChannelId, ChannelForm> => {
-  const forms = {} as Record<ChannelId, ChannelForm>;
-  for (const c of CHANNELS) {
-    forms[c.id] = { baseUrl: '', apiKey: '', extra: {}, showKey: false, models: [], modelsDirty: false };
-  }
-  return forms;
-};
+const emptyForm = (): ProviderForm => ({ baseUrl: '', apiKey: '', extra: {}, showKey: false, models: [], modelsDirty: false });
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [activeTab, setActiveTab] = useState<ChannelId>('ark');
+  const [activeTab, setActiveTab] = useState<ProviderId>('ark');
   const providers = useChannels();
-  const [forms, setForms] = useState<Record<ChannelId, ChannelForm>>(initialForms);
-  const [testStatus, setTestStatus] = useState<Partial<Record<ChannelId, TestStatus>>>({});
+  const [forms, setForms] = useState<Record<ProviderId, ProviderForm>>({});
+  const [testStatus, setTestStatus] = useState<Partial<Record<ProviderId, TestStatus>>>({});
 
   const [saveStatus, setSaveStatus] = useState<{ saving: boolean; success?: boolean; error?: string }>({
     saving: false,
   });
   const { confirm } = useDialogs();
 
-  const patchForm = (id: ChannelId, patch: Partial<ChannelForm>) => {
-    setForms((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  const patchForm = (id: ProviderId, patch: Partial<ProviderForm>) => {
+    setForms((prev) => ({ ...prev, [id]: { ...(prev[id] ?? emptyForm()), ...patch } }));
   };
 
-  // Sync form fields from the shared channel config whenever it reloads
+  // Sync form fields from the shared provider config whenever it reloads
   useEffect(() => {
     setForms((prev) => {
       const next = { ...prev };
       for (const p of providers) {
-        if (!next[p.id]) continue;
+        const f = next[p.id] ?? emptyForm();
         next[p.id] = {
-          ...next[p.id],
-          baseUrl: p.base_url || next[p.id].baseUrl,
-          extra: { ...next[p.id].extra, ...p.extra },
-          models: next[p.id].modelsDirty ? next[p.id].models : p.models,
+          ...f,
+          baseUrl: p.base_url || f.baseUrl,
+          extra: { ...f.extra, ...p.extra },
+          models: f.modelsDirty ? f.models : p.models,
         };
       }
       return next;
@@ -217,11 +195,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   if (!isOpen) return null;
 
-  const channel = CHANNELS.find((c) => c.id === activeTab) ?? CHANNELS[0];
-  const form = forms[channel.id];
-  const current = providers.find((p) => p.id === channel.id);
+  const channel: ProviderConfigItem | undefined = providers.find((p) => p.id === activeTab) ?? providers[0];
+  if (!channel) {
+    // Provider config has not loaded (yet); the open effect is fetching it.
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm select-none"
+        onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+      >
+        <div className="flex items-center gap-2 px-5 py-4 bg-canvas-surface border border-slate-700/80 rounded-2xl text-xs text-slate-400">
+          <Loader2 className="w-4 h-4 animate-spin" /> 正在加载服务商配置…
+          <IconButton title="关闭" onClick={onClose}>
+            <X className="w-4 h-4" />
+          </IconButton>
+        </div>
+      </div>
+    );
+  }
+  const meta = PROTOCOL_META[channel.protocol];
+  const form = forms[channel.id] ?? emptyForm();
+  const current = channel;
   const test = testStatus[channel.id] ?? { testing: false };
-  const ChannelIcon = channel.icon;
+  const ChannelIcon = meta.icon;
 
   const handleTest = async () => {
     const id = channel.id;
@@ -255,7 +250,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Wipe a channel that was filled in by mistake, so cards stop offering it.
   const handleClear = async () => {
     const ok = await confirm({
-      title: `清除「${channel.label}」的配置？`,
+      title: `清除「${channel.name}」的配置？`,
       message: '会删除已保存的 API Key、Base URL 和绑定的模型，卡片里将不再出现这个服务商。',
       confirmText: '清除',
       danger: true,
@@ -282,8 +277,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         provider: channel.id,
         base_url: form.baseUrl,
         api_key: form.apiKey || undefined,
-        extra: channel.extraFields
-          ? Object.fromEntries(channel.extraFields.map((f) => [f.key, form.extra[f.key] ?? '']))
+        extra: meta.extraFields
+          ? Object.fromEntries(meta.extraFields.map((f) => [f.key, form.extra[f.key] ?? '']))
           : undefined,
         models: form.modelsDirty ? form.models : undefined,
       });
@@ -300,39 +295,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
-  /** Whether a channel's form differs from what is saved. */
-  const isDirty = (id: ChannelId) => {
+  /** Whether a provider's form differs from what is saved. */
+  const isDirty = (id: ProviderId) => {
     const f = forms[id];
     const saved = providers.find((p) => p.id === id);
-    const meta = CHANNELS.find((c) => c.id === id);
-    if (!f) return false;
+    if (!f || !saved) return false;
     if (f.apiKey.trim() || f.modelsDirty) return true;
-    if (f.baseUrl.trim() && f.baseUrl.trim() !== (saved?.base_url ?? '').trim()) return true;
-    return (meta?.extraFields ?? []).some((x) => (f.extra[x.key] ?? '') !== (saved?.extra?.[x.key] ?? ''));
+    if (f.baseUrl.trim() && f.baseUrl.trim() !== (saved.base_url ?? '').trim()) return true;
+    return (PROTOCOL_META[saved.protocol].extraFields ?? []).some(
+      (x) => (f.extra[x.key] ?? '') !== (saved.extra?.[x.key] ?? '')
+    );
   };
-  const dirtyChannels = CHANNELS.filter((c) => isDirty(c.id));
+  const dirtyProviders = providers.filter((p) => isDirty(p.id));
 
   const requestClose = async () => {
-    if (dirtyChannels.length > 0) {
+    if (dirtyProviders.length > 0) {
       const ok = await confirm({
         title: '放弃未保存的修改？',
-        message: `${dirtyChannels.map((c) => c.label).join('、')} 有修改还没保存。`,
+        message: `${dirtyProviders.map((p) => p.name).join('、')} 有修改还没保存。`,
         confirmText: '放弃修改',
         danger: true,
       });
       if (!ok) return;
-      setForms(initialForms());
+      setForms({});
     }
     onClose();
   };
 
-  const statusFor = (id: ChannelId, mock?: boolean) => {
-    if (providers.find((x) => x.id === id)?.is_configured) return { dot: 'bg-emerald-400', label: '已配置' };
-    if (mock) return { dot: 'bg-amber-400', label: '演示模式' };
+  const statusFor = (p: ProviderConfigItem) => {
+    if (p.is_configured) return { dot: 'bg-emerald-400', label: '已配置' };
+    if (runsMockedWithoutKey(p)) return { dot: 'bg-amber-400', label: '演示模式' };
     return { dot: 'bg-slate-600', label: '未配置' };
   };
-  const status = statusFor(channel.id, channel.mockWhenUnset);
-  const inputFocus = channel.accent.focus;
+  const status = statusFor(channel);
+  const mockWhenUnset = runsMockedWithoutKey(channel);
+  const inputFocus = meta.accent.focus;
 
   return (
     <div
@@ -352,10 +349,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         <div className="flex flex-col sm:flex-row flex-1 min-h-0">
           <nav className="flex sm:flex-col gap-0.5 p-2 sm:w-48 flex-shrink-0 overflow-x-auto sm:overflow-y-auto border-b sm:border-b-0 sm:border-r border-canvas-border bg-canvas-bg/60 text-xs">
-            {CHANNELS.map((c) => {
-              const Icon = c.icon;
+            {providers.map((c) => {
+              const cMeta = PROTOCOL_META[c.protocol];
+              const Icon = cMeta.icon;
               const active = c.id === channel.id;
-              const st = statusFor(c.id, c.mockWhenUnset);
+              const st = statusFor(c);
               return (
                 <button
                   key={c.id}
@@ -363,11 +361,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   onClick={() => setActiveTab(c.id)}
                   title={st.label}
                   className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-left whitespace-nowrap transition ${
-                    active ? `bg-slate-800 ${c.accent.text} font-semibold` : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                    active ? `bg-slate-800 ${cMeta.accent.text} font-semibold` : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                   }`}
                 >
                   <Icon className="w-4 h-4 flex-shrink-0" />
-                  <span className="flex-1 truncate">{c.label}</span>
+                  <span className="flex-1 truncate">{c.name}</span>
                   {isDirty(c.id) && <span className="text-[11px] font-normal text-amber-300">未保存</span>}
                   <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${st.dot}`} />
                 </button>
@@ -377,29 +375,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           <div key={channel.id} className="flex-1 min-w-0 overflow-y-auto px-5 py-4 space-y-5 text-xs text-slate-200">
             <div className="flex items-start gap-3">
-              <ChannelIcon className={`w-5 h-5 mt-0.5 flex-shrink-0 ${channel.accent.text}`} />
+              <ChannelIcon className={`w-5 h-5 mt-0.5 flex-shrink-0 ${meta.accent.text}`} />
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-x-2">
-                  <span className="text-sm font-semibold text-slate-100">{channel.title}</span>
+                  <span className="text-sm font-semibold text-slate-100">{channel.name}</span>
+                  <span className="text-[11px] text-slate-500">{meta.title}</span>
                   <span className="flex items-center gap-1 text-[11px] text-slate-400">
                     <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />
                     {status.label}
-                    {current?.is_configured && current.masked_key ? ` · ${current.masked_key}` : ''}
+                    {current.is_configured && current.masked_key ? ` · ${current.masked_key}` : ''}
                   </span>
                 </div>
-                <p className="mt-0.5 text-[11px] text-slate-500">{channel.subtitle}</p>
+                <p className="mt-0.5 text-[11px] text-slate-500">{meta.subtitle}</p>
               </div>
             </div>
 
-            {(channel.hint || !channel.adapterReady || (channel.mockWhenUnset && !current?.is_configured)) && (
+            {(meta.hint || !meta.adapterReady || (mockWhenUnset && !current.is_configured)) && (
               <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-slate-800/40 border border-canvas-border text-[11px] leading-relaxed text-slate-400">
                 <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
                 <div className="space-y-0.5">
-                  {channel.mockWhenUnset && !current?.is_configured && (
+                  {mockWhenUnset && !current.is_configured && (
                     <div className="text-amber-200">演示模式：还没有填 Key，生成会返回示例图，不会产生费用。</div>
                   )}
-                  {channel.hint && <div>{channel.hint}</div>}
-                  {!channel.adapterReady && <div>这个服务商目前只保存配置和模型，卡片还不能用它生成。</div>}
+                  {meta.hint && <div>{meta.hint}</div>}
+                  {!meta.adapterReady && <div>这个服务商目前只保存配置和模型，卡片还不能用它生成。</div>}
                 </div>
               </div>
             )}
@@ -415,12 +414,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   value={form.baseUrl}
                   onChange={(e) => patchForm(channel.id, { baseUrl: e.target.value })}
                   className={`${inputClass} font-mono py-2 ${inputFocus}`}
-                  placeholder={channel.baseUrlPlaceholder}
+                  placeholder={meta.baseUrlPlaceholder}
                 />
               </label>
               <label className="block space-y-1.5">
                 <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                  <Key className="w-3.5 h-3.5" /> {channel.keyLabel}
+                  <Key className="w-3.5 h-3.5" /> {meta.keyLabel}
                 </span>
                 <div className="relative">
                   <input
@@ -428,7 +427,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     value={form.apiKey}
                     onChange={(e) => patchForm(channel.id, { apiKey: e.target.value })}
                     className={`${inputClass} font-mono py-2 pr-10 ${inputFocus}`}
-                    placeholder={current?.is_configured ? `已保存 ${current.masked_key}，输入新的 Key 可替换` : channel.keyPlaceholder}
+                    placeholder={current.is_configured ? `已保存 ${current.masked_key}，输入新的 Key 可替换` : meta.keyPlaceholder}
                   />
                   <button
                     type="button"
@@ -440,7 +439,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 </div>
               </label>
-              {channel.extraFields?.map((field) => (
+              {meta.extraFields?.map((field) => (
                 <label key={field.key} className="block space-y-1.5">
                   <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
                     <Building className="w-3.5 h-3.5" /> {field.label}
@@ -471,7 +470,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <span className="break-all">{test.msg}</span>
                   </span>
                 )}
-                {current?.is_configured && (
+                {current.is_configured && (
                   <Button size="sm" variant="ghost" className="ml-auto hover:!text-rose-300" onClick={handleClear} disabled={saveStatus.saving}>
                     清除配置
                   </Button>
@@ -486,13 +485,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
               <ModelBindingPanel
                 key={channel.id}
-                channelId={channel.id}
-                canListModels={current?.can_list_models ?? false}
+                providerId={channel.id}
+                canListModels={current.can_list_models ?? false}
                 baseUrl={form.baseUrl}
                 apiKey={form.apiKey}
-                isConfigured={current?.is_configured ?? false}
+                isConfigured={current.is_configured ?? false}
                 models={form.models}
-                presets={current?.presets}
+                presets={current.presets}
                 onChange={(models) => patchForm(channel.id, { models, modelsDirty: true })}
               />
             </section>
@@ -510,7 +509,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <CheckCircle2 className="w-3.5 h-3.5" /> 已保存，立即生效
               </span>
             ) : isDirty(channel.id) ? (
-              <span className="text-amber-300">「{channel.label}」有未保存的修改</span>
+              <span className="text-amber-300">「{channel.name}」有未保存的修改</span>
             ) : null}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -523,7 +522,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               disabled={saveStatus.saving || !isDirty(channel.id)}
               icon={saveStatus.saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : undefined}
             >
-              {saveStatus.saving ? '保存中…' : `保存「${channel.label}」`}
+              {saveStatus.saving ? '保存中…' : `保存「${channel.name}」`}
             </Button>
           </div>
         </div>

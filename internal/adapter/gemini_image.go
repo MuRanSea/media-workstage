@@ -70,7 +70,7 @@ type geminiImageResponse struct {
 }
 
 func (a *GeminiImageAdapter) SubmitTask(ctx context.Context, task *model.MediaTask) (string, error) {
-	if err := requireImageTask("google", task); err != nil {
+	if err := requireImageTask(a.name, task); err != nil {
 		return "", err
 	}
 	params := parseGenericImageParams(task.ParamsJSON)

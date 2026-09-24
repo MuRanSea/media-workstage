@@ -1,9 +1,10 @@
 import { SEEDREAM_PIXEL_MAP, type SpatialCard } from '../types/canvas.ts';
-import type { ChannelId, CreateTaskPayload } from '../services/api.ts';
+import type { CreateTaskPayload, ProviderId } from '../services/api.ts';
+import { protocolOf } from './providers.ts';
 
 export interface ImageCompilationInput {
-  /** Channel running the model; defaults to 'ark' (Seedream rules). */
-  provider?: ChannelId;
+  /** Provider running the model; defaults to 'ark'. Ark-protocol providers get Seedream rules. */
+  provider?: ProviderId;
   model: string;
   prompt: string;
   imageMode?: 'single' | 'layer_decomp' | 'sequential';
@@ -23,7 +24,7 @@ export interface ImageCompilationInput {
  */
 export function compileImageTaskPayload(input: ImageCompilationInput): CreateTaskPayload {
   const provider = input.provider ?? 'ark';
-  if (provider !== 'ark') {
+  if (protocolOf(provider) !== 'ark') {
     return compileChannelImagePayload(provider, input);
   }
 
@@ -65,7 +66,7 @@ export function compileImageTaskPayload(input: ImageCompilationInput): CreateTas
     : 'single';
 
   return {
-    provider: 'ark',
+    provider,
     model: input.model,
     task_type: 'image_generation',
     task_mode: taskMode,
@@ -83,10 +84,10 @@ export function compileImageTaskPayload(input: ImageCompilationInput): CreateTas
 }
 
 /**
- * Compiles the provider-neutral image payload used by non-Ark channels. The backend
- * adapter maps aspect_ratio + resolution onto each provider's own size parameters.
+ * Compiles the provider-neutral image payload used by non-Ark protocols. The backend
+ * adapter maps aspect_ratio + resolution onto each protocol's own size parameters.
  */
-function compileChannelImagePayload(provider: ChannelId, input: ImageCompilationInput): CreateTaskPayload {
+function compileChannelImagePayload(provider: ProviderId, input: ImageCompilationInput): CreateTaskPayload {
   return {
     provider,
     model: input.model,

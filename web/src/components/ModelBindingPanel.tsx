@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { Boxes, CheckSquare, Loader2, Plus, Search, Square, X, DownloadCloud } from 'lucide-react';
 import {
-  apiListChannelModels,
-  type ChannelId,
-  type ChannelModel,
+  apiListProviderModels,
+  type ProviderId,
+  type BoundModel,
   type ListModelsResponse,
 } from '../services/api.ts';
 
@@ -11,16 +11,16 @@ type BindableType = 'image' | 'video' | 'chat';
 type CatalogFilter = BindableType | 'other' | 'all';
 
 interface ModelBindingPanelProps {
-  channelId: ChannelId;
+  providerId: ProviderId;
   canListModels: boolean;
   /** Current form values; an empty key makes the backend fall back to the saved one. */
   baseUrl: string;
   apiKey: string;
   isConfigured: boolean;
-  models: ChannelModel[];
+  models: BoundModel[];
   /** Built-in models; enables 「恢复默认」 when non-empty. */
-  presets?: ChannelModel[];
-  onChange: (models: ChannelModel[]) => void;
+  presets?: BoundModel[];
+  onChange: (models: BoundModel[]) => void;
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -37,7 +37,7 @@ const TYPE_BADGE: Record<string, string> = {
   chat: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
 };
 
-const isBindable = (m: ChannelModel): m is ChannelModel & { type: BindableType } =>
+const isBindable = (m: BoundModel): m is BoundModel & { type: BindableType } =>
   m.type === 'image' || m.type === 'video' || m.type === 'chat';
 
 /**
@@ -45,7 +45,7 @@ const isBindable = (m: ChannelModel): m is ChannelModel & { type: BindableType }
  * tick models on or off, or add an ID by hand. Changes are saved with the channel.
  */
 export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
-  channelId,
+  providerId,
   canListModels,
   baseUrl,
   apiKey,
@@ -70,8 +70,8 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
   const fetchCatalog = async () => {
     setCatalog({ loading: true });
     try {
-      const result = await apiListChannelModels({
-        provider: channelId,
+      const result = await apiListProviderModels({
+        provider: providerId,
         base_url: baseUrl.trim() || undefined,
         api_key: apiKey.trim() || undefined,
       });
@@ -107,7 +107,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
   const allVisibleBound =
     visibleBindable.length > 0 && visibleBindable.every((m) => boundIds.has(m.id));
 
-  const toggle = (m: ChannelModel) => {
+  const toggle = (m: BoundModel) => {
     onChange(boundIds.has(m.id) ? models.filter((b) => b.id !== m.id) : [...models, m]);
   };
 
@@ -335,7 +335,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
           </div>
 
           <div className="text-[11px] text-slate-500 leading-relaxed">
-            {catalog.result.source === 'remote' ? '来自服务商实时列表' : '该渠道没有模型列表接口，显示内置预设'}
+            {catalog.result.source === 'remote' ? '来自服务商实时列表' : '该服务商没有模型列表接口，显示内置预设'}
             {` · 共 ${counts.all} 个`}
             {counts.other > 0 && `；类型未识别的 ${counts.other} 个在「其他」，可用 +图 / +视频 / +文本 绑定`}
           </div>

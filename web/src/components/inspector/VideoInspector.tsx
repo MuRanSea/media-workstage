@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { X } from 'lucide-react';
 import type { SpatialCard, VideoTaskMode } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption } from '../../engine/channelModels.ts';
+import { protocolOf } from '../../engine/providers.ts';
 import { VIDEO_MODE_LABELS, removeReferencePatch, videoModePatch, videoModelDef, videoModelPatch } from '../../engine/cardParams.ts';
 import { compileCardVideoPayload, inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { useChannels } from '../../services/channels.ts';
@@ -109,7 +110,7 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
 
       <Section title="其他">
         {def.supportsAudio && <Toggle label="生成音频" checked={!!card.generateAudio} onChange={(v) => update({ generateAudio: v })} />}
-        {provider === 'minimax' && (
+        {protocolOf(provider) === 'minimax' && (
           <Toggle label="自动优化提示词" hint="由 MiniMax 改写提示词后再生成" checked={!!card.promptOptimizer} onChange={(v) => update({ promptOptimizer: v })} />
         )}
         {def.supportsMov && (

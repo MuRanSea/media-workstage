@@ -74,6 +74,9 @@ type channelImageBase struct {
 }
 
 func newChannelImageBase(name, defaultURL string, cfg ChannelConfig) channelImageBase {
+	if cfg.ProviderID != "" {
+		name = cfg.ProviderID
+	}
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if baseURL == "" {
 		baseURL = defaultURL
@@ -334,10 +337,10 @@ func sameOrigin(baseURL string, target *url.URL) bool {
 	return strings.EqualFold(base.Scheme, target.Scheme) && strings.EqualFold(base.Host, target.Host)
 }
 
-// requireImageTask rejects task types a channel adapter cannot run yet.
+// requireImageTask rejects task types an image adapter cannot run yet.
 func requireImageTask(provider string, task *model.MediaTask) error {
 	if task.TaskType != "image_generation" {
-		return fmt.Errorf("%s 渠道目前只支持生图任务，不支持 %s", provider, task.TaskType)
+		return fmt.Errorf("%s 服务商目前只支持生图任务，不支持 %s", provider, task.TaskType)
 	}
 	return nil
 }

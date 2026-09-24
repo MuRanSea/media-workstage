@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestChannelProbes_BuildAuthenticatedRequests(t *testing.T) {
+func TestProtocolProbes_BuildAuthenticatedRequests(t *testing.T) {
 	cases := []struct {
 		id         string
 		method     string
@@ -38,9 +38,9 @@ func TestChannelProbes_BuildAuthenticatedRequests(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.id, func(t *testing.T) {
-			spec, ok := findChannel(tc.id)
+			spec, ok := findProvider(tc.id)
 			require.True(t, ok)
-			req, err := spec.newProbe(context.Background(), "https://base", " k ", nil)
+			req, err := spec.protocol().newProbe(context.Background(), "https://base", " k ", nil)
 			require.NoError(t, err)
 			assert.Equal(t, tc.method, req.Method)
 			assert.Contains(t, req.URL.String(), tc.urlPrefix)
@@ -49,9 +49,9 @@ func TestChannelProbes_BuildAuthenticatedRequests(t *testing.T) {
 	}
 }
 
-func TestChannelProbes_MidjourneySendsQueryBody(t *testing.T) {
-	spec, _ := findChannel("midjourney")
-	req, err := spec.newProbe(context.Background(), "https://base", "k", nil)
+func TestProtocolProbes_MidjourneySendsQueryBody(t *testing.T) {
+	spec, _ := findProvider("midjourney")
+	req, err := spec.protocol().newProbe(context.Background(), "https://base", "k", nil)
 	require.NoError(t, err)
 	body, err := io.ReadAll(req.Body)
 	require.NoError(t, err)
@@ -60,23 +60,23 @@ func TestChannelProbes_MidjourneySendsQueryBody(t *testing.T) {
 	assert.Equal(t, "application/json", req.Header.Get("Content-Type"))
 }
 
-func TestResolveChannel_StoredOverridesEnvOverridesDefault(t *testing.T) {
-	spec, _ := findChannel("openai")
+func TestResolveProvider_StoredOverridesEnvOverridesDefault(t *testing.T) {
+	spec, _ := findProvider("openai")
 
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("OPENAI_BASE_URL", "")
-	v := resolveChannel(spec, nil)
+	v := resolveProvider(spec, nil)
 	assert.False(t, v.IsConfigured)
 	assert.Equal(t, "https://api.openai.com/v1", v.BaseURL)
 
 	t.Setenv("OPENAI_API_KEY", "sk-env-1234567890")
 	t.Setenv("OPENAI_BASE_URL", "https://relay.example.com/v1")
-	v = resolveChannel(spec, nil)
+	v = resolveProvider(spec, nil)
 	assert.True(t, v.IsConfigured)
 	assert.Equal(t, "sk-e****7890", v.MaskedKey)
 	assert.Equal(t, "https://relay.example.com/v1", v.BaseURL)
 
-	v = resolveChannel(spec, map[string]string{
+	v = resolveProvider(spec, map[string]string{
 		"openai_api_key":  "sk-db-abcdefghij",
 		"openai_base_url": "https://api.openai.com/v1",
 	})
@@ -93,7 +93,7 @@ func TestIsOfficialProviderHost_RejectsLookalikes(t *testing.T) {
 	assert.False(t, isOfficialProviderHost("notopenai.com"))
 }
 
-func TestUpdateConfig_NewChannelPersistsWithoutAdapter(t *testing.T) {
+func TestUpdateConfig_ConfigOnlyProviderPersistsWithoutAdapter(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("KLING_API_KEY", "")
 	database, err := db.InitDB(filepath.Join(t.TempDir(), "channels.db"))
@@ -134,10 +134,10 @@ func TestUpdateConfig_NewChannelPersistsWithoutAdapter(t *testing.T) {
 	req2, _ := http.NewRequest(http.MethodGet, "/api/config", nil)
 	r.ServeHTTP(w2, req2)
 	var resp struct {
-		Providers []channelView `json:"providers"`
+		Providers []providerView `json:"providers"`
 	}
 	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp))
-	var kling channelView
+	var kling providerView
 	for _, p := range resp.Providers {
 		if p.ID == "kling" {
 			kling = p
@@ -148,7 +148,7 @@ func TestUpdateConfig_NewChannelPersistsWithoutAdapter(t *testing.T) {
 	assert.NotContains(t, w2.Body.String(), "kling-secret-abcdef123456")
 }
 
-func TestUpdateConfig_RejectsUnknownChannel(t *testing.T) {
+func TestUpdateConfig_RejectsUnknownProvider(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	srv := NewServer(nil, t.TempDir(), nil)
 	r := srv.SetupRouter()
@@ -162,10 +162,10 @@ func TestUpdateConfig_RejectsUnknownChannel(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "unsupported provider")
 }
 
-func newChannelTestServer(t *testing.T) (*Server, *gin.Engine) {
+func newProviderTestServer(t *testing.T) (*Server, *gin.Engine) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	for _, spec := range channelSpecs {
+	for _, spec := range presetProviders {
 		t.Setenv(spec.APIKeyEnv, "")
 	}
 	database, err := db.InitDB(filepath.Join(t.TempDir(), "models.db"))
@@ -188,21 +188,21 @@ func postJSON(r *gin.Engine, path string, body any) *httptest.ResponseRecorder {
 	return w
 }
 
-func TestListModels_PresetChannelsReturnPresets(t *testing.T) {
-	_, r := newChannelTestServer(t)
+func TestListModels_PresetOnlyProvidersReturnPresets(t *testing.T) {
+	_, r := newProviderTestServer(t)
 	w := postJSON(r, "/api/config/models", map[string]string{"provider": "kling"})
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp struct {
-		Models []channelModel `json:"models"`
-		Source string         `json:"source"`
+		Models []boundModel `json:"models"`
+		Source string       `json:"source"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "preset", resp.Source)
-	assert.Contains(t, resp.Models, channelModel{ID: "kling-v3", Type: "image"})
+	assert.Contains(t, resp.Models, boundModel{ID: "kling-v3", Type: "image"})
 }
 
-func TestListModels_RemoteChannelNeedsKey(t *testing.T) {
-	_, r := newChannelTestServer(t)
+func TestListModels_RemoteCatalogNeedsKey(t *testing.T) {
+	_, r := newProviderTestServer(t)
 	w := postJSON(r, "/api/config/models", map[string]string{"provider": "openai"})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "请先填写 API Key")
@@ -229,19 +229,19 @@ func TestListModelsFetchers_ParseCatalogs(t *testing.T) {
 
 	oa, err := listOpenAIModels(ctx, srv.Client(), srv.URL+"/oa", "k")
 	require.NoError(t, err)
-	assert.Equal(t, []channelModel{img("gpt-image-2"), vid("sora-2"), {ID: "gpt-5", Type: "chat"}}, oa)
+	assert.Equal(t, []boundModel{img("gpt-image-2"), vid("sora-2"), {ID: "gpt-5", Type: "chat"}}, oa)
 
 	g, err := listGoogleModels(ctx, srv.Client(), srv.URL+"/g", "k")
 	require.NoError(t, err)
-	assert.Equal(t, []channelModel{img("gemini-3-pro-image"), vid("veo-3.1"), {ID: "gemini-3-pro", Type: "chat"}}, g)
+	assert.Equal(t, []boundModel{img("gemini-3-pro-image"), vid("veo-3.1"), {ID: "gemini-3-pro", Type: "chat"}}, g)
 
 	am, err := listAPIMartModels(ctx, srv.Client(), srv.URL+"/am", "k")
 	require.NoError(t, err)
-	assert.Equal(t, []channelModel{img("seedream-5-0-pro"), {ID: "mystery", Type: "chat"}}, am)
+	assert.Equal(t, []boundModel{img("seedream-5-0-pro"), {ID: "mystery", Type: "chat"}}, am)
 }
 
 func TestUpdateConfig_BindsModelsAndRegistersImageAdapter(t *testing.T) {
-	srv, r := newChannelTestServer(t)
+	srv, r := newProviderTestServer(t)
 	_, ok := srv.registry.Get("openai")
 	require.False(t, ok, "unconfigured channel has no adapter")
 
@@ -261,22 +261,22 @@ func TestUpdateConfig_BindsModelsAndRegistersImageAdapter(t *testing.T) {
 	require.True(t, ok)
 	assert.IsType(t, &adapter.OpenAIImageAdapter{}, a)
 
-	openaiSpec, _ := findChannel("openai")
-	assert.Equal(t, []channelModel{img("gpt-image-2"), {ID: "gpt-5", Type: "chat"}}, resolveChannel(openaiSpec, srv.storedConfig()).Models,
+	openaiSpec, _ := findProvider("openai")
+	assert.Equal(t, []boundModel{img("gpt-image-2"), {ID: "gpt-5", Type: "chat"}}, resolveProvider(openaiSpec, srv.storedConfig()).Models,
 		"image and chat bindings are kept; blanks and duplicates dropped")
 
 	// An explicit empty list unbinds everything instead of reverting to presets.
 	w = postJSON(r, "/api/config", map[string]any{"provider": "openai", "models": []any{}})
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Empty(t, resolveChannel(openaiSpec, srv.storedConfig()).Models)
+	assert.Empty(t, resolveProvider(openaiSpec, srv.storedConfig()).Models)
 }
 
 func TestUpdateConfig_KeepsPresetsUntilModelsSent(t *testing.T) {
-	srv, r := newChannelTestServer(t)
+	srv, r := newProviderTestServer(t)
 	w := postJSON(r, "/api/config", map[string]any{"provider": "kling", "api_key": "kling-key-123456"})
 	require.Equal(t, http.StatusOK, w.Code)
-	spec, _ := findChannel("kling")
-	assert.Equal(t, spec.Presets, resolveChannel(spec, srv.storedConfig()).Models)
+	spec, _ := findProvider("kling")
+	assert.Equal(t, spec.Presets, resolveProvider(spec, srv.storedConfig()).Models)
 	_, ok := srv.registry.Get("kling")
 	assert.False(t, ok, "kling only stores configuration for now")
 }
@@ -285,7 +285,7 @@ func TestUpdateConfig_KeepsPresetsUntilModelsSent(t *testing.T) {
 // at runtime must reach the registry the poller dispatches from.
 func TestHotReload_ReachesPollerRegistry(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, spec := range channelSpecs {
+	for _, spec := range presetProviders {
 		t.Setenv(spec.APIKeyEnv, "")
 	}
 	database, err := db.InitDB(filepath.Join(t.TempDir(), "wiring.db"))
@@ -331,7 +331,7 @@ func TestListAPIMartModels_FallsBackWhenExpandRejected(t *testing.T) {
 	models, err := listAPIMartModels(context.Background(), srv.Client(), srv.URL+"/apimart/v1", "k")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"/apimart/v1/models?expand=category", "/apimart/v1/models"}, calls)
-	assert.Equal(t, []channelModel{img("gpt-image-2.5-flare"), vid("veo3.1-fast"), {ID: "gpt-5", Type: "chat"}}, models)
+	assert.Equal(t, []boundModel{img("gpt-image-2.5-flare"), vid("veo3.1-fast"), {ID: "gpt-5", Type: "chat"}}, models)
 }
 
 func TestListAPIMartModels_AuthErrorIsNotRetried(t *testing.T) {
@@ -369,15 +369,15 @@ func TestInferModelType_CoversAggregatorFamilies(t *testing.T) {
 }
 
 // Channels with a live catalog must not bind anything the user did not tick.
-func TestBoundModels_ListableChannelsStartEmpty(t *testing.T) {
+func TestBoundModels_ListableProvidersStartEmpty(t *testing.T) {
 	for _, id := range []string{"openai", "google", "apimart"} {
-		spec, _ := findChannel(id)
-		models := resolveChannel(spec, nil).Models
+		spec, _ := findProvider(id)
+		models := resolveProvider(spec, nil).Models
 		assert.NotNil(t, models, id)
 		assert.Empty(t, models, id)
 	}
-	ark, _ := findChannel("ark")
-	assert.NotEmpty(t, resolveChannel(ark, nil).Models, "channels with presets bind them until the user saves a binding")
+	ark, _ := findProvider("ark")
+	assert.NotEmpty(t, resolveProvider(ark, nil).Models, "channels with presets bind them until the user saves a binding")
 }
 
 // Self-hosted relays and proxies on the LAN or this machine must be configurable.
@@ -416,10 +416,10 @@ func TestListGoogleModels_AcceptsOpenAIShapedRelayList(t *testing.T) {
 	defer srv.Close()
 	models, err := listGoogleModels(context.Background(), srv.Client(), srv.URL+"/v1beta", "k")
 	require.NoError(t, err)
-	assert.Equal(t, []channelModel{img("gemini-3-pro-image-preview"), {ID: "gemini-3-pro", Type: "chat"}}, models)
+	assert.Equal(t, []boundModel{img("gemini-3-pro-image-preview"), {ID: "gemini-3-pro", Type: "chat"}}, models)
 }
 
-func TestGenerateText_UsesStoredChannelCredentials(t *testing.T) {
+func TestGenerateText_UsesStoredProviderCredentials(t *testing.T) {
 	var gotAuth string
 	var gotBody map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -429,7 +429,7 @@ func TestGenerateText_UsesStoredChannelCredentials(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	srv, r := newChannelTestServer(t)
+	srv, r := newProviderTestServer(t)
 	require.Equal(t, http.StatusBadRequest, postJSON(r, "/api/llm/generate", map[string]string{
 		"provider": "openai", "model": "gpt-5", "prompt": "写提示词",
 	}).Code, "no key configured yet")
@@ -453,9 +453,9 @@ func TestGenerateText_UsesStoredChannelCredentials(t *testing.T) {
 // Ark binds its Doubao chat presets by default and, when its /models is absent,
 // "获取模型" falls back to those presets instead of failing.
 func TestArkChatPresetsAndListFallback(t *testing.T) {
-	ark, _ := findChannel("ark")
+	ark, _ := findProvider("ark")
 	var chats []string
-	for _, m := range resolveChannel(ark, nil).Models {
+	for _, m := range resolveProvider(ark, nil).Models {
 		if m.Type == "chat" {
 			chats = append(chats, m.ID)
 		}
@@ -464,15 +464,15 @@ func TestArkChatPresetsAndListFallback(t *testing.T) {
 
 	upstream := httptest.NewServer(http.NotFoundHandler())
 	defer upstream.Close()
-	srv, r := newChannelTestServer(t)
+	srv, r := newProviderTestServer(t)
 	require.NoError(t, srv.db.Create(&model.SystemConfig{Key: "ark_api_key", Value: "ark-key"}).Error)
 	require.NoError(t, srv.db.Create(&model.SystemConfig{Key: "ark_base_url", Value: upstream.URL + "/api/v3"}).Error)
 
 	w := postJSON(r, "/api/config/models", map[string]string{"provider": "ark"})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var resp struct {
-		Models []channelModel `json:"models"`
-		Source string         `json:"source"`
+		Models []boundModel `json:"models"`
+		Source string       `json:"source"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "preset", resp.Source)
@@ -488,7 +488,7 @@ func TestConnectionTest_404FailsEvenForDummyTaskProbes(t *testing.T) {
 	}))
 	defer relay.Close()
 
-	_, r := newChannelTestServer(t)
+	_, r := newProviderTestServer(t)
 	w := postJSON(r, "/api/config/test", map[string]string{
 		"provider": "minimax", "base_url": relay.URL + "/apimart/v1", "api_key": "sk-relay",
 	})
@@ -499,8 +499,8 @@ func TestConnectionTest_404FailsEvenForDummyTaskProbes(t *testing.T) {
 
 // A channel filled in by mistake (e.g. MiniMax pointed at an APIMart relay) can be
 // cleared, which removes its adapter so cards stop offering it.
-func TestUpdateConfig_ClearRemovesChannel(t *testing.T) {
-	srv, r := newChannelTestServer(t)
+func TestUpdateConfig_ClearRemovesProvider(t *testing.T) {
+	srv, r := newProviderTestServer(t)
 	require.Equal(t, http.StatusOK, postJSON(r, "/api/config", map[string]any{
 		"provider": "openai", "api_key": "sk-wrong-123456", "base_url": "http://127.0.0.1:9/v1",
 		"models": []map[string]string{{"id": "gpt-image-2", "type": "image"}},
@@ -512,8 +512,8 @@ func TestUpdateConfig_ClearRemovesChannel(t *testing.T) {
 	for _, id := range []string{"openai", "minimax"} {
 		w := postJSON(r, "/api/config", map[string]any{"provider": id, "clear": true})
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-		spec, _ := findChannel(id)
-		view := resolveChannel(spec, srv.storedConfig())
+		spec, _ := findProvider(id)
+		view := resolveProvider(spec, srv.storedConfig())
 		assert.False(t, view.IsConfigured, id)
 		assert.Equal(t, spec.DefaultBaseURL, view.BaseURL, id)
 		assert.Empty(t, view.Extra, id)
@@ -526,4 +526,60 @@ func TestUpdateConfig_ClearRemovesChannel(t *testing.T) {
 	assert.False(t, ok, "cleared image channel has no adapter")
 	mm, _ := srv.registry.Get("minimax")
 	assert.IsType(t, &adapter.FakeProviderAdapter{}, mm, "MiniMax falls back to its mock")
+}
+
+// Every preset provider speaks a protocol; the openai preset is an OpenAI-compatible
+// instance and google a Gemini one.
+func TestGetConfig_ListsProtocolAndPresetFlag(t *testing.T) {
+	_, r := newProviderTestServer(t)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/config", nil)
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Providers []providerView `json:"providers"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	got := make(map[string]model.Protocol)
+	for _, p := range resp.Providers {
+		assert.True(t, p.Preset, p.ID)
+		assert.NotEmpty(t, p.Name, p.ID)
+		got[p.ID] = p.Protocol
+	}
+	assert.Equal(t, map[string]model.Protocol{
+		"ark":        model.ProtocolArk,
+		"minimax":    model.ProtocolMiniMax,
+		"kling":      model.ProtocolKling,
+		"midjourney": model.ProtocolMidjourney,
+		"google":     model.ProtocolGemini,
+		"openai":     model.ProtocolOpenAICompatible,
+		"apimart":    model.ProtocolAPIMart,
+	}, got)
+	for _, spec := range presetProviders {
+		_, ok := protocolSpecs[spec.Protocol]
+		assert.True(t, ok, "protocol %s of %s has a spec", spec.Protocol, spec.ID)
+	}
+}
+
+func TestPresetAdapters_MockOnlyWhereTheProviderRunsMocked(t *testing.T) {
+	for _, spec := range presetProviders {
+		t.Setenv(spec.APIKeyEnv, "")
+	}
+	adapters := PresetAdapters(nil)
+	assert.Len(t, adapters, 2)
+	assert.IsType(t, &adapter.FakeProviderAdapter{}, adapters["ark"])
+	assert.IsType(t, &adapter.FakeProviderAdapter{}, adapters["minimax"])
+
+	adapters = PresetAdapters(map[string]string{
+		"openai_api_key":   "sk-db",
+		"kling_api_key":    "kling-db",
+		"minimax_api_key":  "mm-db",
+		"minimax_group_id": "g1",
+	})
+	assert.IsType(t, &adapter.OpenAIImageAdapter{}, adapters["openai"])
+	assert.Equal(t, "openai", adapters["openai"].ProviderName())
+	assert.IsType(t, &adapter.MiniMaxAdapter{}, adapters["minimax"])
+	assert.Equal(t, "g1", adapters["minimax"].(adapter.ConfigurableAdapter).GetConfig().Extra["group_id"])
+	_, hasKling := adapters["kling"]
+	assert.False(t, hasKling, "kling only stores configuration for now")
 }

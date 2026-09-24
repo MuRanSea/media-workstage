@@ -6,6 +6,7 @@ import {
   type VideoTaskMode,
 } from '../types/canvas.ts';
 import type { ModelOption } from './channelModels.ts';
+import { protocolOf } from './providers.ts';
 import { inferVideoProvider } from './videoCompiler.ts';
 
 /**
@@ -15,12 +16,12 @@ import { inferVideoProvider } from './videoCompiler.ts';
 
 // --- Image ---------------------------------------------------------------------
 
-/** Switching an image card's model: Seedream gets its tier defaults, other channels ratio + resolution. */
+/** Switching an image card's model: Seedream (Ark protocol) gets its tier defaults, other protocols ratio + resolution. */
 export function imageModelPatch(card: SpatialCard, option: ModelOption): Partial<SpatialCard> {
-  if (option.provider === 'ark') {
+  if (option.protocol === 'ark') {
     const def = IMAGE_MODELS.find((m) => m.id === option.id);
     return {
-      provider: 'ark',
+      provider: option.provider,
       model: option.id,
       imageTier: def?.defaultTier ?? '2K',
       customPixels: def?.defaultCustomPixel ?? '2048x1024',
@@ -39,7 +40,7 @@ export function imageModelPatch(card: SpatialCard, option: ModelOption): Partial
 /** One-line size description, e.g. "2K · 16:9" or "2048x1024". */
 export function imageSizeSummary(card: SpatialCard): string {
   const ratio = card.imageRatioPreset ?? '16:9';
-  if ((card.provider ?? 'ark') !== 'ark') return `${card.imageResolution ?? '2K'} · ${ratio}`;
+  if (protocolOf(card.provider ?? 'ark') !== 'ark') return `${card.imageResolution ?? '2K'} · ${ratio}`;
   if (card.sizeMode === 'custom_pixels') return card.customPixels ?? '';
   const def = IMAGE_MODELS.find((m) => m.id === card.model) ?? IMAGE_MODELS[0];
   return `${card.imageTier ?? def.defaultTier} · ${ratio}`;
@@ -48,7 +49,7 @@ export function imageSizeSummary(card: SpatialCard): string {
 // --- Video ---------------------------------------------------------------------
 
 export function videoModelDef(card: SpatialCard): VideoModelDef {
-  return resolveVideoModelDef(card.provider ?? inferVideoProvider(card.model), card.model);
+  return resolveVideoModelDef(protocolOf(card.provider ?? inferVideoProvider(card.model)), card.model);
 }
 
 /** Changing mode drops or re-roles references to fit the mode and the model's limit. */
@@ -76,7 +77,7 @@ export function videoModePatch(
  * supports, and moves to a mode it accepts (keeping attached images as frames when possible).
  */
 export function videoModelPatch(card: SpatialCard, option: ModelOption): Partial<SpatialCard> {
-  const def = resolveVideoModelDef(option.provider, option.id);
+  const def = resolveVideoModelDef(option.protocol, option.id);
   const current = card.mode ?? 'all_modal';
   let mode = current;
   if (def.modes && !def.modes.includes(current)) {

@@ -3,6 +3,7 @@ import { connectCards, effectivePrompt, withEffectivePrompt } from './connection
 import { buildProviderGroups } from './channelModels.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 import type { ProviderConfigItem } from '../services/api.ts';
+import { protocolOf } from './providers.ts';
 
 const card = (p: Partial<SpatialCard> & Pick<SpatialCard, 'id' | 'type'>): SpatialCard => ({
   title: p.id,
@@ -94,6 +95,8 @@ describe('linked prompts', () => {
 describe('text model options', () => {
   const ch = (p: Partial<ProviderConfigItem> & Pick<ProviderConfigItem, 'id'>): ProviderConfigItem => ({
     name: p.id,
+    protocol: protocolOf(p.id)!,
+    preset: true,
     base_url: '',
     is_configured: false,
     models: [],

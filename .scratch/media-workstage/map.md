@@ -31,6 +31,7 @@
 - [15-project-scoped-tasks-and-assets](issues/15-project-scoped-tasks-and-assets.md): 任务携带 `project_id`，产物下载进工程文件夹并经 `/api/projects/:id/assets` 访问，参考素材按工程解析。
 - [16-project-ui-and-autosave](issues/16-project-ui-and-autosave.md): 工程列表页、顶栏工程切换与改名、防抖自动保存 + Ctrl+S + 冲突提示、打开工程时补齐任务状态。
 - [17-ui-overhaul](issues/17-ui-overhaul.md): 卡片精简 + 右侧属性面板、双击/右键添加、Delete/撤销/复制粘贴、精简顶栏、应用内对话框与提示条、工程封面、设置页文案与未保存提示。
+- [18-provider-protocol-refactor](issues/18-provider-protocol-refactor.md): 服务商标上接入协议，前后端所有按服务商 ID 的分支改为按协议；`channels.go` 更名为 `providers.go`，设置页文案按协议取。
 ## Not yet specified
 
 - 视频后处理工具扩展（火山 AI MediaKit 智能剪辑、画质增强集成）

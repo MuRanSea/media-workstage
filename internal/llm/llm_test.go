@@ -8,18 +8,23 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"media-workstage/internal/model"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestGenerate_OpenAICompatibleChannels(t *testing.T) {
-	for _, tc := range []struct{ provider, path string }{
-		{"openai", "/v1/chat/completions"},
-		{"apimart", "/v1/chat/completions"},
-		{"ark", "/v1/chat/completions"},
-		{"minimax", "/v1/text/chatcompletion_v2"},
+func TestGenerate_OpenAIStyleProtocols(t *testing.T) {
+	for _, tc := range []struct {
+		protocol model.Protocol
+		path     string
+	}{
+		{model.ProtocolOpenAICompatible, "/v1/chat/completions"},
+		{model.ProtocolAPIMart, "/v1/chat/completions"},
+		{model.ProtocolArk, "/v1/chat/completions"},
+		{model.ProtocolMiniMax, "/v1/text/chatcompletion_v2"},
 	} {
-		t.Run(tc.provider, func(t *testing.T) {
+		t.Run(string(tc.protocol), func(t *testing.T) {
 			var got map[string]any
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, tc.path, r.URL.Path)
@@ -29,12 +34,12 @@ func TestGenerate_OpenAICompatibleChannels(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			text, err := Generate(context.Background(), srv.Client(), tc.provider, srv.URL+"/v1/", "k",
+			text, err := Generate(context.Background(), srv.Client(), tc.protocol, srv.URL+"/v1/", "k",
 				Request{Model: "m", System: "sys", Prompt: "写一个提示词"})
 			require.NoError(t, err)
 			assert.Equal(t, "霓虹雨夜，赛博朋克街道", text)
 			assert.Equal(t, "m", got["model"])
-			if tc.provider == "ark" {
+			if tc.protocol == model.ProtocolArk {
 				assert.Equal(t, map[string]any{"type": "disabled"}, got["thinking"], "Doubao thinking is off for prompt writing")
 			} else {
 				assert.NotContains(t, got, "thinking")
@@ -57,7 +62,7 @@ func TestGenerate_GeminiSkipsThoughts(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	text, err := Generate(context.Background(), srv.Client(), "google", srv.URL+"/v1beta", "g",
+	text, err := Generate(context.Background(), srv.Client(), model.ProtocolGemini, srv.URL+"/v1beta", "g",
 		Request{Model: "models/gemini-3-pro", System: "sys", Prompt: "p"})
 	require.NoError(t, err)
 	assert.Equal(t, "晨雾中的古镇", text)
@@ -75,12 +80,12 @@ func TestGenerate_SurfacesProviderErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := Generate(context.Background(), srv.Client(), "openai", srv.URL, "k", Request{Model: "x", Prompt: "p"})
+	_, err := Generate(context.Background(), srv.Client(), model.ProtocolOpenAICompatible, srv.URL, "k", Request{Model: "x", Prompt: "p"})
 	assert.ErrorContains(t, err, "model not found")
 
-	_, err = Generate(context.Background(), srv.Client(), "minimax", srv.URL, "k", Request{Model: "x", Prompt: "p"})
+	_, err = Generate(context.Background(), srv.Client(), model.ProtocolMiniMax, srv.URL, "k", Request{Model: "x", Prompt: "p"})
 	assert.ErrorContains(t, err, "authentication failed")
 
-	_, err = Generate(context.Background(), srv.Client(), "kling", srv.URL, "k", Request{Model: "x", Prompt: "p"})
+	_, err = Generate(context.Background(), srv.Client(), model.ProtocolKling, srv.URL, "k", Request{Model: "x", Prompt: "p"})
 	assert.ErrorContains(t, err, "不支持文本生成")
 }

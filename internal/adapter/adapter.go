@@ -53,25 +53,28 @@ type PollTimeoutHinter interface {
 
 // ChannelConfig is the credential set shared by the image channel adapters.
 type ChannelConfig struct {
+	// ProviderID names the Provider this adapter serves; empty means the protocol's preset ID.
+	ProviderID string
 	BaseURL    string
 	APIKey     string
 	HTTPClient *http.Client
 }
 
-// NewChannelAdapter builds the live adapter for a provider channel, or reports
-// false for channels that only store configuration (no generation support yet).
-func NewChannelAdapter(provider, baseURL, apiKey string, extra map[string]string) (ProviderAdapter, bool) {
-	switch provider {
-	case "ark":
+// NewProviderAdapter builds the live adapter for a Provider from its Protocol, or reports
+// false for protocols that only store configuration (no generation support yet).
+func NewProviderAdapter(protocol model.Protocol, providerID, baseURL, apiKey string, extra map[string]string) (ProviderAdapter, bool) {
+	cfg := ChannelConfig{ProviderID: providerID, BaseURL: baseURL, APIKey: apiKey}
+	switch protocol {
+	case model.ProtocolArk:
 		return NewArkAdapter(ArkConfig{BaseURL: baseURL, APIKey: apiKey}), true
-	case "minimax":
+	case model.ProtocolMiniMax:
 		return NewMiniMaxAdapter(MiniMaxConfig{BaseURL: baseURL, APIKey: apiKey, GroupID: extra["group_id"]}), true
-	case "openai":
-		return NewOpenAIImageAdapter(ChannelConfig{BaseURL: baseURL, APIKey: apiKey}), true
-	case "google":
-		return NewGeminiImageAdapter(ChannelConfig{BaseURL: baseURL, APIKey: apiKey}), true
-	case "apimart":
-		return NewAPIMartAdapter(ChannelConfig{BaseURL: baseURL, APIKey: apiKey}), true
+	case model.ProtocolOpenAICompatible:
+		return NewOpenAIImageAdapter(cfg), true
+	case model.ProtocolGemini:
+		return NewGeminiImageAdapter(cfg), true
+	case model.ProtocolAPIMart:
+		return NewAPIMartAdapter(cfg), true
 	}
 	return nil, false
 }

@@ -46,7 +46,7 @@ type openAIImageResponse struct {
 }
 
 func (a *OpenAIImageAdapter) SubmitTask(ctx context.Context, task *model.MediaTask) (string, error) {
-	if err := requireImageTask("openai", task); err != nil {
+	if err := requireImageTask(a.name, task); err != nil {
 		return "", err
 	}
 	params := parseGenericImageParams(task.ParamsJSON)

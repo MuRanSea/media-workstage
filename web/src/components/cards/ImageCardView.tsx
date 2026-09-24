@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { Image as ImageIcon, Layers, LayoutGrid, Maximize2, Sparkles } from 'lucide-react';
 import { IMAGE_MODELS } from '../../types/canvas.ts';
-import { READY_CHANNELS, buildProviderGroups, findModelOption } from '../../engine/channelModels.ts';
+import { buildProviderGroups, findModelOption, isModelReady } from '../../engine/channelModels.ts';
+import { protocolOf } from '../../engine/providers.ts';
 import { imageSizeSummary } from '../../engine/cardParams.ts';
 import { useChannels } from '../../services/channels.ts';
 import { assetStoredPath, assetUrl } from '../../engine/assetPaths.ts';
@@ -47,10 +48,10 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
   const channels = useChannels();
   const providerGroups = useMemo(() => buildProviderGroups(channels, 'image'), [channels]);
   const provider = card.provider ?? 'ark';
-  const seedreamDef = provider === 'ark' ? IMAGE_MODELS.find((m) => m.id === card.model) : undefined;
+  const seedreamDef = protocolOf(provider) === 'ark' ? IMAGE_MODELS.find((m) => m.id === card.model) : undefined;
   const modelLabel =
     seedreamDef?.name ?? findModelOption(providerGroups, provider, card.model)?.label ?? card.model;
-  const canGenerate = READY_CHANNELS.image.has(provider);
+  const canGenerate = isModelReady('image', provider, card.model);
   const isGenerating = card.status === 'running' || card.status === 'queued';
 
   const layerAssets = (card.outputAssets ?? []).filter((a) => a.kind === 'image_layer');

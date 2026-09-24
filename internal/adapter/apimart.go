@@ -66,7 +66,7 @@ func (a *APIMartAdapter) SubmitTask(ctx context.Context, task *model.MediaTask) 
 	case "video_generation":
 		return a.submitVideo(ctx, task)
 	}
-	return "", fmt.Errorf("apimart 渠道不支持 %s 任务", task.TaskType)
+	return "", fmt.Errorf("%s 服务商不支持 %s 任务", a.name, task.TaskType)
 }
 
 func (a *APIMartAdapter) submitImage(ctx context.Context, task *model.MediaTask) (string, error) {

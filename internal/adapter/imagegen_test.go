@@ -7,8 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"net/url"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -275,4 +275,25 @@ func TestDownloadAsset_SendsKeyOnlyToChannelOrigin(t *testing.T) {
 	assert.False(t, sameOrigin(relay.URL+"/v1", &url.URL{Scheme: u.Scheme, Host: "other.example.com"}))
 	assert.False(t, sameOrigin("https://relay.example.com/v1", &url.URL{Scheme: "http", Host: "relay.example.com"}),
 		"a scheme downgrade is not the same origin")
+}
+
+func TestNewProviderAdapter_BuildsByProtocolAndNamesInstance(t *testing.T) {
+	a, ok := NewProviderAdapter(model.ProtocolOpenAICompatible, "relay-a", "http://relay/v1", "k", nil)
+	require.True(t, ok)
+	assert.IsType(t, &OpenAIImageAdapter{}, a)
+	assert.Equal(t, "relay-a", a.ProviderName(), "the adapter is named after the provider it serves")
+
+	task := imageTask("relay-a", "sora-2", `{}`)
+	task.TaskType = "video_generation"
+	_, err := a.SubmitTask(context.Background(), task)
+	assert.ErrorContains(t, err, "relay-a 服务商目前只支持生图任务")
+
+	g, ok := NewProviderAdapter(model.ProtocolGemini, "google", "", "k", nil)
+	require.True(t, ok)
+	assert.IsType(t, &GeminiImageAdapter{}, g)
+
+	for _, p := range []model.Protocol{model.ProtocolKling, model.ProtocolMidjourney, "unknown"} {
+		_, ok := NewProviderAdapter(p, "x", "", "k", nil)
+		assert.False(t, ok, p)
+	}
 }
