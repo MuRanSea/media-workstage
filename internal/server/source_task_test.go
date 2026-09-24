@@ -77,6 +77,26 @@ func TestCreateTask_SourceTaskRejections(t *testing.T) {
 	}
 }
 
+func TestCreateTask_ActionModeNeedsAnAction(t *testing.T) {
+	srv, r := newProviderTestServer(t)
+	seedSourceTask(t, srv, nil)
+	body := actionTaskBody("midjourney", "src-1", "")
+	delete(body["params"].(map[string]any), "action_id")
+	w := postJSON(r, "/api/tasks", body)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	var n int64
+	srv.db.Model(&model.MediaTask{}).Count(&n)
+	assert.Equal(t, int64(1), n, "no task row is created for a rejected action")
+}
+
+func TestCreateTask_SourceTaskMustBelongToTheSameProject(t *testing.T) {
+	srv, r := newProviderTestServer(t)
+	seedSourceTask(t, srv, func(t *model.MediaTask) { t.ProjectID = "project-a" })
+	w := postJSON(r, "/api/tasks", actionTaskBody("midjourney", "src-1", "MJ::JOB::upsample::1::h"))
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "工程")
+}
+
 func TestCreateTask_ActionIDWithoutSourceIsRejected(t *testing.T) {
 	_, r := newProviderTestServer(t)
 	body := actionTaskBody("midjourney", "", "MJ::JOB::upsample::1::h")

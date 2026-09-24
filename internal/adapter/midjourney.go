@@ -230,7 +230,8 @@ func (a *MidjourneyAdapter) submitAction(ctx context.Context, task *model.MediaT
 	if err != nil {
 		return "", err
 	}
-	if existing.Status != "MODAL" {
+	// MODAL is not in every proxy's status list; midjourney-proxy-plus also says "窗口等待".
+	if existing.Status != "MODAL" && !strings.Contains(resp.Description, "窗口") {
 		return id, nil
 	}
 	modal, err := a.postSubmit(ctx, "/mj/submit/modal", midjourneyModalRequest{TaskID: id, Prompt: strings.TrimSpace(task.Prompt)})

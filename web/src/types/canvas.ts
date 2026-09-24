@@ -44,6 +44,11 @@ export interface DerivedFrom {
   operation: 'action' | 'describe';
 }
 
+/** A text card that runs Midjourney Describe on its source image instead of chatting with an LLM. */
+export function isDescribeCard(card: SpatialCard): boolean {
+  return card.derivedFrom?.operation === 'describe';
+}
+
 export interface ReferenceItem {
   cardId: string;
   tagIndex: number;

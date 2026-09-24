@@ -720,8 +720,8 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 	if len(payload.ReferenceAssets) > 0 {
 		params["reference_assets"] = payload.ReferenceAssets
 	}
-	if err := resolveSourceTask(s.db, payload.Provider, params); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if status, err := resolveSourceTask(s.db, payload, params); err != nil {
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 

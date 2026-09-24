@@ -1,4 +1,4 @@
-import type { CardType, SpatialCard } from '../types/canvas.ts';
+import { isDescribeCard, type CardType, type SpatialCard } from '../types/canvas.ts';
 import type { Point } from './matrix.ts';
 
 const CARD_WIDTH: Record<CardType, number> = { image: 340, video: 460, text: 340 };
@@ -116,8 +116,14 @@ export function duplicateCards(source: SpatialCard[], at: Point, existing: Spati
       copy.progress = 0;
     }
     copy.references = c.references
-      ?.filter((r) => idMap.has(r.cardId))
-      .map((r) => ({ ...r, cardId: idMap.get(r.cardId)!, tagIndex: tagMap.get(r.tagIndex) ?? r.tagIndex }));
+      // A describe card's image stays usable without its source card (its file is kept).
+      ?.filter((r) => idMap.has(r.cardId) || isDescribeCard(c))
+      .map((r) =>
+        idMap.has(r.cardId) ? { ...r, cardId: idMap.get(r.cardId)!, tagIndex: tagMap.get(r.tagIndex) ?? r.tagIndex } : r
+      );
+    if (c.derivedFrom && idMap.has(c.derivedFrom.cardId)) {
+      copy.derivedFrom = { ...c.derivedFrom, cardId: idMap.get(c.derivedFrom.cardId)! };
+    }
     copy.promptSourceId = c.promptSourceId && idMap.has(c.promptSourceId) ? idMap.get(c.promptSourceId) : undefined;
     // Rewrite @图N in the prompt for references that were remapped.
     if (c.references?.length) {
@@ -128,4 +134,20 @@ export function duplicateCards(source: SpatialCard[], at: Point, existing: Spati
     }
     return copy;
   });
+}
+
+/**
+ * `cards` without the `gone` ones, and without links pointing at them. A describe card
+ * keeps its reference: the image file outlives the card and it can still run again.
+ */
+export function removeCards(cards: SpatialCard[], gone: ReadonlySet<string>): SpatialCard[] {
+  return cards
+    .filter((c) => !gone.has(c.id))
+    .map((c) => {
+      const references = isDescribeCard(c) ? c.references : c.references?.filter((r) => !gone.has(r.cardId));
+      const promptSourceId = c.promptSourceId && gone.has(c.promptSourceId) ? undefined : c.promptSourceId;
+      return references?.length !== c.references?.length || promptSourceId !== c.promptSourceId
+        ? { ...c, references, promptSourceId }
+        : c;
+    });
 }

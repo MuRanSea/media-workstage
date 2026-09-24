@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createCard, duplicateCards, nextTagIndex, placeCard } from './cardFactory.ts';
+import { createCard, duplicateCards, nextTagIndex, placeCard, removeCards } from './cardFactory.ts';
 import { mergeTaskState } from './useHistory.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 
@@ -76,6 +76,51 @@ describe('duplicateCards', () => {
     expect(fresh.resultActions).toBeUndefined();
     expect(fresh.derivedFrom).toEqual(derived.derivedFrom);
   });
+
+  it('points a copied derived card at the copy of its source when both are copied', () => {
+    const derived: SpatialCard = {
+      ...img,
+      id: 'up',
+      tagIndex: 5,
+      derivedFrom: { cardId: 'img', taskId: 'task-grid', actionId: 'a', label: 'U1', operation: 'action' },
+    };
+    const [ci, cd] = duplicateCards([img, derived], { x: 0, y: 0 }, [img, derived]);
+    expect(cd.derivedFrom?.cardId).toBe(ci.id);
+    expect(cd.derivedFrom?.taskId).toBe('task-grid');
+  });
+
+  it("keeps a describe card's image when copied without its source", () => {
+    const [copy] = duplicateCards([describe_], { x: 0, y: 0 }, [img, describe_]);
+    expect(copy.references).toEqual(describe_.references);
+  });
+});
+
+const describe_: SpatialCard = {
+  ...createCard('text', { x: 0, y: 0 }, []),
+  id: 'desc',
+  tagIndex: 9,
+  provider: 'midjourney',
+  model: 'mj_imagine',
+  textOutput: '1️⃣ a fox',
+  derivedFrom: { cardId: 'img', taskId: 'task-grid', label: '反推', operation: 'describe' },
+  references: [{ cardId: 'img', tagIndex: 1, role: 'reference_image', label: 'a', url: '/assets/x.png' }],
+};
+
+describe('removeCards', () => {
+  it('drops links to removed cards, but a describe card keeps the image it describes', () => {
+    const video: SpatialCard = {
+      ...createCard('video', { x: 0, y: 0 }, []),
+      id: 'vid',
+      promptSourceId: 'img',
+      references: [{ cardId: 'img', tagIndex: 1, role: 'reference_image', label: 'a' }],
+    };
+    const img: SpatialCard = { ...createCard('image', { x: 0, y: 0 }, []), id: 'img' };
+    const left = removeCards([img, video, describe_], new Set(['img']));
+    expect(left.map((c) => c.id)).toEqual(['vid', 'desc']);
+    expect(left[0].references).toEqual([]);
+    expect(left[0].promptSourceId).toBeUndefined();
+    expect(left[1].references).toEqual(describe_.references);
+  });
 });
 
 describe('mergeTaskState', () => {
@@ -86,6 +131,21 @@ describe('mergeTaskState', () => {
     expect(restored.prompt).toBe('old');
     expect(restored.status).toBe('succeeded');
     expect(restored.resultUrl).toBe('/assets/r.png');
+  });
+
+  it('keeps result actions, and the text of describe cards, that arrived after the snapshot', () => {
+    const actions = [{ id: 'MJ::JOB::upsample::1::h', label: 'U1' }];
+    const [grid] = mergeTaskState(
+      [{ ...createCard('image', { x: 0, y: 0 }, []), id: 'g', status: 'running' as const }],
+      [{ ...createCard('image', { x: 0, y: 0 }, []), id: 'g', status: 'succeeded' as const, resultActions: actions }]
+    );
+    expect(grid.resultActions).toEqual(actions);
+
+    const [desc] = mergeTaskState([{ ...describe_, textOutput: '' }], [describe_]);
+    expect(desc.textOutput).toBe('1️⃣ a fox');
+    // A chat card's output is the user's to edit, so undo still restores it.
+    const chat = { ...createCard('text', { x: 0, y: 0 }, []), id: 't', textOutput: 'old' };
+    expect(mergeTaskState([chat], [{ ...chat, textOutput: 'edited' }])[0].textOutput).toBe('old');
   });
 
   it('restores deleted cards as they were', () => {

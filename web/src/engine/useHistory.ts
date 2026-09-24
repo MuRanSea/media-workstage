@@ -1,10 +1,10 @@
 import { useCallback, useRef, useState } from 'react';
-import type { SpatialCard } from '../types/canvas.ts';
+import { isDescribeCard, type SpatialCard } from '../types/canvas.ts';
 
 const LIMIT = 50;
 
 /** Fields written by the task pipeline (SSE / polling), not by the user. */
-const TASK_FIELDS = ['taskId', 'status', 'progress', 'errorMessage', 'resultUrl', 'outputAssets'] as const;
+const TASK_FIELDS = ['taskId', 'status', 'progress', 'errorMessage', 'resultUrl', 'outputAssets', 'resultActions'] as const;
 
 /**
  * A restored snapshot with each surviving card's task state taken from `current`,
@@ -19,6 +19,8 @@ export function mergeTaskState(restored: SpatialCard[], current: SpatialCard[]):
     for (const f of TASK_FIELDS) {
       (merged as unknown as Record<string, unknown>)[f] = live[f];
     }
+    // A describe card's text is its task result; a chat card's is the user's to edit.
+    if (isDescribeCard(live)) merged.textOutput = live.textOutput;
     return merged;
   });
 }

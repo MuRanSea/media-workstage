@@ -534,3 +534,27 @@ func TestMidjourneyPollTask_DescribeText(t *testing.T) {
 	assert.Equal(t, model.TaskStatusFailed, res.Status)
 	assert.Equal(t, "EmptyResult", res.ErrorCode)
 }
+
+func TestMidjourneySubmitAction_Code21WindowWaitSubmitsModalWithoutModalStatus(t *testing.T) {
+	// midjourney-proxy-plus answers a remix confirmation with code 21 "窗口等待"; the task
+	// status may still read SUBMITTED (MODAL is not in every proxy's status list).
+	modalCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mj/submit/action":
+			_, _ = io.WriteString(w, `{"code":21,"description":"窗口等待","result":"1790300000000004"}`)
+		case "/mj/task/1790300000000004/fetch":
+			_, _ = io.WriteString(w, `{"id":"1790300000000004","status":"SUBMITTED"}`)
+		case "/mj/submit/modal":
+			modalCalled = true
+			_, _ = io.WriteString(w, `{"code":1,"result":"1790300000000004"}`)
+		}
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	id, err := a.SubmitTask(context.Background(), actionTask("1790217491102846", "MJ::JOB::variation::1::h"))
+	require.NoError(t, err)
+	assert.Equal(t, "1790300000000004", id)
+	assert.True(t, modalCalled)
+}
