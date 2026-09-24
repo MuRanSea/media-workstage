@@ -43,6 +43,12 @@ type midjourneyBlendRequest struct {
 	AccountFilter *midjourneyAccountFilter `json:"accountFilter,omitempty"`
 }
 
+type midjourneyDescribeRequest struct {
+	BotType       string                   `json:"botType,omitempty"`
+	Base64        string                   `json:"base64"`
+	AccountFilter *midjourneyAccountFilter `json:"accountFilter,omitempty"`
+}
+
 // midjourneyAccountFilter picks the proxy account a job runs on; modes selects by speed.
 type midjourneyAccountFilter struct {
 	Modes []string `json:"modes"`
@@ -114,6 +120,8 @@ func (a *MidjourneyAdapter) SubmitTask(ctx context.Context, task *model.MediaTas
 		return a.submitAction(ctx, task)
 	case "blend":
 		return a.submitBlend(ctx, task)
+	case "describe":
+		return a.submitDescribe(ctx, task)
 	default:
 		return a.submitImagine(ctx, task)
 	}
@@ -153,6 +161,27 @@ func (a *MidjourneyAdapter) submitBlend(ctx context.Context, task *model.MediaTa
 		Base64Array:   images,
 		Dimensions:    midjourneyDimensions(params.AspectRatio),
 		AccountFilter: midjourneyAccountFilterFor(params, ""),
+	})
+	if err != nil {
+		return "", err
+	}
+	return a.acceptedID(resp)
+}
+
+// submitDescribe asks Midjourney for prompts that would produce the reference image.
+func (a *MidjourneyAdapter) submitDescribe(ctx context.Context, task *model.MediaTask) (string, error) {
+	refs := parseReferenceAssets(task.ParamsJSON)
+	if len(refs) != 1 {
+		return "", fmt.Errorf("Midjourney 反推提示词需要 1 张图片，当前 %d 张", len(refs))
+	}
+	images, err := midjourneyBase64Array(refs)
+	if err != nil {
+		return "", err
+	}
+	resp, err := a.postSubmit(ctx, "/mj/submit/describe", midjourneyDescribeRequest{
+		BotType:       midjourneyBotType(task.Model),
+		Base64:        images[0],
+		AccountFilter: midjourneyAccountFilterFor(parseGenericImageParams(task.ParamsJSON), ""),
 	})
 	if err != nil {
 		return "", err
@@ -287,6 +316,13 @@ func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 
 	switch resp.Status {
 	case "SUCCESS":
+		if task.TaskMode == "describe" {
+			// The result is text; the task's image is the user's own upload.
+			if strings.TrimSpace(resp.Properties.FinalPrompt) == "" {
+				return &PollResult{Status: model.TaskStatusFailed, ErrorCode: "EmptyResult", ErrorMessage: "Midjourney 反推完成但没有返回提示词"}, nil
+			}
+			return &PollResult{Status: model.TaskStatusSucceeded, Progress: 100, Text: resp.Properties.FinalPrompt}, nil
+		}
 		if resp.ImageURL == "" {
 			return &PollResult{Status: model.TaskStatusFailed, ErrorCode: "EmptyResult", ErrorMessage: "Midjourney 任务完成但没有返回图片"}, nil
 		}

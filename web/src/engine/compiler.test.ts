@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   compileImageTaskPayload,
   compileCardImagePayload,
+  compileDescribePayload,
 } from './compiler.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 
@@ -254,5 +255,37 @@ describe('Midjourney blend', () => {
 
   it('needs two to five images', () => {
     expect(() => compileCardImagePayload(blendCard(1))).toThrow('2–5 张');
+  });
+});
+
+describe('Midjourney describe', () => {
+  it('sends the source image to describe', () => {
+    const payload = compileDescribePayload({
+      id: 'd1',
+      type: 'text',
+      title: '图片 7 · 反推',
+      tagIndex: 8,
+      x: 0,
+      y: 0,
+      width: 340,
+      prompt: '',
+      provider: 'mj',
+      model: 'mj_imagine',
+      status: 'idle',
+      progress: 0,
+      derivedFrom: { cardId: 'c7', taskId: 't7', label: '反推', operation: 'describe' },
+      references: [{ cardId: 'c7', tagIndex: 7, role: 'reference_image', label: '图片 7', url: '/assets/images/t7/base.png' }],
+    });
+    expect(payload).toEqual({
+      provider: 'mj',
+      model: 'mj_imagine',
+      task_type: 'image_generation',
+      task_mode: 'describe',
+      prompt: '反推提示词',
+      params: {},
+      reference_assets: [
+        { card_id: 'c7', tag_index: 1, role: 'reference_image', label: '图片 7', url: undefined, local_path: 'assets/images/t7/base.png', remote_url: undefined },
+      ],
+    });
   });
 });

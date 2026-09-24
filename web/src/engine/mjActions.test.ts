@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SpatialCard, TaskActionDto } from '../types/canvas.ts';
-import { actionLabel, groupActions, spawnActionCard } from './mjActions.ts';
+import type { ProviderConfigItem } from '../services/api.ts';
+import { actionLabel, findDescribeProvider, groupActions, spawnActionCard, spawnDescribeCard } from './mjActions.ts';
 
 const U1: TaskActionDto = { id: 'MJ::JOB::upsample::1::h', label: 'U1' };
 const U2: TaskActionDto = { id: 'MJ::JOB::upsample::2::h', label: 'U2' };
@@ -86,5 +87,53 @@ describe('spawnActionCard', () => {
 
   it('refuses a source without a finished task', () => {
     expect(() => spawnActionCard(grid({ taskId: undefined }), U1, [], 'p')).toThrow();
+  });
+});
+
+const provider = (p: Partial<ProviderConfigItem> & Pick<ProviderConfigItem, 'id' | 'protocol'>): ProviderConfigItem => ({
+  name: p.id,
+  preset: false,
+  base_url: 'http://gw',
+  is_configured: true,
+  models: [{ id: 'mj_imagine', type: 'image' }],
+  can_list_models: false,
+  ...p,
+});
+
+describe('findDescribeProvider', () => {
+  it('picks a configured Midjourney provider with an image model', () => {
+    expect(
+      findDescribeProvider([
+        provider({ id: 'openai', protocol: 'openai_compatible' }),
+        provider({ id: 'mj-off', protocol: 'midjourney', is_configured: false }),
+        provider({ id: 'mj-empty', protocol: 'midjourney', models: [] }),
+        provider({ id: 'mj', protocol: 'midjourney', models: [{ id: 'x', type: 'chat' }, { id: 'NIJI_JOURNEY', type: 'image' }] }),
+      ])
+    ).toEqual({ provider: 'mj', model: 'NIJI_JOURNEY' });
+    expect(findDescribeProvider([provider({ id: 'openai', protocol: 'openai_compatible' })])).toBeUndefined();
+  });
+});
+
+describe('spawnDescribeCard', () => {
+  it('creates a text card beside the image that describes it with Midjourney', () => {
+    const source = grid({ provider: 'openai', model: 'gpt-image-2', resultActions: undefined });
+    const card = spawnDescribeCard(source, { provider: 'mj', model: 'mj_imagine' }, [source]);
+    expect(card).toMatchObject({
+      type: 'text',
+      title: '图片 7 · 反推',
+      tagIndex: 8,
+      x: source.x + source.width + 80,
+      provider: 'mj',
+      model: 'mj_imagine',
+      prompt: '',
+      textOutput: '',
+      status: 'idle',
+      derivedFrom: { cardId: 'card-grid', taskId: 'task-grid', label: '反推', operation: 'describe' },
+      references: [{ cardId: 'card-grid', tagIndex: 7, role: 'reference_image', label: '图片 7', url: '/assets/images/task-grid/base.webp' }],
+    });
+  });
+
+  it('needs an image result to describe', () => {
+    expect(() => spawnDescribeCard(grid({ resultUrl: undefined }), { provider: 'mj', model: 'm' }, [])).toThrow();
   });
 });

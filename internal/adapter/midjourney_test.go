@@ -479,3 +479,58 @@ func TestMidjourneySubmitBlend(t *testing.T) {
 	_, err = a.SubmitTask(context.Background(), blend(1, "1:1", ""))
 	assert.ErrorContains(t, err, "2–5 张")
 }
+
+func describeTask(refs []model.ReferenceItem) *model.MediaTask {
+	params, _ := json.Marshal(map[string]any{"reference_assets": refs})
+	task := imageTask("midjourney", "mj_imagine", string(params))
+	task.TaskMode = "describe"
+	task.Prompt = "反推提示词"
+	return task
+}
+
+func TestMidjourneySubmitDescribe(t *testing.T) {
+	var path string
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, submitted = r.URL.Path, nil
+		_ = json.NewDecoder(r.Body).Decode(&submitted)
+		_, _ = io.WriteString(w, `{"code":1,"result":"desc-1"}`)
+	}))
+	defer srv.Close()
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+
+	id, err := a.SubmitTask(context.Background(), describeTask([]model.ReferenceItem{{LocalPath: localPNG(t, "d.png")}}))
+	require.NoError(t, err)
+	assert.Equal(t, "desc-1", id)
+	assert.Equal(t, "/mj/submit/describe", path)
+	assert.Contains(t, submitted["base64"], "data:image/png;base64,")
+	assert.NotContains(t, submitted, "prompt")
+
+	_, err = a.SubmitTask(context.Background(), describeTask(nil))
+	assert.ErrorContains(t, err, "1 张图片")
+}
+
+func TestMidjourneyPollTask_DescribeText(t *testing.T) {
+	finalPrompt := "1️⃣ a red fox in the snow --ar 3:2\n\n2️⃣ a fox, watercolor --ar 3:2"
+	body := map[string]any{"id": "desc-1", "action": "DESCRIBE", "status": "SUCCESS", "progress": "100%",
+		"imageUrl": "https://cdn.example.test/uploaded.png", "properties": map[string]any{"finalPrompt": finalPrompt}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	defer srv.Close()
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	task := describeTask(nil)
+	task.ProviderTaskID = "desc-1"
+
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSucceeded, res.Status)
+	assert.Equal(t, finalPrompt, res.Text)
+	assert.Empty(t, res.Assets, "the described image is the user's own upload, not a result")
+
+	body["properties"] = map[string]any{"finalPrompt": ""}
+	res, err = a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailed, res.Status)
+	assert.Equal(t, "EmptyResult", res.ErrorCode)
+}

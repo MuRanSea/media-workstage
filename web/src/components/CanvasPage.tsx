@@ -13,7 +13,7 @@ import { apiGetProject, apiRenameProject, type ProjectDocument } from '../servic
 import { navigate } from '../services/router.ts';
 import { useProjectActions } from './useProjectActions.ts';
 import { Button, useToast } from './ui/index.ts';
-import { compileCardImagePayload } from '../engine/compiler.ts';
+import { compileCardImagePayload, compileDescribePayload } from '../engine/compiler.ts';
 import { compileCardVideoPayload } from '../engine/videoCompiler.ts';
 import { withEffectivePrompt } from '../engine/connections.ts';
 import { getTextPreset } from '../engine/textPresets.ts';
@@ -147,7 +147,9 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       toast(MISSING_PROVIDER_HINT, { tone: 'error' });
       return;
     }
-    if (targetCard.type === 'text') {
+    // Describe cards are Midjourney tasks; other text cards chat with an LLM.
+    const isDescribe = targetCard.derivedFrom?.operation === 'describe';
+    if (targetCard.type === 'text' && !isDescribe) {
       await handleGenerateText(targetCard);
       return;
     }
@@ -161,8 +163,9 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     try {
       // A connected text card supplies the prompt.
       const effectiveCard = withEffectivePrompt(targetCard, cardsRef.current);
-      const payload =
-        effectiveCard.type === 'image'
+      const payload = isDescribe
+        ? compileDescribePayload(effectiveCard, cardsRef.current)
+        : effectiveCard.type === 'image'
           ? compileCardImagePayload(effectiveCard, cardsRef.current)
           : compileCardVideoPayload(effectiveCard, cardsRef.current);
 

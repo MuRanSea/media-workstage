@@ -32,13 +32,15 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
   const providerGroups = useMemo(() => buildProviderGroups(channels, 'text'), [channels]);
   const preset = getTextPreset(card.textPreset);
   const isGenerating = card.status === 'running' || card.status === 'queued';
+  // Describe cards run Midjourney on their source image instead of chatting with an LLM.
+  const isDescribe = card.derivedFrom?.operation === 'describe';
 
   // New cards start on the first bound chat model once channel config has loaded.
   useEffect(() => {
-    if (card.model || providerGroups.length === 0) return;
+    if (isDescribe || card.model || providerGroups.length === 0) return;
     const first = providerGroups[0].options.find((o) => o.ready);
     if (first) onUpdateCard(card.id, { provider: first.provider, model: first.id }, { history: false });
-  }, [card.id, card.model, providerGroups, onUpdateCard]);
+  }, [isDescribe, card.id, card.model, providerGroups, onUpdateCard]);
 
   const provider = card.provider ?? providerGroups[0]?.provider ?? 'openai';
   const missing = isProviderMissing(channels, card.provider);
@@ -77,20 +79,28 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
       menuItems={menuItems}
       ports={<OutputPort color="emerald" onStart={onStartConnect} />}
     >
-      <SummaryRow model={preset.label} spec={modelLabel} />
+      <SummaryRow model={isDescribe ? 'Midjourney 反推' : preset.label} spec={isDescribe ? card.model : modelLabel} />
 
-      {providerGroups.length === 0 && (
-        <div className="text-[11px] leading-relaxed text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-2">
-          还没有可用的文本模型。打开右上角「设置」，给任一服务商填好 Key 并绑定对话模型。
-        </div>
+      {isDescribe ? (
+        <p className="text-[11px] leading-relaxed text-slate-500 px-1">
+          把来源图片交给 Midjourney 反推提示词，结果可以拖右侧圆点连到图片卡片使用。
+        </p>
+      ) : (
+        <>
+          {providerGroups.length === 0 && (
+            <div className="text-[11px] leading-relaxed text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-2">
+              还没有可用的文本模型。打开右上角「设置」，给任一服务商填好 Key 并绑定对话模型。
+            </div>
+          )}
+
+          <AutoTextarea
+            accent="emerald"
+            value={card.prompt}
+            onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
+            placeholder={preset.placeholder}
+          />
+        </>
       )}
-
-      <AutoTextarea
-        accent="emerald"
-        value={card.prompt}
-        onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
-        placeholder={preset.placeholder}
-      />
 
       <div className="space-y-1">
         <div className="flex items-center justify-between text-[11px] text-slate-500">
@@ -122,11 +132,21 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
         variant="primary"
         accent="emerald"
         block
-        disabled={isGenerating || missing || !card.model || !card.prompt.trim()}
+        disabled={isGenerating || missing || !card.model || (!isDescribe && !card.prompt.trim())}
         onClick={() => onTriggerGenerate(card.id)}
         icon={isGenerating ? undefined : <Sparkles className="w-3.5 h-3.5" />}
       >
-        {isGenerating ? '生成中…' : missing ? MISSING_PROVIDER_HINT : preset.id === 'free' ? '生成回答' : `生成${preset.label}`}
+        {isGenerating
+          ? '生成中…'
+          : missing
+            ? MISSING_PROVIDER_HINT
+            : isDescribe
+              ? card.textOutput
+                ? '重新反推'
+                : '反推提示词'
+              : preset.id === 'free'
+                ? '生成回答'
+                : `生成${preset.label}`}
       </Button>
     </CardShell>
   );

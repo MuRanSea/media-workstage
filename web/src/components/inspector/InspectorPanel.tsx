@@ -98,7 +98,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         {single?.type === 'video' && (
           <VideoInspector card={single} cards={cards} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
         )}
-        {single?.type === 'text' && <TextInspector card={single} update={update} />}
+        {single?.type === 'text' && (
+          <TextInspector card={single} update={update} derivedSourceTitle={cards.find((c) => c.id === single.derivedFrom?.cardId)?.title} />
+        )}
 
         {!single && (
           <Section title="排列">

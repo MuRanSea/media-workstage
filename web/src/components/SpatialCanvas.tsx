@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, FileText, Film, Image as ImageIcon, Sparkles, Trash2 } from 'lucide-react';
+import { Copy, FileText, Film, Image as ImageIcon, ScanText, Sparkles, Trash2 } from 'lucide-react';
 import type { CardType, SpatialCard, TaskActionDto } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
 import { screenToWorld, type CanvasTransform, type Point } from '../engine/matrix.ts';
 import { connectCards, hasOutputPort, withEffectivePrompt } from '../engine/connections.ts';
-import { spawnActionCard } from '../engine/mjActions.ts';
+import { findDescribeProvider, spawnActionCard, spawnDescribeCard } from '../engine/mjActions.ts';
+import { useChannels } from '../services/channels.ts';
 import { createCard, duplicateCards } from '../engine/cardFactory.ts';
 import { useHistory } from '../engine/useHistory.ts';
 import { removeReferencePatch } from '../engine/cardParams.ts';
@@ -285,6 +286,26 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     [editCards, onTriggerGenerate, toast]
   );
 
+  const channels = useChannels();
+  const describeWith = useMemo(() => findDescribeProvider(channels), [channels]);
+
+  /** Asks Midjourney for prompts matching `source`'s image, on a new text card beside it. */
+  const runDescribe = useCallback(
+    (source: SpatialCard) => {
+      if (!describeWith) return;
+      let card: SpatialCard;
+      try {
+        card = spawnDescribeCard(source, describeWith, cardsRef.current);
+      } catch (err) {
+        toast((err as Error).message, { tone: 'error' });
+        return;
+      }
+      editCards((prev) => [...prev, card]);
+      onTriggerGenerate(card.id, card);
+    },
+    [describeWith, editCards, onTriggerGenerate, toast]
+  );
+
   /** Actions of `card` whose derived card is still generating, so they are not run twice. */
   const busyActionsFor = useCallback(
     (card: SpatialCard) =>
@@ -300,10 +321,13 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     (card: SpatialCard): MenuEntry[] => [
       { label: '生成', icon: <Sparkles className="w-3.5 h-3.5" />, onSelect: () => onTriggerGenerate(card.id) },
       { label: '复制一份', icon: <Copy className="w-3.5 h-3.5" />, hint: 'Ctrl+D', onSelect: () => duplicate([card]) },
+      ...(card.type === 'image' && card.status === 'succeeded' && card.resultUrl && describeWith
+        ? [{ label: 'Midjourney 反推提示词', icon: <ScanText className="w-3.5 h-3.5" />, onSelect: () => runDescribe(card) }]
+        : []),
       'separator',
       { label: '删除', icon: <Trash2 className="w-3.5 h-3.5" />, hint: 'Delete', danger: true, onSelect: () => deleteCards([card.id]) },
     ],
-    [onTriggerGenerate, duplicate, deleteCards]
+    [onTriggerGenerate, duplicate, deleteCards, describeWith, runDescribe]
   );
 
   const addMenuAt = useCallback(
@@ -428,7 +452,9 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       const tgtX = card.x;
       const tgtY = card.y + PORT_Y;
 
-      card.references?.forEach((ref) => {
+      // A describe card's image is its origin, drawn as the derived link below.
+      const refs = card.derivedFrom?.operation === 'describe' ? [] : card.references;
+      refs?.forEach((ref) => {
         const src = byId.get(ref.cardId);
         if (!src) return;
         const srcX = src.x + src.width;

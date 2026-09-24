@@ -231,3 +231,33 @@ func TestMidjourneyReferenceImages_EndToEnd(t *testing.T) {
 	require.Len(t, images, 1)
 	assert.Equal(t, "data:image/png;base64,iVBORy1mb3g=", images[0])
 }
+
+// TestMidjourneyDescribe_EndToEnd runs Describe on an image: the task succeeds with the
+// prompts as its text result and no file.
+func TestMidjourneyDescribe_EndToEnd(t *testing.T) {
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mj/submit/describe":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "result": "desc-1"})
+		case "/mj/task/desc-1/fetch":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "desc-1", "action": "DESCRIBE", "status": "SUCCESS",
+				"imageUrl": "https://cdn.example.test/upload.png", "properties": map[string]any{"finalPrompt": "1️⃣ a red fox"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer proxy.Close()
+	r, _ := newMidjourneyE2E(t, proxy.URL)
+
+	img := filepath.Join(t.TempDir(), "fox.png")
+	require.NoError(t, os.WriteFile(img, []byte("png"), 0644))
+	task := createAndWait(t, r, map[string]any{
+		"provider": "midjourney", "model": "mj_imagine", "task_type": "image_generation", "task_mode": "describe",
+		"prompt":           "反推提示词",
+		"reference_assets": []map[string]any{{"card_id": "c1", "tag_index": 1, "role": "reference_image", "label": "狐狸", "local_path": img}},
+	})
+
+	require.Equal(t, "succeeded", task.Status, task.Error)
+	assert.Equal(t, "1️⃣ a red fox", task.ResultText)
+	assert.Empty(t, task.Assets)
+}

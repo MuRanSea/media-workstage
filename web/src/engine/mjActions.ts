@@ -1,4 +1,5 @@
 import type { SpatialCard, TaskActionDto } from '../types/canvas.ts';
+import type { ProviderConfigItem, ProviderId } from '../services/api.ts';
 import { newCardId, nextTagIndex } from './cardFactory.ts';
 
 /** Horizontal gap between a card and the cards derived from it. */
@@ -37,7 +38,6 @@ export function groupActions(actions: TaskActionDto[]): ActionGroups {
  */
 export function spawnActionCard(source: SpatialCard, action: TaskActionDto, cards: SpatialCard[], prompt: string): SpatialCard {
   if (!source.taskId) throw new Error(`「${source.title}」还没有可以操作的生成结果`);
-  const siblings = cards.filter((c) => c.derivedFrom?.cardId === source.id).length;
   const tagIndex = nextTagIndex(cards);
   const label = actionLabel(action);
   return {
@@ -45,8 +45,7 @@ export function spawnActionCard(source: SpatialCard, action: TaskActionDto, card
     type: 'image',
     title: `${source.title} · ${label}`,
     tagIndex,
-    x: source.x + source.width + DERIVED_GAP + siblings * DERIVED_CASCADE,
-    y: source.y + siblings * DERIVED_CASCADE,
+    ...derivedPosition(source, cards),
     width: source.width,
     prompt,
     provider: source.provider,
@@ -55,5 +54,52 @@ export function spawnActionCard(source: SpatialCard, action: TaskActionDto, card
     status: 'idle',
     progress: 0,
     derivedFrom: { cardId: source.id, taskId: source.taskId, actionId: action.id, label, operation: 'action' },
+  };
+}
+
+/** Right of `source`, stepped for each card already derived from it. */
+function derivedPosition(source: SpatialCard, cards: SpatialCard[]): { x: number; y: number } {
+  const siblings = cards.filter((c) => c.derivedFrom?.cardId === source.id).length;
+  return {
+    x: source.x + source.width + DERIVED_GAP + siblings * DERIVED_CASCADE,
+    y: source.y + siblings * DERIVED_CASCADE,
+  };
+}
+
+/** The Midjourney provider and image model that runs Describe, if one is configured. */
+export function findDescribeProvider(providers: ProviderConfigItem[]): { provider: ProviderId; model: string } | undefined {
+  for (const p of providers) {
+    if (p.protocol !== 'midjourney' || !p.is_configured) continue;
+    const model = p.models.find((m) => m.type === 'image');
+    if (model) return { provider: p.id, model: model.id };
+  }
+  return undefined;
+}
+
+/**
+ * A new text card, right of `source`, that asks Midjourney for prompts matching the
+ * source's image. The image is kept as its reference so the card can run again later.
+ */
+export function spawnDescribeCard(
+  source: SpatialCard,
+  target: { provider: ProviderId; model: string },
+  cards: SpatialCard[]
+): SpatialCard {
+  if (!source.resultUrl || !source.taskId) throw new Error(`「${source.title}」还没有生成图片，无法反推提示词`);
+  return {
+    id: newCardId(),
+    type: 'text',
+    title: `${source.title} · 反推`,
+    tagIndex: nextTagIndex(cards),
+    ...derivedPosition(source, cards),
+    width: 340,
+    prompt: '',
+    textOutput: '',
+    provider: target.provider,
+    model: target.model,
+    status: 'idle',
+    progress: 0,
+    derivedFrom: { cardId: source.id, taskId: source.taskId, label: '反推', operation: 'describe' },
+    references: [{ cardId: source.id, tagIndex: source.tagIndex, role: 'reference_image', label: source.title.slice(0, 10), url: source.resultUrl }],
   };
 }

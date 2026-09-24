@@ -176,3 +176,17 @@ function compileActionPayload(card: SpatialCard): CreateTaskPayload {
     params: { source_task_id: from.taskId, action_id: from.actionId },
   };
 }
+
+/** A describe card sends its source image to Midjourney Describe; the prompts come back as text. */
+export function compileDescribePayload(card: SpatialCard, allCards: SpatialCard[] = []): CreateTaskPayload {
+  if (!card.references?.length) throw new Error(`「${card.title}」没有要反推的图片`);
+  return {
+    provider: card.provider ?? '',
+    model: card.model,
+    task_type: 'image_generation',
+    task_mode: 'describe',
+    prompt: '反推提示词',
+    params: {},
+    reference_assets: compileReferenceImages(card.references.slice(0, 1), allCards),
+  };
+}

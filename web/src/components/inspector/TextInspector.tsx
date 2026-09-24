@@ -12,7 +12,28 @@ const PRESET_HINTS: Record<string, string> = {
   free: '直接和模型对话，不附加任何指令。',
 };
 
-export const TextInspector: React.FC<{ card: SpatialCard; update: (patch: Partial<SpatialCard>) => void }> = ({ card, update }) => {
+interface Props {
+  card: SpatialCard;
+  update: (patch: Partial<SpatialCard>) => void;
+  /** Title of the image a describe card came from, if it is still on the canvas. */
+  derivedSourceTitle?: string;
+}
+
+export const TextInspector: React.FC<Props> = ({ card, update, derivedSourceTitle }) => {
+  if (card.derivedFrom?.operation === 'describe') {
+    return (
+      <Section title="来源">
+        <p className="text-xs text-slate-300 leading-relaxed">
+          用 Midjourney 反推「{derivedSourceTitle ?? '已删除的卡片'}」的图片（服务商 {card.provider}，模型{' '}
+          <span className="font-mono">{card.model}</span>），结果是 4 条候选提示词。
+        </p>
+      </Section>
+    );
+  }
+  return <ChatSettings card={card} update={update} />;
+};
+
+const ChatSettings: React.FC<Props> = ({ card, update }) => {
   const channels = useChannels();
   const groups = useMemo(() => buildProviderGroups(channels, 'text'), [channels]);
   const provider = card.provider ?? groups[0]?.provider ?? 'openai';
