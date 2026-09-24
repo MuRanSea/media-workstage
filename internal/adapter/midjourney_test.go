@@ -382,3 +382,57 @@ func TestMidjourneySubmit_SpeedAccountFilter(t *testing.T) {
 		assert.Equal(t, c.prompt, submitted["prompt"], "%s: the speed never changes the prompt", c.name)
 	}
 }
+
+func referenceTask(t *testing.T, refs []model.ReferenceItem) *model.MediaTask {
+	t.Helper()
+	params, _ := json.Marshal(map[string]any{"aspect_ratio": "1:1", "reference_assets": refs})
+	return imageTask("midjourney", "mj_imagine", string(params))
+}
+
+func TestMidjourneySubmit_ReferenceImages(t *testing.T) {
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		submitted = nil
+		_ = json.NewDecoder(r.Body).Decode(&submitted)
+		_, _ = io.WriteString(w, `{"code":1,"result":"1"}`)
+	}))
+	defer srv.Close()
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+
+	png := localPNG(t, "ref.png")
+	_, err := a.SubmitTask(context.Background(), referenceTask(t, []model.ReferenceItem{
+		{Role: "reference_image", LocalPath: png, RemoteURL: "https://cdn.example.test/old.png"},
+		{Role: "reference_image", URL: "data:image/jpeg;base64,/9j/AAAA"},
+	}))
+	require.NoError(t, err)
+	arr, _ := submitted["base64Array"].([]any)
+	require.Len(t, arr, 2)
+	assert.Contains(t, arr[0], "data:image/png;base64,", "local files are sent inline, not by their expiring remote URL")
+	assert.Equal(t, "data:image/jpeg;base64,/9j/AAAA", arr[1])
+	assert.Equal(t, "a red fox --ar 1:1", submitted["prompt"])
+
+	_, err = a.SubmitTask(context.Background(), referenceTask(t, nil))
+	require.NoError(t, err)
+	assert.NotContains(t, submitted, "base64Array")
+}
+
+func TestMidjourneySubmit_ReferenceImageLimits(t *testing.T) {
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: "http://unused", APIKey: "k"})
+	submit := func(refs []model.ReferenceItem) error {
+		_, err := a.SubmitTask(context.Background(), referenceTask(t, refs))
+		return err
+	}
+
+	big := filepath.Join(t.TempDir(), "big.png")
+	require.NoError(t, os.WriteFile(big, make([]byte, 4<<20+1), 0644))
+	assert.ErrorContains(t, submit([]model.ReferenceItem{{LocalPath: big}}), "4MB")
+
+	assert.ErrorContains(t, submit([]model.ReferenceItem{{URL: "https://cdn.example.test/a.png"}}), "本地")
+
+	png := localPNG(t, "ref.png")
+	six := make([]model.ReferenceItem, 6)
+	for i := range six {
+		six[i] = model.ReferenceItem{LocalPath: png}
+	}
+	assert.ErrorContains(t, submit(six), "最多 5 张")
+}

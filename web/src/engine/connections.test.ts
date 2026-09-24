@@ -58,7 +58,7 @@ describe('connectCards', () => {
       references: [{ cardId: 'x', tagIndex: 9, role: 'first_frame', label: 'x' }],
     });
     for (const [src, tgt, reason] of [
-      [img, { ...img, id: 'i2' }, '图片卡片之间'],
+      [img, { ...img, id: 'i2' }, '只有 Midjourney 图片卡片'],
       [text, { ...text, id: 't2' }, '文本卡片之间'],
       [img, img, '不能连接到自己'],
       [img, text, '没有输入端口'],
@@ -116,5 +116,36 @@ describe('text model options', () => {
     expect(groups.map((g) => [g.provider, g.options.map((o) => o.id), g.ready])).toEqual([
       ['apimart', ['gpt-5'], true],
     ]);
+  });
+});
+
+describe('reference images for Midjourney', () => {
+  const mj = (patch: Partial<SpatialCard> = {}) =>
+    card({ id: 'm1', type: 'image', provider: 'midjourney', model: 'mj_imagine', prompt: 'a fox', ...patch });
+  const done = { ...img, status: 'succeeded' as const, resultUrl: '/assets/images/t/base.png' };
+
+  it('adds an image as a Midjourney reference without touching the prompt', () => {
+    expect(connectCards(done, mj())).toEqual({
+      ok: true,
+      patch: { references: [{ cardId: 'i1', tagIndex: 3, role: 'reference_image', label: '街景', url: '/assets/images/t/base.png' }] },
+    });
+  });
+
+  it('keeps other image cards closed to images', () => {
+    expect(connectCards(done, img).ok).toBe(false);
+    expect(connectCards(done, { ...img, id: 'i2', provider: 'openai', model: 'gpt-image-2' }).ok).toBe(false);
+  });
+
+  it('refuses duplicates, a sixth image and derived cards', () => {
+    const one = mj({ references: [{ cardId: 'i1', tagIndex: 3, role: 'reference_image', label: '街景' }] });
+    expect(connectCards(done, one)).toMatchObject({ ok: false, reason: '已经连接过了' });
+
+    const five = mj({
+      references: [1, 2, 3, 4, 5].map((n) => ({ cardId: `x${n}`, tagIndex: 10 + n, role: 'reference_image' as const, label: `x${n}` })),
+    });
+    expect(connectCards(done, five)).toMatchObject({ ok: false, reason: 'Midjourney 最多 5 张参考图' });
+
+    const derived = mj({ derivedFrom: { cardId: 'g', taskId: 't', actionId: 'a', label: 'U1', operation: 'action' } });
+    expect(connectCards(done, derived).ok).toBe(false);
   });
 });

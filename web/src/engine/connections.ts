@@ -21,6 +21,7 @@ export function hasInputPort(card: SpatialCard): boolean {
  * patch for the target card:
  *   text  → image/video : the text card's output becomes the target's prompt
  *   image → video       : the image becomes a reference (as "+ 引入" does)
+ *   image → Midjourney image : the image becomes a reference image (垫图)
  */
 export function connectCards(source: SpatialCard, target: SpatialCard): ConnectResult {
   if (source.id === target.id) return { ok: false, reason: '不能连接到自己' };
@@ -32,12 +33,36 @@ export function connectCards(source: SpatialCard, target: SpatialCard): ConnectR
   }
 
   if (source.type === 'image') {
-    if (target.type === 'image') return { ok: false, reason: '图片卡片之间暂不支持连线（参考图生图尚未接入）' };
+    if (target.type === 'image') {
+      if (protocolOf(target.provider ?? 'ark') !== 'midjourney') {
+        return { ok: false, reason: '只有 Midjourney 图片卡片支持连入参考图' };
+      }
+      return attachImageToMidjourney(source, target);
+    }
     if (target.type === 'text') return { ok: false, reason: '文本卡片没有输入端口' };
     return attachImageToVideo(source, target);
   }
 
   return { ok: false, reason: '视频卡片没有输出端口' };
+}
+
+/** Midjourney's reference-image limit (midjourney-proxy base64Array). */
+export const MJ_MAX_REFERENCES = 5;
+
+/** Midjourney takes reference images as data, so no @图N tag is added to its prompt. */
+function attachImageToMidjourney(image: SpatialCard, target: SpatialCard): ConnectResult {
+  if (target.derivedFrom) return { ok: false, reason: '派生卡片沿用来源卡片的设置，不能连入参考图' };
+  const refs = target.references ?? [];
+  if (refs.some((r) => r.cardId === image.id)) return { ok: false, reason: '已经连接过了' };
+  if (refs.length >= MJ_MAX_REFERENCES) return { ok: false, reason: `Midjourney 最多 ${MJ_MAX_REFERENCES} 张参考图` };
+  const ref: ReferenceItem = {
+    cardId: image.id,
+    tagIndex: image.tagIndex,
+    role: 'reference_image',
+    label: image.title.slice(0, 10),
+    url: image.resultUrl,
+  };
+  return { ok: true, patch: { references: [...refs, ref] } };
 }
 
 function attachImageToVideo(image: SpatialCard, video: SpatialCard): ConnectResult {

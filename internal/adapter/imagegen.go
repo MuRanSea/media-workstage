@@ -44,6 +44,16 @@ func parseGenericImageParams(paramsJSON string) genericImageParams {
 	return p
 }
 
+// parseReferenceAssets reads the reference images the server stored in task params
+// (local paths already resolved against the project folder).
+func parseReferenceAssets(paramsJSON string) []model.ReferenceItem {
+	var p struct {
+		ReferenceAssets []model.ReferenceItem `json:"reference_assets"`
+	}
+	_ = json.Unmarshal([]byte(paramsJSON), &p)
+	return p.ReferenceAssets
+}
+
 // ratioValue parses "16:9" into 16/9; ok is false for empty or malformed ratios.
 func ratioValue(ratio string) (float64, bool) {
 	w, h, found := strings.Cut(ratio, ":")

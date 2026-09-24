@@ -163,7 +163,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       const effectiveCard = withEffectivePrompt(targetCard, cardsRef.current);
       const payload =
         effectiveCard.type === 'image'
-          ? compileCardImagePayload(effectiveCard)
+          ? compileCardImagePayload(effectiveCard, cardsRef.current)
           : compileCardVideoPayload(effectiveCard, cardsRef.current);
 
       const backendTask = await apiCreateTask({ ...payload, project_id: projectId });

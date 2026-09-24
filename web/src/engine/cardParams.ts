@@ -27,6 +27,7 @@ export function imageModelPatch(card: SpatialCard, option: ModelOption): Partial
       imageTier: def?.defaultTier ?? '2K',
       customPixels: def?.defaultCustomPixel ?? '2048x1024',
       imageMode: 'single',
+      ...midjourneyOnlyReset(option),
     };
   }
   return {
@@ -35,9 +36,13 @@ export function imageModelPatch(card: SpatialCard, option: ModelOption): Partial
     imageMode: 'single',
     sizeMode: 'tier',
     imageResolution: card.imageResolution ?? '2K',
-    // Midjourney-only settings do not carry over to other channels.
-    ...(option.protocol !== 'midjourney' ? { mjSpeed: undefined } : {}),
+    ...midjourneyOnlyReset(option),
   };
+}
+
+/** Midjourney-only settings (speed, reference images) do not carry over to other channels. */
+function midjourneyOnlyReset(option: ModelOption): Partial<SpatialCard> {
+  return option.protocol === 'midjourney' ? {} : { mjSpeed: undefined, references: undefined };
 }
 
 /** One-line size description, e.g. "2K · 16:9", "2048x1024" or "16:9 · Relax" (Midjourney). */

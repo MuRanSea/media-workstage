@@ -2,12 +2,14 @@ import React, { useMemo } from 'react';
 import { IMAGE_MODELS, MJ_SPEED_LABELS, SEEDREAM_PIXEL_MAP, type MjSpeed, type SpatialCard } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
-import { imageModelPatch } from '../../engine/cardParams.ts';
+import { imageModelPatch, removeReferencePatch } from '../../engine/cardParams.ts';
+import { MJ_MAX_REFERENCES } from '../../engine/connections.ts';
 import { compileCardImagePayload } from '../../engine/compiler.ts';
 import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from '../cards/ProviderModelPicker.tsx';
 import { Field, Section, Segmented, Toggle, inputClass } from '../ui/index.ts';
 import { DevJson } from './DevJson.tsx';
+import { ReferenceList } from './ReferenceList.tsx';
 
 const RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9'] as const;
 const RESOLUTIONS = ['1K', '2K', '4K'] as const;
@@ -18,6 +20,8 @@ const MJ_SPEEDS: { value: MjSpeed | 'default'; label: string }[] = [
 
 interface Props {
   card: SpatialCard;
+  /** All cards, to name references and resolve their files in the JSON preview. */
+  cards: SpatialCard[];
   update: (patch: Partial<SpatialCard>) => void;
   /** Prompt supplied by a linked text card, for the JSON preview. */
   linkedPromptText?: string;
@@ -25,7 +29,7 @@ interface Props {
   derivedSourceTitle?: string;
 }
 
-export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText, derivedSourceTitle }) => {
+export const ImageInspector: React.FC<Props> = ({ card, cards, update, linkedPromptText, derivedSourceTitle }) => {
   if (card.derivedFrom) {
     // A derived card runs its operation on the source's task with the source's settings.
     return (
@@ -36,14 +40,14 @@ export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText
             服务商、模型和尺寸沿用来源卡片。
           </p>
         </Section>
-        <DevJson compile={() => compileCardImagePayload(card)} />
+        <DevJson compile={() => compileCardImagePayload(card, cards)} />
       </>
     );
   }
-  return <ImageSettings card={card} update={update} linkedPromptText={linkedPromptText} />;
+  return <ImageSettings card={card} cards={cards} update={update} linkedPromptText={linkedPromptText} />;
 };
 
-const ImageSettings: React.FC<Props> = ({ card, update, linkedPromptText }) => {
+const ImageSettings: React.FC<Props> = ({ card, cards, update, linkedPromptText }) => {
   const channels = useChannels();
   const groups = useMemo(() => buildProviderGroups(channels, 'image'), [channels]);
   const provider = card.provider ?? 'ark';
@@ -131,6 +135,17 @@ const ImageSettings: React.FC<Props> = ({ card, update, linkedPromptText }) => {
         )}
       </Section>
 
+      {isMidjourney && (
+        <Section title={`参考图 ${card.references?.length ?? 0}/${MJ_MAX_REFERENCES}`}>
+          <ReferenceList
+            refs={card.references ?? []}
+            cards={cards}
+            onRemove={(id) => update(removeReferencePatch(card, id))}
+            emptyHint="从其他图片卡片右侧的圆点拖线到这张卡片作为垫图（单张不超过 4MB）。"
+          />
+        </Section>
+      )}
+
       {isSeedream && (
         <Section title="生成方式">
           <Field
@@ -172,7 +187,7 @@ const ImageSettings: React.FC<Props> = ({ card, update, linkedPromptText }) => {
       )}
 
       <DevJson
-        compile={() => compileCardImagePayload(linkedPromptText ? { ...card, prompt: linkedPromptText } : card)}
+        compile={() => compileCardImagePayload(linkedPromptText ? { ...card, prompt: linkedPromptText } : card, cards)}
       />
     </>
   );

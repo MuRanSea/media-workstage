@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ type midjourneyImagineRequest struct {
 	BotType       string                   `json:"botType,omitempty"`
 	Prompt        string                   `json:"prompt"`
 	AccountFilter *midjourneyAccountFilter `json:"accountFilter,omitempty"`
+	Base64Array   []string                 `json:"base64Array,omitempty"` // reference images as data URIs
 }
 
 // midjourneyAccountFilter picks the proxy account a job runs on; modes selects by speed.
@@ -110,10 +112,15 @@ func (a *MidjourneyAdapter) SubmitTask(ctx context.Context, task *model.MediaTas
 
 func (a *MidjourneyAdapter) submitImagine(ctx context.Context, task *model.MediaTask) (string, error) {
 	params := parseGenericImageParams(task.ParamsJSON)
+	images, err := midjourneyBase64Array(parseReferenceAssets(task.ParamsJSON))
+	if err != nil {
+		return "", err
+	}
 	resp, err := a.postSubmit(ctx, "/mj/submit/imagine", midjourneyImagineRequest{
 		BotType:       midjourneyBotType(task.Model),
 		Prompt:        midjourneyPrompt(task.Prompt, params),
 		AccountFilter: midjourneyAccountFilterFor(params, task.Prompt),
+		Base64Array:   images,
 	})
 	if err != nil {
 		return "", err
@@ -308,6 +315,47 @@ func midjourneyBotType(modelID string) string {
 		return bot
 	}
 	return ""
+}
+
+// Reference image limits of midjourney-proxy: at most 5 images, 4MB each.
+const (
+	midjourneyMaxReferences = 5
+	midjourneyMaxImageBytes = 4 << 20
+)
+
+// midjourneyBase64Array encodes reference images as the data URIs the proxy takes.
+// Local files are preferred: a result's remote URL (Discord's CDN) expires.
+func midjourneyBase64Array(refs []model.ReferenceItem) ([]string, error) {
+	if len(refs) > midjourneyMaxReferences {
+		return nil, fmt.Errorf("Midjourney 最多 %d 张参考图，当前 %d 张", midjourneyMaxReferences, len(refs))
+	}
+	var images []string
+	for i, ref := range refs {
+		name := ref.Label
+		if name == "" {
+			name = fmt.Sprintf("第 %d 张", i+1)
+		}
+		switch {
+		case ref.LocalPath != "":
+			info, err := os.Stat(ref.LocalPath)
+			if err != nil {
+				return nil, fmt.Errorf("参考图「%s」读取失败：%w", name, err)
+			}
+			if info.Size() > midjourneyMaxImageBytes {
+				return nil, fmt.Errorf("参考图「%s」有 %.1fMB，Midjourney 单张最大 4MB，请换一张小一点的图", name, float64(info.Size())/(1<<20))
+			}
+			data, err := EncodeLocalAssetToBase64(ref.LocalPath)
+			if err != nil {
+				return nil, err
+			}
+			images = append(images, data)
+		case strings.HasPrefix(ref.URL, "data:"):
+			images = append(images, ref.URL)
+		default:
+			return nil, fmt.Errorf("参考图「%s」没有本地文件，Midjourney 只接受上传的图片", name)
+		}
+	}
+	return images, nil
 }
 
 // midjourneySpeedFlag matches a prompt's own speed parameter ("--relax", "—fast").

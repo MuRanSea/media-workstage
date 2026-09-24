@@ -196,3 +196,29 @@ describe('Follow-up action payload', () => {
     });
   });
 });
+
+describe('Midjourney reference images', () => {
+  it('sends connected images as reference assets', () => {
+    const payload = compileCardImagePayload({
+      id: 'm1',
+      type: 'image',
+      title: '图片 9',
+      tagIndex: 9,
+      x: 0,
+      y: 0,
+      width: 340,
+      prompt: 'a fox',
+      provider: 'midjourney',
+      model: 'mj_imagine',
+      status: 'idle',
+      progress: 0,
+      imageRatioPreset: '1:1',
+      references: [{ cardId: 'i1', tagIndex: 3, role: 'reference_image', label: '街景', url: '/assets/images/t/base.png' }],
+    });
+    expect(payload.prompt).toBe('a fox');
+    expect(payload.params).toEqual({ aspect_ratio: '1:1' });
+    expect(payload.reference_assets).toEqual([
+      { card_id: 'i1', tag_index: 1, role: 'reference_image', label: '街景', url: undefined, local_path: 'assets/images/t/base.png', remote_url: undefined },
+    ]);
+  });
+});

@@ -89,6 +89,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         {single?.type === 'image' && (
           <ImageInspector
             card={single}
+            cards={cards}
             update={update}
             linkedPromptText={linkedPromptFor(single)?.text}
             derivedSourceTitle={cards.find((c) => c.id === single.derivedFrom?.cardId)?.title}

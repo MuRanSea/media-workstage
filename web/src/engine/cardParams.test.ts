@@ -76,6 +76,19 @@ describe('image params', () => {
     expect('mjSpeed' in imageModelPatch(card, opt('openai', 'gpt-image-2'))).toBe(true);
     expect('mjSpeed' in imageModelPatch(card, opt('midjourney', 'NIJI_JOURNEY'))).toBe(false);
   });
+
+  it('drops reference images when switching away from Midjourney', () => {
+    const card = base({
+      type: 'image',
+      provider: 'midjourney',
+      model: 'mj_imagine',
+      references: [{ cardId: 'i1', tagIndex: 3, role: 'reference_image', label: 'a' }],
+    });
+    expect(imageModelPatch(card, opt('openai', 'gpt-image-2')).references).toBeUndefined();
+    expect('references' in imageModelPatch(card, opt('openai', 'gpt-image-2'))).toBe(true);
+    expect('references' in imageModelPatch(card, opt('ark', 'doubao-seedream-5-0-lite-260128'))).toBe(true);
+    expect('references' in imageModelPatch(card, opt('midjourney', 'NIJI_JOURNEY'))).toBe(false);
+  });
 });
 
 describe('video params', () => {

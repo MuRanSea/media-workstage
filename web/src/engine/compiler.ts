@@ -1,6 +1,7 @@
-import { SEEDREAM_PIXEL_MAP, type MjSpeed, type SpatialCard } from '../types/canvas.ts';
+import { SEEDREAM_PIXEL_MAP, type MjSpeed, type ReferenceItem, type SpatialCard } from '../types/canvas.ts';
 import type { CreateTaskPayload, ProviderId } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
+import { resolveReferenceAsset } from './videoCompiler.ts';
 
 export interface ImageCompilationInput {
   /** Provider running the model; defaults to 'ark'. Ark-protocol providers get Seedream rules. */
@@ -17,6 +18,9 @@ export interface ImageCompilationInput {
   background?: 'opaque' | 'transparent';
   imageResolution?: '1K' | '2K' | '4K';
   mjSpeed?: MjSpeed;
+  /** Midjourney reference images, resolved against `allCards`. */
+  references?: ReferenceItem[];
+  allCards?: SpatialCard[];
 }
 
 /**
@@ -90,24 +94,42 @@ export function compileImageTaskPayload(input: ImageCompilationInput): CreateTas
  */
 function compileChannelImagePayload(provider: ProviderId, input: ImageCompilationInput): CreateTaskPayload {
   const aspect_ratio = input.imageRatioPreset ?? '16:9';
-  return {
+  const payload: CreateTaskPayload = {
     provider,
     model: input.model,
     task_type: 'image_generation',
     task_mode: 'single',
     prompt: input.prompt,
-    // Midjourney has no resolution; its speed picks the proxy account.
-    params:
-      protocolOf(provider) === 'midjourney'
-        ? { aspect_ratio, ...(input.mjSpeed ? { speed: input.mjSpeed } : {}) }
-        : { aspect_ratio, resolution: input.imageResolution ?? '2K' },
+    params: { aspect_ratio, resolution: input.imageResolution ?? '2K' },
   };
+  if (protocolOf(provider) !== 'midjourney') return payload;
+
+  // Midjourney has no resolution; its speed picks the proxy account.
+  payload.params = { aspect_ratio, ...(input.mjSpeed ? { speed: input.mjSpeed } : {}) };
+  if (input.references?.length) payload.reference_assets = compileReferenceImages(input.references, input.allCards);
+  return payload;
+}
+
+/** Reference images in connection order; the backend reads the files and sends them inline. */
+function compileReferenceImages(references: ReferenceItem[], allCards: SpatialCard[] = []): CreateTaskPayload['reference_assets'] {
+  return references.map((ref, idx) => {
+    const resolved = resolveReferenceAsset(ref, allCards);
+    return {
+      card_id: ref.cardId,
+      tag_index: idx + 1,
+      role: ref.role,
+      label: ref.label,
+      url: resolved.url,
+      local_path: resolved.localPath,
+      remote_url: resolved.remoteUrl,
+    };
+  });
 }
 
 /**
  * Convenience helper to compile directly from a SpatialCard.
  */
-export function compileCardImagePayload(card: SpatialCard): CreateTaskPayload {
+export function compileCardImagePayload(card: SpatialCard, allCards: SpatialCard[] = []): CreateTaskPayload {
   if (card.derivedFrom?.operation === 'action') return compileActionPayload(card);
   return compileImageTaskPayload({
     provider: card.provider,
@@ -123,6 +145,8 @@ export function compileCardImagePayload(card: SpatialCard): CreateTaskPayload {
     background: card.background,
     imageResolution: card.imageResolution,
     mjSpeed: card.mjSpeed,
+    references: card.references,
+    allCards,
   });
 }
 

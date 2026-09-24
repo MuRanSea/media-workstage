@@ -191,3 +191,43 @@ func TestMidjourneyAction_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/img/up-1.png", string(data), "the upscale is saved as its own image")
 }
+
+// TestMidjourneyReferenceImages_EndToEnd sends a reference image through the task API;
+// the proxy receives it inline in base64Array.
+func TestMidjourneyReferenceImages_EndToEnd(t *testing.T) {
+	var mu sync.Mutex
+	var images []any
+	var proxyURL string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mj/submit/imagine":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			images, _ = body["base64Array"].([]any)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "result": "ref-1"})
+		case "/mj/task/ref-1/fetch":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "ref-1", "status": "SUCCESS", "imageUrl": proxyURL + "/img/ref-1.png"})
+		case "/img/ref-1.png":
+			_, _ = w.Write([]byte("grid"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer proxy.Close()
+	proxyURL = proxy.URL
+	r, _ := newMidjourneyE2E(t, proxy.URL)
+
+	ref := filepath.Join(t.TempDir(), "fox.png")
+	require.NoError(t, os.WriteFile(ref, []byte("\x89PNG-fox"), 0644))
+	body := imagineBody("mj_imagine", map[string]any{"aspect_ratio": "1:1"})
+	body["reference_assets"] = []map[string]any{{"card_id": "c1", "tag_index": 1, "role": "reference_image", "label": "狐狸", "local_path": ref}}
+	task := createAndWait(t, r, body)
+
+	require.Equal(t, "succeeded", task.Status, task.Error)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, images, 1)
+	assert.Equal(t, "data:image/png;base64,iVBORy1mb3g=", images[0])
+}

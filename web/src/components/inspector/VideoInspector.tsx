@@ -1,5 +1,4 @@
 import React, { useMemo } from 'react';
-import { X } from 'lucide-react';
 import type { SpatialCard, VideoTaskMode } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
@@ -9,12 +8,7 @@ import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from '../cards/ProviderModelPicker.tsx';
 import { Field, Section, Segmented, Toggle, inputClass } from '../ui/index.ts';
 import { DevJson } from './DevJson.tsx';
-
-const ROLE_LABELS: Record<string, string> = {
-  first_frame: '首帧',
-  last_frame: '尾帧',
-  reference_image: '参考',
-};
+import { ReferenceList } from './ReferenceList.tsx';
 
 interface Props {
   card: SpatialCard;
@@ -85,27 +79,12 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
 
       {mode !== 'text_to_video' && (
         <Section title={`参考图 ${refs.length}/${maxRefs}`}>
-          {refs.length === 0 ? (
-            <p className="text-[11px] leading-relaxed text-slate-500">
-              从图片卡片右侧的圆点拖线到这张卡片，或在卡片上点「添加」。
-            </p>
-          ) : (
-            <ul className="space-y-1">
-              {refs.map((ref) => {
-                const src = cards.find((c) => c.id === ref.cardId);
-                return (
-                  <li key={ref.cardId} className="flex items-center gap-2 rounded-lg bg-canvas-bg border border-canvas-border px-2 py-1.5 text-xs">
-                    <span className="font-mono text-pink-300">@图{ref.tagIndex}</span>
-                    <span className="flex-1 min-w-0 truncate text-slate-300">{src?.title ?? ref.label}</span>
-                    <span className="text-[11px] text-slate-500">{ROLE_LABELS[ref.role] ?? ref.role}</span>
-                    <button type="button" title="移除" onClick={() => update(removeReferencePatch(card, ref.cardId))} className="p-0.5 text-slate-500 hover:text-rose-400">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          <ReferenceList
+            refs={refs}
+            cards={cards}
+            onRemove={(id) => update(removeReferencePatch(card, id))}
+            emptyHint="从图片卡片右侧的圆点拖线到这张卡片，或在卡片上点「添加」。"
+          />
         </Section>
       )}
 
