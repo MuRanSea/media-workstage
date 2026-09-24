@@ -17,6 +17,8 @@ import { compileCardImagePayload } from '../engine/compiler.ts';
 import { compileCardVideoPayload } from '../engine/videoCompiler.ts';
 import { withEffectivePrompt } from '../engine/connections.ts';
 import { getTextPreset } from '../engine/textPresets.ts';
+import { MISSING_PROVIDER_HINT, isProviderMissing } from '../engine/channelModels.ts';
+import { useChannels } from '../services/channels.ts';
 import { applyTaskToCard } from '../engine/taskSync.ts';
 import { cardsAwaitingTask, normalizeCards, normalizeViewport } from '../engine/projectDoc.ts';
 import { setActiveProjectId } from '../engine/assetPaths.ts';
@@ -64,6 +66,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   const [initialViewport] = useState(() => normalizeViewport(doc.viewport));
   const [name, setName] = useState(doc.name);
   const toast = useToast();
+  const providers = useChannels();
   const { create: createProject } = useProjectActions();
   const { saveState, lastError, onViewportChange } = useAutosave({
     projectId,
@@ -135,6 +138,11 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   const handleTriggerGenerate = async (cardId: string) => {
     const targetCard = cards.find((c) => c.id === cardId);
     if (!targetCard) return;
+    // Also reached from the context menu, which does not know the provider is gone.
+    if (isProviderMissing(providers, targetCard.provider)) {
+      toast(MISSING_PROVIDER_HINT, { tone: 'error' });
+      return;
+    }
     if (targetCard.type === 'text') {
       await handleGenerateText(targetCard);
       return;

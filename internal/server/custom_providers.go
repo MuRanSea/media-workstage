@@ -163,6 +163,8 @@ func (s *Server) handleDeleteProvider(c *gin.Context) {
 		return
 	}
 
+	// Drop the adapter first so no poll starts on it, then fail what was still pending.
 	s.registry.Delete(spec.ID)
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	failed := s.poller.FailProviderTasks(spec.ID, "ProviderDeleted", "服务商已删除")
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "failed_tasks": failed})
 }

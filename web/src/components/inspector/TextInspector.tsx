@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import type { SpatialCard } from '../../types/canvas.ts';
-import { buildProviderGroups, findModelOption } from '../../engine/channelModels.ts';
+import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { TEXT_PRESETS, getTextPreset } from '../../engine/textPresets.ts';
 import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from '../cards/ProviderModelPicker.tsx';
@@ -35,6 +35,7 @@ export const TextInspector: React.FC<{ card: SpatialCard; update: (patch: Partia
           <ProviderModelPicker
             groups={groups}
             provider={provider}
+          missing={isProviderMissing(channels, card.provider)}
             model={card.model}
             modelLabel={findModelOption(groups, provider, card.model)?.label ?? (card.model || '选择模型')}
             accent="emerald"

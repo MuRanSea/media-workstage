@@ -269,3 +269,39 @@ func TestCustomProviders_SameModelOnTwoRelays_EndToEnd(t *testing.T) {
 		assert.Equal(t, hit{"/v1/images/generations", tc.key, "gpt-image-2"}, tc.hits[1])
 	}
 }
+
+// Deleting a provider fails its pending tasks at once with a clear reason, and leaves
+// finished tasks (and other providers' tasks) alone.
+func TestDeleteProvider_FailsPendingTasks(t *testing.T) {
+	srv, r := newProviderTestServer(t)
+	relay := createProvider(t, r, "中转 A", "http://127.0.0.1:9/v1")
+	now := time.Now().UTC()
+	for _, task := range []model.MediaTask{
+		{ID: "queued", Provider: relay.ID, Status: model.TaskStatusQueued},
+		{ID: "running", Provider: relay.ID, Status: model.TaskStatusRunning},
+		{ID: "done", Provider: relay.ID, Status: model.TaskStatusSucceeded},
+		{ID: "other", Provider: "ark", Status: model.TaskStatusQueued},
+	} {
+		task.Model, task.TaskType, task.Prompt, task.CreatedAt, task.UpdatedAt = "gpt-image-2", "image_generation", "p", now, now
+		require.NoError(t, srv.db.Create(&task).Error)
+	}
+
+	w := deleteProvider(r, relay.ID)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.JSONEq(t, `{"status":"ok","failed_tasks":2}`, w.Body.String())
+
+	status := func(id string) model.MediaTask {
+		var task model.MediaTask
+		require.NoError(t, srv.db.First(&task, "id = ?", id).Error)
+		return task
+	}
+	for _, id := range []string{"queued", "running"} {
+		task := status(id)
+		assert.Equal(t, model.TaskStatusFailed, task.Status, id)
+		assert.Equal(t, "ProviderDeleted", task.ErrorCode, id)
+		assert.Equal(t, "服务商已删除", task.ErrorMessage, id)
+		assert.NotNil(t, task.CompletedAt, id)
+	}
+	assert.Equal(t, model.TaskStatusSucceeded, status("done").Status)
+	assert.Equal(t, model.TaskStatusQueued, status("other").Status)
+}

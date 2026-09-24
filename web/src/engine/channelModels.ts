@@ -95,6 +95,18 @@ export function buildProviderGroups(providers: ProviderConfigItem[], kind: Media
   return groups;
 }
 
+/** Shown wherever a card's provider no longer exists. */
+export const MISSING_PROVIDER_HINT = '服务商已不存在，请重新选择';
+
+/**
+ * Whether a provider a card references is gone: config has loaded and no longer lists it
+ * (it was deleted, or the project was opened on a machine without it). Cards keep the ID
+ * and model until the user picks another provider; nothing is migrated automatically.
+ */
+export function isProviderMissing(providers: ProviderConfigItem[], provider: ProviderId | undefined): boolean {
+  return provider !== undefined && providers.length > 0 && !providers.some((p) => p.id === provider);
+}
+
 /** Finds the option for a card's provider + model, if that provider still offers it. */
 export function findModelOption(
   groups: ProviderGroup[],

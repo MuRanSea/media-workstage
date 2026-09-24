@@ -1,7 +1,13 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { AtSign, Film, Maximize2, Plus, Sparkles, Volume2 } from 'lucide-react';
 import type { SpatialCard } from '../../types/canvas.ts';
-import { buildProviderGroups, findModelOption, isModelReady } from '../../engine/channelModels.ts';
+import {
+  MISSING_PROVIDER_HINT,
+  buildProviderGroups,
+  findModelOption,
+  isModelReady,
+  isProviderMissing,
+} from '../../engine/channelModels.ts';
 import { videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
 import { connectCards } from '../../engine/connections.ts';
 import { inferVideoProvider } from '../../engine/videoCompiler.ts';
@@ -54,6 +60,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   const provider = card.provider ?? inferVideoProvider(card.model);
   const def = videoModelDef(card);
   const modelLabel = findModelOption(providerGroups, provider, card.model)?.label ?? def.name;
+  const missing = isProviderMissing(channels, card.provider);
   const canGenerate = isModelReady('video', provider, card.model);
   const isGenerating = card.status === 'running' || card.status === 'queued';
   const videoUrl = assetUrl(card.resultUrl);
@@ -243,7 +250,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
         onClick={() => onTriggerGenerate(card.id)}
         icon={!isGenerating && canGenerate ? <Sparkles className="w-3.5 h-3.5" /> : undefined}
       >
-        {isGenerating ? '生成中…' : !canGenerate ? '这个模型还不支持生成视频' : card.resultUrl ? '重新生成' : '生成视频'}
+        {isGenerating ? '生成中…' : missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个模型还不支持生成视频' : card.resultUrl ? '重新生成' : '生成视频'}
       </Button>
     </CardShell>
   );

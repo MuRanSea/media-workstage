@@ -471,6 +471,21 @@ func (p *TaskPoller) failTask(ctx context.Context, task *model.MediaTask, errCod
 	p.broadcaster.Broadcast("task.failed", task)
 }
 
+// FailProviderTasks fails every queued or running task of a provider that no longer
+// exists (e.g. a deleted custom provider), so cards stop waiting on work no adapter
+// can finish. It returns how many tasks it failed.
+func (p *TaskPoller) FailProviderTasks(provider, errCode, errMsg string) int {
+	var tasks []model.MediaTask
+	if err := p.db.Where("provider = ? AND status IN ?", provider,
+		[]string{model.TaskStatusQueued, model.TaskStatusRunning}).Find(&tasks).Error; err != nil {
+		return 0
+	}
+	for i := range tasks {
+		p.failTask(context.Background(), &tasks[i], errCode, errMsg)
+	}
+	return len(tasks)
+}
+
 func (p *TaskPoller) handleTimeout(ctx context.Context, task *model.MediaTask, isLayerDecomp bool) {
 	if isLayerDecomp {
 		p.limiter.FullRefundLayerDecomposition()

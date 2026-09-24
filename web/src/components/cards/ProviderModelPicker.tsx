@@ -19,6 +19,8 @@ interface ProviderModelPickerProps {
   model: string;
   /** Shown when the card's model is not among the channel's bound models. */
   modelLabel: string;
+  /** The card's provider no longer exists; it is shown flagged until another is picked. */
+  missing?: boolean;
   accent: Accent;
   onSelect: (option: ModelOption) => void;
 }
@@ -34,6 +36,7 @@ export const ProviderModelPicker: React.FC<ProviderModelPickerProps> = ({
   modelLabel,
   accent,
   onSelect,
+  missing,
 }) => {
   const [open, setOpen] = useState<'provider' | 'model' | null>(null);
   const colors = ACCENTS[accent];
@@ -61,7 +64,9 @@ export const ProviderModelPicker: React.FC<ProviderModelPickerProps> = ({
         <button type="button" onClick={() => setOpen(open === 'provider' ? null : 'provider')} className={fieldClass('provider')}>
           <span className="text-[11px] text-slate-500">服务商</span>
           <span className={`w-full flex items-center justify-between gap-1 text-xs font-semibold ${colors.text}`}>
-            <span className="truncate">{currentGroup?.name ?? providerName(provider)}</span>
+            <span className={`truncate ${missing ? 'text-rose-300' : ''}`}>
+              {missing ? `${provider}（已不存在）` : currentGroup?.name ?? providerName(provider)}
+            </span>
             <ChevronDown className="w-3 h-3 text-slate-400 flex-shrink-0" />
           </span>
         </button>

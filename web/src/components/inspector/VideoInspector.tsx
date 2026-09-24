@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { X } from 'lucide-react';
 import type { SpatialCard, VideoTaskMode } from '../../types/canvas.ts';
-import { buildProviderGroups, findModelOption } from '../../engine/channelModels.ts';
+import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
 import { VIDEO_MODE_LABELS, removeReferencePatch, videoModePatch, videoModelDef, videoModelPatch } from '../../engine/cardParams.ts';
 import { compileCardVideoPayload, inferVideoProvider } from '../../engine/videoCompiler.ts';
@@ -39,6 +39,7 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
         <ProviderModelPicker
           groups={groups}
           provider={provider}
+          missing={isProviderMissing(channels, card.provider)}
           model={card.model}
           modelLabel={findModelOption(groups, provider, card.model)?.label ?? def.name}
           accent="indigo"

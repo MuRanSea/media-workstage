@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, Copy, FileText, Link2, Sparkles } from 'lucide-react';
-import { buildProviderGroups, findModelOption } from '../../engine/channelModels.ts';
+import { MISSING_PROVIDER_HINT, buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { getTextPreset } from '../../engine/textPresets.ts';
 import { useChannels } from '../../services/channels.ts';
 import { Button } from '../ui/Button.tsx';
@@ -41,6 +41,7 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
   }, [card.id, card.model, providerGroups, onUpdateCard]);
 
   const provider = card.provider ?? providerGroups[0]?.provider ?? 'openai';
+  const missing = isProviderMissing(channels, card.provider);
   const modelLabel = findModelOption(providerGroups, provider, card.model)?.label ?? (card.model || '未选择模型');
 
   const copyOutput = async () => {
@@ -121,11 +122,11 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
         variant="primary"
         accent="emerald"
         block
-        disabled={isGenerating || !card.model || !card.prompt.trim()}
+        disabled={isGenerating || missing || !card.model || !card.prompt.trim()}
         onClick={() => onTriggerGenerate(card.id)}
         icon={isGenerating ? undefined : <Sparkles className="w-3.5 h-3.5" />}
       >
-        {isGenerating ? '生成中…' : preset.id === 'free' ? '生成回答' : `生成${preset.label}`}
+        {isGenerating ? '生成中…' : missing ? MISSING_PROVIDER_HINT : preset.id === 'free' ? '生成回答' : `生成${preset.label}`}
       </Button>
     </CardShell>
   );

@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { IMAGE_MODELS, SEEDREAM_PIXEL_MAP, type SpatialCard } from '../../types/canvas.ts';
-import { buildProviderGroups, findModelOption } from '../../engine/channelModels.ts';
+import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
 import { imageModelPatch } from '../../engine/cardParams.ts';
 import { compileCardImagePayload } from '../../engine/compiler.ts';
@@ -36,6 +36,7 @@ export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText
         <ProviderModelPicker
           groups={groups}
           provider={provider}
+          missing={isProviderMissing(channels, card.provider)}
           model={card.model}
           modelLabel={(isSeedream ? IMAGE_MODELS.find((m) => m.id === card.model)?.name : undefined) ?? findModelOption(groups, provider, card.model)?.label ?? card.model}
           accent="pink"

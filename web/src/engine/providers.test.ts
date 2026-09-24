@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProviderConfigItem } from '../services/api.ts';
-import { buildProviderGroups, isModelReady } from './channelModels.ts';
+import { buildProviderGroups, isModelReady, isProviderMissing } from './channelModels.ts';
 import { imageModelPatch, imageSizeSummary } from './cardParams.ts';
 import { compileImageTaskPayload } from './compiler.ts';
 import { defaultProviderName, isNameTaken, protocolOf, providerName, rememberProviders } from './providers.ts';
@@ -97,5 +97,23 @@ describe('provider names', () => {
   it('suggests the first free default name', () => {
     expect(defaultProviderName('OpenAI 兼容', [])).toBe('OpenAI 兼容');
     expect(defaultProviderName('OpenAI 兼容', providers)).toBe('OpenAI 兼容 3');
+  });
+});
+
+describe('isProviderMissing', () => {
+  it('flags a provider the loaded config no longer lists', () => {
+    expect(isProviderMissing([relay], 'custom-gone')).toBe(true);
+    expect(isProviderMissing([relay], relay.id)).toBe(false);
+  });
+
+  it('waits for config before flagging anything, and ignores cards without a provider', () => {
+    expect(isProviderMissing([], 'custom-gone')).toBe(false);
+    expect(isProviderMissing([relay], undefined)).toBe(false);
+  });
+
+  it('leaves a missing provider unrunnable until another is picked', () => {
+    rememberProviders([relay]);
+    expect(isModelReady('image', 'custom-gone', 'gpt-image-2')).toBe(false);
+    expect(providerName('custom-gone')).toBe('custom-gone');
   });
 });

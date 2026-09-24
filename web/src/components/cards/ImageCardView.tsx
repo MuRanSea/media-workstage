@@ -1,7 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { Image as ImageIcon, Layers, LayoutGrid, Maximize2, Sparkles } from 'lucide-react';
 import { IMAGE_MODELS } from '../../types/canvas.ts';
-import { buildProviderGroups, findModelOption, isModelReady } from '../../engine/channelModels.ts';
+import {
+  MISSING_PROVIDER_HINT,
+  buildProviderGroups,
+  findModelOption,
+  isModelReady,
+  isProviderMissing,
+} from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
 import { imageSizeSummary } from '../../engine/cardParams.ts';
 import { useChannels } from '../../services/channels.ts';
@@ -51,6 +57,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
   const seedreamDef = protocolOf(provider) === 'ark' ? IMAGE_MODELS.find((m) => m.id === card.model) : undefined;
   const modelLabel =
     seedreamDef?.name ?? findModelOption(providerGroups, provider, card.model)?.label ?? card.model;
+  const missing = isProviderMissing(channels, card.provider);
   const canGenerate = isModelReady('image', provider, card.model);
   const isGenerating = card.status === 'running' || card.status === 'queued';
 
@@ -164,7 +171,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         onClick={() => onTriggerGenerate(card.id)}
         icon={!isGenerating && canGenerate ? <Sparkles className="w-3.5 h-3.5" /> : undefined}
       >
-        {isGenerating ? '生成中…' : !canGenerate ? '这个服务商还不支持生图' : card.resultUrl ? '重新生成' : '生成图片'}
+        {isGenerating ? '生成中…' : missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个服务商还不支持生图' : card.resultUrl ? '重新生成' : '生成图片'}
       </Button>
     </CardShell>
   );
