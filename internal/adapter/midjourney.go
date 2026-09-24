@@ -45,7 +45,7 @@ type midjourneyFetchResponse struct {
 	Progress    string `json:"progress"` // "45%"
 	ImageURL    string `json:"imageUrl"`
 	FailReason  string `json:"failReason"`
-	Description string `json:"description"` // set on relay error envelopes, which carry no status
+	Description string `json:"description"` // task description, or the error text of a relay envelope
 }
 
 // Submit codes that carry a task ID: 1 accepted, 22 queued.
@@ -104,6 +104,15 @@ func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 		return nil, err
 	}
 
+	if resp.ID == "" {
+		// midjourney-proxy answers an unknown ID with an empty body; relays with an error envelope.
+		msg := "Midjourney 服务找不到该任务"
+		if resp.Description != "" {
+			msg = resp.Description
+		}
+		return &PollResult{Status: model.TaskStatusFailed, ErrorCode: "TaskNotFound", ErrorMessage: msg}, nil
+	}
+
 	switch resp.Status {
 	case "SUCCESS":
 		if resp.ImageURL == "" {
@@ -127,15 +136,10 @@ func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 		}
 		return &PollResult{Status: model.TaskStatusFailed, ErrorCode: "ProviderFailed", ErrorMessage: msg}, nil
 
-	case "":
-		// midjourney-proxy answers an unknown ID with an empty body; relays with an error envelope.
-		msg := "Midjourney 服务找不到该任务"
-		if resp.Description != "" {
-			msg = resp.Description
-		}
-		return &PollResult{Status: model.TaskStatusFailed, ErrorCode: "TaskNotFound", ErrorMessage: msg}, nil
-
-	default: // NOT_START | SUBMITTED | MODAL | IN_PROGRESS
+	default:
+		// Only SUCCESS / FAILURE / CANCEL end a task. NOT_START, SUBMITTED, MODAL, IN_PROGRESS,
+		// and anything unlisted keep polling until the poll timeout; some gateways report an
+		// empty status right after submit.
 		return &PollResult{Status: model.TaskStatusRunning, Progress: max(parseMidjourneyProgress(resp.Progress), 10)}, nil
 	}
 }

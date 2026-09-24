@@ -21,3 +21,7 @@ Midjourney 服务商配好 Key 和地址后，图片卡的服务商选择器里�
 验证：新增适配器单测 9 个、服务商构建断言、一个经 HTTP API → 轮询器 → 适配器 → 假 MJ 代理 → 落盘的端到端测试，以及前端就绪性单测；Go 全部与前端 81 个单测通过，`tsc --noEmit` 通过。未对真实 Midjourney 中转做走查。
 
 后续可做：MJ 卡片上的分辨率选项对 MJ 无效，可按协议隐藏；U/V 按钮、垫图、Blend 等动作未接入。
+
+## Comments
+
+2026-09-24 首次真实出图：任务提交成功、网关约 6 秒出图（`SUCCESS`），但卡片报失败 `TaskNotFound`，错误信息为"提交成功"。原因是网关在刚提交时返回的任务对象 `status` 为空字符串（novicezk 文档只列 `NOT_START` / `SUBMITTED` / `IN_PROGRESS` / `FAILURE` / `SUCCESS`，网关略有偏差），而适配器把"空状态"当成任务不存在直接判失败——这条规则是自拟的，文档里没有。修正：只有 `SUCCESS` / `FAILURE` / `CANCEL` 结束任务，其余（含空与未知值）继续轮询、靠 15 分钟超时兜底；仅当响应里没有任务 `id`（空 body 或错误信封）才判 `TaskNotFound`。结果图在 Discord CDN 的临时链接上（带 `ex=` 过期参数，约 24 小时），轮询成功后立即下载即可。

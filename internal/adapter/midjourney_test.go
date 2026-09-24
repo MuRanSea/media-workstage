@@ -187,6 +187,55 @@ func TestMidjourneyAdapter_UnknownTaskFailsInsteadOfRetrying(t *testing.T) {
 	assert.Equal(t, "TaskNotFound", res.ErrorCode)
 }
 
+func TestMidjourneyAdapter_JustSubmittedTaskWithEmptyStatusKeepsPolling(t *testing.T) {
+	// A real gateway returned the task with an empty status right after submit.
+	// Only SUCCESS / FAILURE (and CANCEL) end a task; anything else keeps polling.
+	status := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]any{"id": "1790217491102846", "action": "IMAGINE", "status": status,
+			"description": "提交成功", "progress": "", "imageUrl": "", "failReason": ""}
+		if status == "SUCCESS" {
+			resp["progress"] = "100%"
+			resp["imageUrl"] = "https://cdn.example.test/grid.webp?ex=1"
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	task := imageTask("midjourney", "mj_imagine", `{}`)
+	task.ProviderTaskID = "1790217491102846"
+	for _, s := range []string{"", "NOT_START", "SUBMITTED", "MODAL", "SOMETHING_NEW"} {
+		status = s
+		res, err := a.PollTask(context.Background(), task)
+		require.NoError(t, err)
+		assert.Equal(t, model.TaskStatusRunning, res.Status, "status %q", s)
+		assert.Equal(t, 10, res.Progress, "status %q", s)
+	}
+
+	status = "SUCCESS"
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSucceeded, res.Status)
+	assert.Equal(t, "images/task-1/base.webp", filepath.ToSlash(res.Assets[0].LocalPath))
+}
+
+func TestMidjourneyAdapter_EnvelopeWithoutTaskIsNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"code":4,"description":"任务不存在","result":null}`)
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	task := imageTask("midjourney", "MID_JOURNEY", `{}`)
+	task.ProviderTaskID = "gone"
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailed, res.Status)
+	assert.Equal(t, "TaskNotFound", res.ErrorCode)
+	assert.Equal(t, "任务不存在", res.ErrorMessage)
+}
+
 func TestMidjourneyAdapter_RequiresBaseURL(t *testing.T) {
 	// There is no official host: a key saved without an address cannot run.
 	_, err := NewMidjourneyAdapter(ChannelConfig{APIKey: "k"}).SubmitTask(context.Background(), imageTask("midjourney", "MID_JOURNEY", `{}`))
