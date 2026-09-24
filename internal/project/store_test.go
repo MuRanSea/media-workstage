@@ -68,7 +68,7 @@ func TestStore_CreateDedupesAndSanitizesFolderNames(t *testing.T) {
 func TestStore_SaveBumpsRevisionAndDetectsConflict(t *testing.T) {
 	s := newTestStore(t)
 	doc, _ := s.Create("p")
-	cards := json.RawMessage(`[{"id":"c1","type":"image"},{"id":"c2","type":"video"}]`)
+	cards := json.RawMessage(`[{"id":"c0","type":"image","resultUrl":"https://remote/x.png"},{"id":"c1","type":"image","resultUrl":"/assets/images/t/base.png"},{"id":"c2","type":"video"}]`)
 
 	saved, err := s.Save(doc.ID, 1, Viewport{Zoom: 1.2, PanX: 5, PanY: 6}, cards)
 	if err != nil {
@@ -88,8 +88,11 @@ func TestStore_SaveBumpsRevisionAndDetectsConflict(t *testing.T) {
 	}
 
 	list, _ := s.List()
-	if list[0].CardCounts["image"] != 1 || list[0].CardCounts["video"] != 1 {
+	if list[0].CardCounts["image"] != 2 || list[0].CardCounts["video"] != 1 {
 		t.Fatalf("unexpected card counts: %+v", list[0].CardCounts)
+	}
+	if list[0].Cover != "/assets/images/t/base.png" {
+		t.Fatalf("expected the first local image result as cover, got %q", list[0].Cover)
 	}
 
 	if _, err := s.Save(doc.ID, 2, Viewport{}, json.RawMessage(`{}`)); err == nil {

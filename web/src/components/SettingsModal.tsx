@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Settings,
   X,
   Key,
   Globe,
@@ -28,6 +27,7 @@ import {
 } from '../services/api.ts';
 import { refreshChannels, useChannels } from '../services/channels.ts';
 import { ModelBindingPanel } from './ModelBindingPanel.tsx';
+import { Button, IconButton, inputClass, useDialogs } from './ui/index.ts';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -184,6 +184,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [saveStatus, setSaveStatus] = useState<{ saving: boolean; success?: boolean; error?: string }>({
     saving: false,
   });
+  const { confirm } = useDialogs();
 
   const patchForm = (id: ChannelId, patch: Partial<ChannelForm>) => {
     setForms((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -253,7 +254,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   // Wipe a channel that was filled in by mistake, so cards stop offering it.
   const handleClear = async () => {
-    if (!window.confirm(`确定清除「${channel.label}」的 API Key、Base URL 和绑定模型吗？`)) return;
+    const ok = await confirm({
+      title: `清除「${channel.label}」的配置？`,
+      message: '会删除已保存的 API Key、Base URL 和绑定的模型，卡片里将不再出现这个服务商。',
+      confirmText: '清除',
+      danger: true,
+    });
+    if (!ok) return;
     setSaveStatus({ saving: true, success: false, error: undefined });
     try {
       await apiUpdateConfig({ provider: channel.id, clear: true });
@@ -281,7 +288,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         models: form.modelsDirty ? form.models : undefined,
       });
 
-      patchForm(channel.id, { modelsDirty: false });
+      // The saved key now shows masked in the placeholder.
+      patchForm(channel.id, { modelsDirty: false, apiKey: '' });
       await refreshChannels();
       setSaveStatus({ saving: false, success: true });
       setTimeout(() => {
@@ -292,257 +300,231 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md select-none animate-in fade-in duration-150">
-      <div className="relative w-full max-w-3xl bg-[#12141e]/98 border border-slate-700/80 rounded-2xl shadow-2xl shadow-black/90 overflow-hidden">
-        {/* Modal Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800 bg-slate-900/50">
-          <div className="flex items-center gap-2 text-sm font-bold text-slate-100">
-            <div className="p-1.5 rounded-lg bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
-              <Settings className="w-4 h-4" />
-            </div>
-            <span>服务商与密钥配置 (Provider Settings)</span>
-          </div>
+  /** Whether a channel's form differs from what is saved. */
+  const isDirty = (id: ChannelId) => {
+    const f = forms[id];
+    const saved = providers.find((p) => p.id === id);
+    const meta = CHANNELS.find((c) => c.id === id);
+    if (!f) return false;
+    if (f.apiKey.trim() || f.modelsDirty) return true;
+    if (f.baseUrl.trim() && f.baseUrl.trim() !== (saved?.base_url ?? '').trim()) return true;
+    return (meta?.extraFields ?? []).some((x) => (f.extra[x.key] ?? '') !== (saved?.extra?.[x.key] ?? ''));
+  };
+  const dirtyChannels = CHANNELS.filter((c) => isDirty(c.id));
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
-          >
+  const requestClose = async () => {
+    if (dirtyChannels.length > 0) {
+      const ok = await confirm({
+        title: '放弃未保存的修改？',
+        message: `${dirtyChannels.map((c) => c.label).join('、')} 有修改还没保存。`,
+        confirmText: '放弃修改',
+        danger: true,
+      });
+      if (!ok) return;
+      setForms(initialForms());
+    }
+    onClose();
+  };
+
+  const statusFor = (id: ChannelId, mock?: boolean) => {
+    if (providers.find((x) => x.id === id)?.is_configured) return { dot: 'bg-emerald-400', label: '已配置' };
+    if (mock) return { dot: 'bg-amber-400', label: '演示模式' };
+    return { dot: 'bg-slate-600', label: '未配置' };
+  };
+  const status = statusFor(channel.id, channel.mockWhenUnset);
+  const inputFocus = channel.accent.focus;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm select-none"
+      onMouseDown={(e) => e.target === e.currentTarget && void requestClose()}
+    >
+      <div className="relative w-full max-w-3xl max-h-[calc(100vh-2rem)] flex flex-col bg-canvas-surface border border-slate-700/80 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden">
+        <div className="flex items-center justify-between px-5 h-14 border-b border-canvas-border flex-shrink-0">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-100">服务商设置</h2>
+            <p className="text-[11px] text-slate-500">填写各家服务的 API Key，并选择卡片里可以用的模型</p>
+          </div>
+          <IconButton title="关闭" onClick={() => void requestClose()}>
             <X className="w-4 h-4" />
-          </button>
+          </IconButton>
         </div>
 
-        <div className="flex flex-col sm:flex-row">
-          {/* Channel Navigation */}
-          <nav className="flex sm:flex-col gap-1 p-2 sm:w-44 flex-shrink-0 overflow-x-auto border-b sm:border-b-0 sm:border-r border-slate-800 bg-[#0d0f18] text-xs font-semibold">
+        <div className="flex flex-col sm:flex-row flex-1 min-h-0">
+          <nav className="flex sm:flex-col gap-0.5 p-2 sm:w-48 flex-shrink-0 overflow-x-auto sm:overflow-y-auto border-b sm:border-b-0 sm:border-r border-canvas-border bg-canvas-bg/60 text-xs">
             {CHANNELS.map((c) => {
               const Icon = c.icon;
               const active = c.id === channel.id;
-              const configured = providers.find((p) => p.id === c.id)?.is_configured;
+              const st = statusFor(c.id, c.mockWhenUnset);
               return (
                 <button
                   key={c.id}
                   type="button"
                   onClick={() => setActiveTab(c.id)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-xl text-left whitespace-nowrap transition ${
-                    active
-                      ? `bg-slate-800/80 ${c.accent.text} font-bold`
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                  title={st.label}
+                  className={`flex items-center gap-2 px-2.5 py-2 rounded-lg text-left whitespace-nowrap transition ${
+                    active ? `bg-slate-800 ${c.accent.text} font-semibold` : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+                  <Icon className="w-4 h-4 flex-shrink-0" />
                   <span className="flex-1 truncate">{c.label}</span>
-                  {configured && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />}
+                  {isDirty(c.id) && <span className="text-[11px] font-normal text-amber-300">未保存</span>}
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${st.dot}`} />
                 </button>
               );
             })}
           </nav>
 
-          {/* Modal Body Form */}
-          <div
-            key={channel.id}
-            className="flex-1 min-w-0 p-5 space-y-3.5 text-xs text-slate-200 max-h-[60vh] overflow-y-auto animate-in fade-in duration-100"
-          >
-            {/* Status info chip */}
-            <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-[#0b0d14] border border-slate-800">
-              <div className="flex items-center gap-2 min-w-0">
-                <ChannelIcon className={`w-4 h-4 flex-shrink-0 ${channel.accent.text}`} />
-                <div className="min-w-0">
-                  <div className="font-semibold text-slate-200">{channel.title}</div>
-                  <div className="text-[10px] text-slate-400 font-mono truncate">{channel.subtitle}</div>
+          <div key={channel.id} className="flex-1 min-w-0 overflow-y-auto px-5 py-4 space-y-5 text-xs text-slate-200">
+            <div className="flex items-start gap-3">
+              <ChannelIcon className={`w-5 h-5 mt-0.5 flex-shrink-0 ${channel.accent.text}`} />
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-x-2">
+                  <span className="text-sm font-semibold text-slate-100">{channel.title}</span>
+                  <span className="flex items-center gap-1 text-[11px] text-slate-400">
+                    <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />
+                    {status.label}
+                    {current?.is_configured && current.masked_key ? ` · ${current.masked_key}` : ''}
+                  </span>
                 </div>
-              </div>
-
-              <div className="flex items-center gap-1.5 text-[11px] font-mono flex-shrink-0">
-                {current?.is_configured ? (
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> 已配置 ({current.masked_key})
-                  </span>
-                ) : channel.mockWhenUnset ? (
-                  <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                    测试桩模式 (Mock)
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-full bg-slate-500/15 text-slate-300 border border-slate-500/30">
-                    未配置
-                  </span>
-                )}
+                <p className="mt-0.5 text-[11px] text-slate-500">{channel.subtitle}</p>
               </div>
             </div>
 
-            {(channel.hint || !channel.adapterReady) && (
-              <div className="flex items-start gap-1.5 px-2.5 py-2 rounded-xl bg-slate-800/40 border border-slate-800 text-[10px] leading-relaxed text-slate-400">
-                <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
+            {(channel.hint || !channel.adapterReady || (channel.mockWhenUnset && !current?.is_configured)) && (
+              <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-slate-800/40 border border-canvas-border text-[11px] leading-relaxed text-slate-400">
+                <Info className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
                 <div className="space-y-0.5">
+                  {channel.mockWhenUnset && !current?.is_configured && (
+                    <div className="text-amber-200">演示模式：还没有填 Key，生成会返回示例图，不会产生费用。</div>
+                  )}
                   {channel.hint && <div>{channel.hint}</div>}
-                  {!channel.adapterReady && <div>该渠道目前只保存配置和绑定模型，生成卡片尚未接入。</div>}
+                  {!channel.adapterReady && <div>这个服务商目前只保存配置和模型，卡片还不能用它生成。</div>}
                 </div>
               </div>
             )}
 
-            {/* Base URL Input */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
-                <Globe className="w-3.5 h-3.5 text-slate-400" />
-                <span>Base URL</span>
-              </label>
-              <input
-                type="text"
-                value={form.baseUrl}
-                onChange={(e) => patchForm(channel.id, { baseUrl: e.target.value })}
-                className={`w-full bg-[#0b0d14] border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none ${channel.accent.focus} transition`}
-                placeholder={channel.baseUrlPlaceholder}
-              />
-            </div>
-
-            {/* API Key Input */}
-            <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
-                <Key className="w-3.5 h-3.5 text-slate-400" />
-                <span>{channel.keyLabel}</span>
-              </label>
-              <div className="relative">
-                <input
-                  type={form.showKey ? 'text' : 'password'}
-                  value={form.apiKey}
-                  onChange={(e) => patchForm(channel.id, { apiKey: e.target.value })}
-                  className={`w-full bg-[#0b0d14] border border-slate-700 rounded-xl px-3 py-2 pr-10 text-xs font-mono ${channel.accent.key} focus:outline-none ${channel.accent.focus} transition`}
-                  placeholder={
-                    current?.is_configured
-                      ? `当前使用: ${current.masked_key} (输入新密钥以更新)`
-                      : channel.keyPlaceholder
-                  }
-                />
-                <button
-                  type="button"
-                  onClick={() => patchForm(channel.id, { showKey: !form.showKey })}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1"
-                >
-                  {form.showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            </div>
-
-            {/* Channel-specific extra fields */}
-            {channel.extraFields?.map((field) => (
-              <div key={field.key} className="space-y-1">
-                <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Building className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{field.label}</span>
-                </label>
+            <section className="space-y-3">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">连接</h3>
+              <label className="block space-y-1.5">
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                  <Globe className="w-3.5 h-3.5" /> Base URL
+                </span>
                 <input
                   type="text"
-                  value={form.extra[field.key] ?? ''}
-                  onChange={(e) =>
-                    patchForm(channel.id, { extra: { ...form.extra, [field.key]: e.target.value } })
-                  }
-                  className={`w-full bg-[#0b0d14] border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none ${channel.accent.focus} transition`}
-                  placeholder={field.placeholder}
+                  value={form.baseUrl}
+                  onChange={(e) => patchForm(channel.id, { baseUrl: e.target.value })}
+                  className={`${inputClass} font-mono py-2 ${inputFocus}`}
+                  placeholder={channel.baseUrlPlaceholder}
                 />
-              </div>
-            ))}
-
-            {/* Test Connection Button & Status */}
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={handleTest}
-                disabled={test.testing || !form.apiKey || !form.baseUrl.trim()}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 border border-slate-600 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition active:scale-95 flex-shrink-0"
-              >
-                {test.testing ? (
-                  <>
-                    <Loader2 className="w-3 h-3 animate-spin" /> 测试中...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="w-3 h-3" /> 测试连接
-                  </>
-                )}
-              </button>
-
-              {test.msg && (
-                <div
-                  className={`text-[10px] px-2 py-1 rounded-lg border flex items-center gap-1 min-w-0 ${
-                    test.ok
-                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                      : 'bg-red-500/15 text-red-300 border-red-500/30'
-                  }`}
-                >
-                  {test.ok ? (
-                    <CheckCircle2 className="w-3 h-3 flex-shrink-0" />
-                  ) : (
-                    <AlertCircle className="w-3 h-3 flex-shrink-0" />
-                  )}
-                  <span className="truncate">{test.msg}</span>
+              </label>
+              <label className="block space-y-1.5">
+                <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                  <Key className="w-3.5 h-3.5" /> {channel.keyLabel}
+                </span>
+                <div className="relative">
+                  <input
+                    type={form.showKey ? 'text' : 'password'}
+                    value={form.apiKey}
+                    onChange={(e) => patchForm(channel.id, { apiKey: e.target.value })}
+                    className={`${inputClass} font-mono py-2 pr-10 ${inputFocus}`}
+                    placeholder={current?.is_configured ? `已保存 ${current.masked_key}，输入新的 Key 可替换` : channel.keyPlaceholder}
+                  />
+                  <button
+                    type="button"
+                    title={form.showKey ? '隐藏' : '显示'}
+                    onClick={() => patchForm(channel.id, { showKey: !form.showKey })}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-200"
+                  >
+                    {form.showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
                 </div>
-              )}
+              </label>
+              {channel.extraFields?.map((field) => (
+                <label key={field.key} className="block space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                    <Building className="w-3.5 h-3.5" /> {field.label}
+                  </span>
+                  <input
+                    type="text"
+                    value={form.extra[field.key] ?? ''}
+                    onChange={(e) => patchForm(channel.id, { extra: { ...form.extra, [field.key]: e.target.value } })}
+                    className={`${inputClass} font-mono py-2 ${inputFocus}`}
+                    placeholder={field.placeholder}
+                  />
+                </label>
+              ))}
 
-              {current?.is_configured && (
-                <button
-                  type="button"
-                  onClick={handleClear}
-                  disabled={saveStatus.saving}
-                  title="删除该渠道已保存的 API Key、Base URL 和绑定模型"
-                  className="ml-auto px-2.5 py-1.5 text-[11px] text-slate-400 hover:text-red-300 border border-slate-700 hover:border-red-500/50 rounded-xl transition flex-shrink-0"
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={handleTest}
+                  disabled={test.testing || !form.apiKey || !form.baseUrl.trim()}
+                  title={!form.apiKey ? '填写新的 API Key 后可以测试' : undefined}
+                  icon={test.testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                 >
-                  清除配置
-                </button>
-              )}
-            </div>
+                  {test.testing ? '测试中…' : '测试连接'}
+                </Button>
+                {test.msg && (
+                  <span className={`flex items-center gap-1 min-w-0 text-[11px] ${test.ok ? 'text-emerald-300' : 'text-rose-300'}`}>
+                    {test.ok ? <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />}
+                    <span className="break-all">{test.msg}</span>
+                  </span>
+                )}
+                {current?.is_configured && (
+                  <Button size="sm" variant="ghost" className="ml-auto hover:!text-rose-300" onClick={handleClear} disabled={saveStatus.saving}>
+                    清除配置
+                  </Button>
+                )}
+              </div>
+            </section>
 
-            <ModelBindingPanel
-              key={channel.id}
-              channelId={channel.id}
-              canListModels={current?.can_list_models ?? false}
-              baseUrl={form.baseUrl}
-              apiKey={form.apiKey}
-              isConfigured={current?.is_configured ?? false}
-              models={form.models}
-              presets={current?.presets}
-              onChange={(models) => patchForm(channel.id, { models, modelsDirty: true })}
-            />
+            <section className="space-y-3 pt-4 border-t border-canvas-border">
+              <div>
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">模型</h3>
+                <p className="mt-1 text-[11px] text-slate-500">卡片的模型下拉里只会出现这里绑定的模型。</p>
+              </div>
+              <ModelBindingPanel
+                key={channel.id}
+                channelId={channel.id}
+                canListModels={current?.can_list_models ?? false}
+                baseUrl={form.baseUrl}
+                apiKey={form.apiKey}
+                isConfigured={current?.is_configured ?? false}
+                models={form.models}
+                presets={current?.presets}
+                onChange={(models) => patchForm(channel.id, { models, modelsDirty: true })}
+              />
+            </section>
           </div>
         </div>
 
-        {/* Modal Footer */}
-        <div className="flex items-center justify-between px-5 py-3 border-t border-slate-800 bg-slate-900/40">
-          <div className="text-[11px] text-slate-400 font-mono">
-            {saveStatus.success && (
-              <span className="text-emerald-400 font-semibold flex items-center gap-1">
-                <CheckCircle2 className="w-3.5 h-3.5" /> 设置已保存并持久化！
+        <div className="flex items-center justify-between gap-3 px-5 h-14 border-t border-canvas-border flex-shrink-0">
+          <div className="min-w-0 text-[11px]">
+            {saveStatus.error ? (
+              <span className="text-rose-400 flex items-center gap-1">
+                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> 保存失败：{saveStatus.error}
               </span>
-            )}
-            {saveStatus.error && (
-              <span className="text-red-400 font-semibold flex items-center gap-1">
-                <AlertCircle className="w-3.5 h-3.5" /> 保存失败: {saveStatus.error}
+            ) : saveStatus.success ? (
+              <span className="text-emerald-400 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" /> 已保存，立即生效
               </span>
-            )}
+            ) : isDirty(channel.id) ? (
+              <span className="text-amber-300">「{channel.label}」有未保存的修改</span>
+            ) : null}
           </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition"
-            >
-              取消
-            </button>
-            <button
-              type="button"
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <Button variant="ghost" onClick={() => void requestClose()}>
+              关闭
+            </Button>
+            <Button
+              variant="primary"
               onClick={handleSave}
-              disabled={saveStatus.saving}
-              className="px-4 py-1.5 bg-gradient-to-r from-pink-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 transition active:scale-95"
+              disabled={saveStatus.saving || !isDirty(channel.id)}
+              icon={saveStatus.saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : undefined}
             >
-              {saveStatus.saving ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> 保存中...
-                </>
-              ) : (
-                <>保存并生效</>
-              )}
-            </button>
+              {saveStatus.saving ? '保存中…' : `保存「${channel.label}」`}
+            </Button>
           </div>
         </div>
       </div>

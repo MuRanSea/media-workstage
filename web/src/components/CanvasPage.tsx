@@ -9,8 +9,10 @@ import {
   getBufferedTaskEvent,
   subscribeTaskEvents,
 } from '../services/api.ts';
-import { apiCreateProject, apiGetProject, apiRenameProject, type ProjectDocument } from '../services/projects.ts';
-import { navigate, projectHref } from '../services/router.ts';
+import { apiGetProject, apiRenameProject, type ProjectDocument } from '../services/projects.ts';
+import { navigate } from '../services/router.ts';
+import { useProjectActions } from './useProjectActions.ts';
+import { Button, useToast } from './ui/index.ts';
 import { compileCardImagePayload } from '../engine/compiler.ts';
 import { compileCardVideoPayload } from '../engine/videoCompiler.ts';
 import { withEffectivePrompt } from '../engine/connections.ts';
@@ -19,23 +21,6 @@ import { applyTaskToCard } from '../engine/taskSync.ts';
 import { cardsAwaitingTask, normalizeCards, normalizeViewport } from '../engine/projectDoc.ts';
 import { setActiveProjectId } from '../engine/assetPaths.ts';
 import { useAutosave } from '../engine/useAutosave.ts';
-
-/** Next free @图N: one past the highest tag, so deleted cards never cause duplicates. */
-function nextTagIndex(cards: SpatialCard[]): number {
-  return cards.reduce((max, c) => Math.max(max, c.tagIndex), 0) + 1;
-}
-
-/** Asks for a name, creates the project and opens it. */
-export async function promptCreateProject(): Promise<void> {
-  const name = window.prompt('新工程名称', '未命名工程');
-  if (name === null) return;
-  try {
-    const doc = await apiCreateProject(name);
-    navigate(projectHref(doc.id));
-  } catch (err) {
-    window.alert(`新建工程失败：${(err as Error).message}`);
-  }
-}
 
 /** Loads a project, then mounts its canvas. */
 export function CanvasPage({ projectId }: { projectId: string }) {
@@ -54,21 +39,15 @@ export function CanvasPage({ projectId }: { projectId: string }) {
 
   if (error) {
     return (
-      <div className="w-screen h-screen flex flex-col items-center justify-center gap-4 bg-[#08090f] text-slate-300">
+      <div className="w-screen h-screen flex flex-col items-center justify-center gap-4 bg-canvas-bg text-slate-300">
         <p className="text-sm">无法打开工程：{error}</p>
-        <button
-          type="button"
-          onClick={() => navigate('/')}
-          className="px-3 py-1.5 rounded-lg border border-slate-700 text-xs hover:bg-slate-800"
-        >
-          返回工程列表
-        </button>
+        <Button onClick={() => navigate('/')}>返回工程列表</Button>
       </div>
     );
   }
   if (!doc) {
     return (
-      <div className="w-screen h-screen flex items-center justify-center bg-[#08090f] text-xs text-slate-500">
+      <div className="w-screen h-screen flex items-center justify-center bg-canvas-bg text-xs text-slate-500">
         正在打开工程…
       </div>
     );
@@ -84,6 +63,8 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   const [cards, setCards] = useState<SpatialCard[]>(() => normalizeCards(doc.cards));
   const [initialViewport] = useState(() => normalizeViewport(doc.viewport));
   const [name, setName] = useState(doc.name);
+  const toast = useToast();
+  const { create: createProject } = useProjectActions();
   const { saveState, lastError, onViewportChange } = useAutosave({
     projectId,
     initialRevision: doc.revision,
@@ -125,85 +106,8 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       await apiRenameProject(projectId, next);
     } catch (err) {
       setName(prev);
-      window.alert(`重命名失败：${(err as Error).message}`);
+      toast(`重命名失败：${(err as Error).message}`, { tone: 'error' });
     }
-  };
-
-  const handleAddImageCard = () => {
-    const nextIndex = nextTagIndex(cards);
-    const newCard: SpatialCard = {
-      id: `card-${Date.now()}`,
-      type: 'image',
-      title: `原画构思 ${nextIndex}`,
-      tagIndex: nextIndex,
-      x: 300 + Math.random() * 80,
-      y: 200 + Math.random() * 80,
-      width: 340,
-      prompt: '输入画面主体与氛围描述...',
-      provider: 'ark',
-      model: 'doubao-seedream-5-0-pro-260628',
-      status: 'idle',
-      progress: 0,
-      isExpanded: false,
-      activeParamTab: 'specs',
-      imageMode: 'single',
-      sizeMode: 'tier',
-      imageTier: '2K',
-      imageRatioPreset: '16:9',
-      imageFormat: 'jpeg',
-      watermark: false,
-      background: 'opaque',
-    };
-    setCards((prev) => [...prev, newCard]);
-  };
-
-  const handleAddVideoCard = () => {
-    const nextIndex = nextTagIndex(cards);
-    const newCard: SpatialCard = {
-      id: `card-${Date.now()}`,
-      type: 'video',
-      title: `镜头 ${nextIndex}`,
-      tagIndex: nextIndex,
-      x: 500 + Math.random() * 80,
-      y: 200 + Math.random() * 80,
-      width: 460,
-      prompt: '运镜描述，输入 @图1 @图2 引用素材...',
-      provider: 'ark',
-      model: 'doubao-seedance-2-5-260628',
-      status: 'idle',
-      progress: 0,
-      isExpanded: false,
-      activeParamTab: 'specs',
-      mode: 'all_modal',
-      resolution: '720p',
-      duration: 5,
-      ratio: '16:9',
-      generateAudio: true,
-      outputFormat: 'mp4',
-      promptOptimizer: true,
-      references: [],
-    };
-    setCards((prev) => [...prev, newCard]);
-  };
-
-  const handleAddTextCard = () => {
-    const nextIndex = nextTagIndex(cards);
-    const newCard: SpatialCard = {
-      id: `card-${Date.now()}`,
-      type: 'text',
-      title: `提示词助手 ${nextIndex}`,
-      tagIndex: nextIndex,
-      x: 60 + Math.random() * 80,
-      y: 200 + Math.random() * 80,
-      width: 340,
-      prompt: '',
-      model: '',
-      status: 'idle',
-      progress: 0,
-      textPreset: 'image_prompt',
-      textOutput: '',
-    };
-    setCards((prev) => [...prev, newCard]);
   };
 
   const handleGenerateText = async (card: SpatialCard) => {
@@ -296,9 +200,6 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     <SpatialCanvas
       cards={cards}
       setCards={setCards}
-      onAddImageCard={handleAddImageCard}
-      onAddVideoCard={handleAddVideoCard}
-      onAddTextCard={handleAddTextCard}
       onTriggerGenerate={handleTriggerGenerate}
       initialViewport={initialViewport}
       onViewportChange={onViewportChange}
@@ -309,7 +210,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
           saveState={saveState}
           saveError={lastError}
           onRename={handleRename}
-          onCreateProject={() => void promptCreateProject()}
+          onCreateProject={() => void createProject()}
         />
       }
     />

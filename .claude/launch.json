@@ -6,6 +6,12 @@
       "runtimeExecutable": "./media-workstage.exe",
       "runtimeArgs": ["-port", "8080", "-no-browser"],
       "port": 8080
+    },
+    {
+      "name": "media-workstage-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "web", "run", "dev"],
+      "port": 5173
     }
   ]
 }

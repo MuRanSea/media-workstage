@@ -54,7 +54,7 @@ export const ProviderModelPicker: React.FC<ProviderModelPickerProps> = ({
   };
 
   const fieldClass = (which: 'provider' | 'model') =>
-    `min-w-0 flex flex-col items-start px-2 py-1 rounded-lg border bg-[#0b0d14] hover:bg-slate-800/60 transition text-left ${
+    `min-w-0 flex flex-col items-start px-2.5 py-1.5 rounded-lg border bg-canvas-bg hover:bg-slate-800/60 transition text-left ${
       open === which ? colors.ring : 'border-slate-800'
     }`;
 
@@ -62,15 +62,15 @@ export const ProviderModelPicker: React.FC<ProviderModelPickerProps> = ({
     <div className="space-y-1">
       <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-1">
         <button type="button" onClick={() => setOpen(open === 'provider' ? null : 'provider')} className={fieldClass('provider')}>
-          <span className="text-[9px] text-slate-500">服务商</span>
-          <span className={`w-full flex items-center justify-between gap-1 text-[11px] font-semibold ${colors.text}`}>
+          <span className="text-[11px] text-slate-500">服务商</span>
+          <span className={`w-full flex items-center justify-between gap-1 text-xs font-semibold ${colors.text}`}>
             <span className="truncate">{currentGroup?.name ?? CHANNEL_SHORT_NAMES[provider]}</span>
             <ChevronDown className="w-3 h-3 text-slate-400 flex-shrink-0" />
           </span>
         </button>
         <button type="button" onClick={() => setOpen(open === 'model' ? null : 'model')} className={fieldClass('model')}>
-          <span className="text-[9px] text-slate-500">模型</span>
-          <span className={`w-full flex items-center justify-between gap-1 text-[11px] font-semibold ${colors.text}`}>
+          <span className="text-[11px] text-slate-500">模型</span>
+          <span className={`w-full flex items-center justify-between gap-1 text-xs font-semibold ${colors.text}`}>
             <span className="truncate">{currentOption?.label ?? modelLabel}</span>
             <ChevronDown className="w-3 h-3 text-slate-400 flex-shrink-0" />
           </span>
@@ -98,7 +98,7 @@ export const ProviderModelPicker: React.FC<ProviderModelPickerProps> = ({
                 }`}
               >
                 <span className="truncate">{g.name}</span>
-                <span className="text-[10px] opacity-70 flex-shrink-0">
+                <span className="text-[11px] opacity-70 flex-shrink-0">
                   {!g.ready
                     ? '未接入'
                     : g.options.every((o) => o.ready)
@@ -128,17 +128,17 @@ export const ProviderModelPicker: React.FC<ProviderModelPickerProps> = ({
                   }`}
                 >
                   <span className="truncate font-mono text-[11px]">{opt.label}</span>
-                  <span className="text-[10px] opacity-70 flex-shrink-0">{opt.ready ? opt.tag : '未接入'}</span>
+                  <span className="text-[11px] opacity-70 flex-shrink-0">{opt.ready ? opt.tag : '未接入'}</span>
                 </button>
               ))
             ) : (
-              <div className="px-2 py-1.5 text-[10px] text-slate-400">
+              <div className="px-2 py-1.5 text-[11px] text-slate-400">
                 该服务商没有绑定此类模型，请先在设置中绑定。
               </div>
             ))}
 
-          <div className="px-2 pt-1 mt-0.5 border-t border-slate-800 text-[9px] text-slate-500">
-            更多服务商或模型：右上角设置 → 选择渠道 → 绑定模型
+          <div className="px-2 pt-1 mt-0.5 border-t border-slate-800 text-[11px] text-slate-500">
+            更多服务商或模型：右上角「设置」→ 选择服务商 → 绑定模型
           </div>
         </div>
       )}

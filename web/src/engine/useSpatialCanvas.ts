@@ -24,6 +24,8 @@ interface UseSpatialCanvasProps {
   initialZoom?: number;
   initialPanX?: number;
   initialPanY?: number;
+  /** Called once before a user edit changes card positions (drag, align), for undo. */
+  onBeforeEdit?: () => void;
 }
 
 export function useSpatialCanvas({
@@ -33,6 +35,7 @@ export function useSpatialCanvas({
   initialZoom = 0.85,
   initialPanX = 60,
   initialPanY = 40,
+  onBeforeEdit,
 }: UseSpatialCanvasProps) {
   const [transform, setTransform] = useState<CanvasTransform>({
     zoom: initialZoom,
@@ -55,6 +58,8 @@ export function useSpatialCanvas({
   const [isDraggingCards, setIsDraggingCards] = useState(false);
   const dragStartWorldRef = useRef<Point>({ x: 0, y: 0 });
   const initialCardPositionsRef = useRef<Map<string, Point>>(new Map());
+  // A drag records its undo step on the first actual move, so plain clicks add none.
+  const dragRecordedRef = useRef(false);
 
   const startPanRef = useRef<Point>({ x: 0, y: 0 });
   const mousePosRef = useRef<Point>({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
@@ -298,6 +303,10 @@ export function useSpatialCanvas({
         );
         const dx = currentWorld.x - dragStartWorldRef.current.x;
         const dy = currentWorld.y - dragStartWorldRef.current.y;
+        if (!dragRecordedRef.current && (dx !== 0 || dy !== 0)) {
+          dragRecordedRef.current = true;
+          onBeforeEdit?.();
+        }
 
         setCards((prev) =>
           prev.map((c) => {
@@ -320,6 +329,7 @@ export function useSpatialCanvas({
       cards,
       selectedCardIds,
       setCards,
+      onBeforeEdit,
     ]
   );
 
@@ -331,35 +341,44 @@ export function useSpatialCanvas({
     setIsDraggingCards(false);
   }, []);
 
+  // Shift/Ctrl toggles a card in the selection; a plain click selects it alone
+  // unless it is already part of the selection (so a group can be dragged).
+  const nextSelection = useCallback(
+    (e: React.MouseEvent, cardId: string): Set<string> => {
+      if (e.shiftKey || e.ctrlKey || e.metaKey) {
+        const next = new Set(selectedCardIds);
+        if (next.has(cardId)) next.delete(cardId);
+        else next.add(cardId);
+        return next;
+      }
+      return selectedCardIds.has(cardId) ? new Set(selectedCardIds) : new Set([cardId]);
+    },
+    [selectedCardIds]
+  );
+
+  // Mouse down on a card's body: select without dragging.
+  const handleSelectCard = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>, card: SpatialCard) => {
+      if (e.button !== 0 || activeTool === 'hand' || isSpacePressedRef.current) return;
+      setSelectedCardIds(nextSelection(e, card.id));
+    },
+    [activeTool, nextSelection]
+  );
+
   // Card dragging & selection handler
   const handleStartDragCard = useCallback(
     (e: React.MouseEvent<HTMLDivElement>, card: SpatialCard) => {
       if (activeTool === 'hand' || isSpacePressedRef.current) return;
+      if (e.button !== 0) return;
       e.stopPropagation();
 
       const container = containerRef.current;
       const rect = container?.getBoundingClientRect();
       const origin: Point = { x: rect?.left ?? 0, y: rect?.top ?? 0 };
 
-      const isModifierKey = e.shiftKey || e.ctrlKey || e.metaKey;
-
-      let nextSelectedIds: Set<string>;
-      if (isModifierKey) {
-        nextSelectedIds = new Set(selectedCardIds);
-        if (nextSelectedIds.has(card.id)) {
-          nextSelectedIds.delete(card.id);
-        } else {
-          nextSelectedIds.add(card.id);
-        }
-      } else {
-        if (!selectedCardIds.has(card.id)) {
-          nextSelectedIds = new Set([card.id]);
-        } else {
-          nextSelectedIds = new Set(selectedCardIds);
-        }
-      }
-
+      const nextSelectedIds = nextSelection(e, card.id);
       setSelectedCardIds(nextSelectedIds);
+      dragRecordedRef.current = false;
 
       // Initialize multi-card drag
       setIsDraggingCards(true);
@@ -374,22 +393,24 @@ export function useSpatialCanvas({
       }
       initialCardPositionsRef.current = initialPositions;
     },
-    [activeTool, selectedCardIds, transform, containerRef, cards]
+    [activeTool, nextSelection, transform, containerRef, cards]
   );
 
   // Multi-card layout commands
   const alignSelected = useCallback(
     (alignment: AlignmentType) => {
+      onBeforeEdit?.();
       setCards((prev) => alignCards(prev, selectedCardIds, alignment));
     },
-    [selectedCardIds, setCards]
+    [selectedCardIds, setCards, onBeforeEdit]
   );
 
   const arrangeSelectedGrid = useCallback(
     (gap = 40, columns = 3) => {
+      onBeforeEdit?.();
       setCards((prev) => autoArrangeGrid(prev, selectedCardIds, gap, columns));
     },
-    [selectedCardIds, setCards]
+    [selectedCardIds, setCards, onBeforeEdit]
   );
 
   // Calculate screen-space marquee box for rendering
@@ -420,5 +441,8 @@ export function useSpatialCanvas({
     handleMouseMove,
     handleMouseUp,
     handleStartDragCard,
+    handleSelectCard,
+    /** Last known pointer position (client coords). */
+    pointerRef: mousePosRef,
   };
 }

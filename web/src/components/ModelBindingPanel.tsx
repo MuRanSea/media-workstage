@@ -132,18 +132,18 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
   };
 
   return (
-    <div className="space-y-2 pt-2 border-t border-slate-800">
+    <div className="space-y-2">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
             <Boxes className="w-3.5 h-3.5 text-slate-400" />
-            <span>绑定模型 ({models.length})</span>
+            <span>已绑定 {models.length} 个</span>
           </label>
           {models.length > 0 && (
             <button
               type="button"
               onClick={() => onChange([])}
-              className="text-[10px] text-slate-500 hover:text-red-300"
+              className="text-[11px] text-slate-500 hover:text-red-300"
             >
               清空
             </button>
@@ -153,7 +153,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
               type="button"
               onClick={() => onChange(presets)}
               title={`恢复为内置模型：${presets.map((m) => m.id).join('、')}`}
-              className="text-[10px] text-slate-500 hover:text-emerald-300"
+              className="text-[11px] text-slate-500 hover:text-emerald-300"
             >
               恢复默认
             </button>
@@ -177,10 +177,10 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
 
       {/* Bound model chips */}
       {models.length === 0 ? (
-        <div className="text-[10px] text-slate-500">
+        <div className="text-[11px] text-slate-500">
           {canListModels
-            ? '尚未绑定模型：点「获取模型」，勾选要在卡片中使用的模型。'
-            : '未绑定模型，卡片中不会出现该渠道。'}
+            ? '还没有绑定模型：点右边的「获取模型」，勾选要在卡片里使用的模型。'
+            : '还没有绑定模型，卡片里不会出现这个服务商。'}
         </div>
       ) : (
         <div className="flex flex-wrap gap-1">
@@ -188,11 +188,11 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
             <span
               key={m.id}
               title={staleSet.has(m.id) ? '服务商的模型列表中没有这个模型' : undefined}
-              className={`inline-flex items-center gap-1 pl-1 pr-0.5 py-0.5 rounded-md bg-[#0b0d14] border text-[10px] font-mono max-w-full ${
+              className={`inline-flex items-center gap-1 pl-1 pr-0.5 py-0.5 rounded-md bg-canvas-bg border text-[11px] font-mono max-w-full ${
                 staleSet.has(m.id) ? 'border-amber-500/60 text-amber-200 line-through decoration-amber-500/60' : 'border-slate-700 text-slate-200'
               }`}
             >
-              <span className={`px-1 rounded border text-[9px] font-sans ${TYPE_BADGE[m.type] ?? ''}`}>
+              <span className={`px-1 rounded border text-[11px] font-sans ${TYPE_BADGE[m.type] ?? ''}`}>
                 {TYPE_LABEL[m.type] ?? m.type}
               </span>
               <span className="truncate">{m.id}</span>
@@ -210,7 +210,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
       )}
 
       {staleIds.length > 0 && (
-        <div className="flex items-center justify-between gap-2 text-[10px] px-2 py-1 rounded-lg border bg-amber-500/10 text-amber-200 border-amber-500/30">
+        <div className="flex items-center justify-between gap-2 text-[11px] px-2 py-1 rounded-lg border bg-amber-500/10 text-amber-200 border-amber-500/30">
           <span>有 {staleIds.length} 个已绑定模型不在服务商的模型列表中（上方划线标出）</span>
           <button
             type="button"
@@ -223,18 +223,18 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
       )}
 
       {catalog?.error && (
-        <div className="text-[10px] px-2 py-1 rounded-lg border bg-red-500/15 text-red-300 border-red-500/30">
+        <div className="text-[11px] px-2 py-1 rounded-lg border bg-red-500/15 text-red-300 border-red-500/30">
           获取失败：{catalog.error}
         </div>
       )}
 
       {/* Fetched catalog picker */}
       {catalog?.result && (
-        <div className="rounded-xl border border-slate-800 bg-[#0b0d14] p-2 space-y-1.5">
-          <div className="flex items-center gap-1.5 text-[10px]">
+        <div className="rounded-xl border border-slate-800 bg-canvas-bg p-2 space-y-1.5">
+          <div className="flex items-center gap-1.5 text-[11px]">
             {(
               [
-                ['image', '生图'],
+                ['image', '图片'],
                 ['video', '视频'],
                 ['chat', '文本'],
                 ['other', '其他'],
@@ -259,7 +259,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="搜索模型"
-                className="w-full bg-[#12141e] border border-slate-700 rounded-md pl-5 pr-1.5 py-0.5 text-[10px] font-mono text-slate-200 focus:outline-none focus:border-slate-500"
+                className="w-full bg-canvas-surface border border-slate-700 rounded-md pl-5 pr-1.5 py-0.5 text-[11px] font-mono text-slate-200 focus:outline-none focus:border-slate-500"
               />
             </div>
             <button
@@ -274,7 +274,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
 
           <div className="max-h-56 overflow-y-auto space-y-0.5">
             {visible.length === 0 ? (
-              <div className="text-[10px] text-slate-500 px-1 py-2">没有匹配的模型</div>
+              <div className="text-[11px] text-slate-500 px-1 py-2">没有匹配的模型</div>
             ) : (
               visible.map((m) => {
                 const bound = models.find((b) => b.id === m.id);
@@ -283,28 +283,28 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
                   return (
                     <div key={m.id} className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-md hover:bg-slate-800/60">
                       <Square className="w-3.5 h-3.5 text-slate-700 flex-shrink-0" />
-                      <span className="flex-1 truncate text-[10px] font-mono text-slate-400">{m.id}</span>
-                      <span className={`px-1 rounded border text-[9px] ${OTHER_BADGE}`}>
+                      <span className="flex-1 truncate text-[11px] font-mono text-slate-400">{m.id}</span>
+                      <span className={`px-1 rounded border text-[11px] ${OTHER_BADGE}`}>
                         {TYPE_LABEL[m.type] ?? m.type}
                       </span>
                       <button
                         type="button"
                         onClick={() => bindAs(m.id, 'image')}
-                        className="px-1 rounded border text-[9px] border-pink-500/30 text-pink-300 hover:bg-pink-500/15"
+                        className="px-1 rounded border text-[11px] border-pink-500/30 text-pink-300 hover:bg-pink-500/15"
                       >
                         +图
                       </button>
                       <button
                         type="button"
                         onClick={() => bindAs(m.id, 'video')}
-                        className="px-1 rounded border text-[9px] border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/15"
+                        className="px-1 rounded border text-[11px] border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/15"
                       >
                         +视频
                       </button>
                       <button
                         type="button"
                         onClick={() => bindAs(m.id, 'chat')}
-                        className="px-1 rounded border text-[9px] border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/15"
+                        className="px-1 rounded border text-[11px] border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/15"
                       >
                         +文本
                       </button>
@@ -324,8 +324,8 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
                     ) : (
                       <Square className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
                     )}
-                    <span className="flex-1 truncate text-[10px] font-mono text-slate-200">{m.id}</span>
-                    <span className={`px-1 rounded border text-[9px] ${TYPE_BADGE[shownType] ?? OTHER_BADGE}`}>
+                    <span className="flex-1 truncate text-[11px] font-mono text-slate-200">{m.id}</span>
+                    <span className={`px-1 rounded border text-[11px] ${TYPE_BADGE[shownType] ?? OTHER_BADGE}`}>
                       {TYPE_LABEL[shownType] ?? shownType}
                     </span>
                   </button>
@@ -334,7 +334,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
             )}
           </div>
 
-          <div className="text-[9px] text-slate-500 leading-relaxed">
+          <div className="text-[11px] text-slate-500 leading-relaxed">
             {catalog.result.source === 'remote' ? '来自服务商实时列表' : '该渠道没有模型列表接口，显示内置预设'}
             {` · 共 ${counts.all} 个`}
             {counts.other > 0 && `；类型未识别的 ${counts.other} 个在「其他」，可用 +图 / +视频 / +文本 绑定`}
@@ -351,14 +351,14 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
             if (e.key === 'Enter') addManual();
           }}
           placeholder="手动输入模型 ID"
-          className="flex-1 min-w-0 bg-[#0b0d14] border border-slate-700 rounded-lg px-2 py-1 text-[11px] font-mono text-slate-200 focus:outline-none focus:border-slate-500"
+          className="flex-1 min-w-0 bg-canvas-bg border border-slate-700 rounded-lg px-2 py-1 text-[11px] font-mono text-slate-200 focus:outline-none focus:border-slate-500"
         />
         <select
           value={manualType}
           onChange={(e) => setManualType(e.target.value as BindableType)}
-          className="bg-[#0b0d14] border border-slate-700 rounded-lg px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none"
+          className="bg-canvas-bg border border-slate-700 rounded-lg px-1.5 py-1 text-[11px] text-slate-200 focus:outline-none"
         >
-          <option value="image">生图</option>
+          <option value="image">图片</option>
           <option value="video">视频</option>
           <option value="chat">文本</option>
         </select>

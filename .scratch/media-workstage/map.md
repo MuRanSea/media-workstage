@@ -29,6 +29,7 @@
 - [14-project-store-backend](issues/14-project-store-backend.md): 工程以磁盘文件夹持久化（`project.json` + `assets/`），`internal/project.Store` 原子写入与 revision 乐观并发，工程 REST API 与 `.trash` 删除。详见 [docs/adr/0003-project-folders-persistence.md](../../docs/adr/0003-project-folders-persistence.md)。
 - [15-project-scoped-tasks-and-assets](issues/15-project-scoped-tasks-and-assets.md): 任务携带 `project_id`，产物下载进工程文件夹并经 `/api/projects/:id/assets` 访问，参考素材按工程解析。
 - [16-project-ui-and-autosave](issues/16-project-ui-and-autosave.md): 工程列表页、顶栏工程切换与改名、防抖自动保存 + Ctrl+S + 冲突提示、打开工程时补齐任务状态。
+- [17-ui-overhaul](issues/17-ui-overhaul.md): 卡片精简 + 右侧属性面板、双击/右键添加、Delete/撤销/复制粘贴、精简顶栏、应用内对话框与提示条、工程封面、设置页文案与未保存提示。
 ## Not yet specified
 
 - 视频后处理工具扩展（火山 AI MediaKit 智能剪辑、画质增强集成）

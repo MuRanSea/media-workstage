@@ -1,26 +1,29 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { SpatialCard } from '../types/canvas.ts';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Copy, FileText, Film, Image as ImageIcon, Sparkles, Trash2 } from 'lucide-react';
+import type { CardType, SpatialCard } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
-import { screenToWorld, type CanvasTransform } from '../engine/matrix.ts';
+import { screenToWorld, type CanvasTransform, type Point } from '../engine/matrix.ts';
 import { connectCards, hasOutputPort } from '../engine/connections.ts';
+import { createCard, duplicateCards } from '../engine/cardFactory.ts';
+import { useHistory } from '../engine/useHistory.ts';
+import { removeReferencePatch } from '../engine/cardParams.ts';
+import { unpackLayerDecomposition, unpackSequentialStoryboards } from '../engine/expansion.ts';
 import { ImageCardView } from './cards/ImageCardView.tsx';
 import { VideoCardView } from './cards/VideoCardView.tsx';
 import { TextCardView } from './cards/TextCardView.tsx';
 import { PORT_Y, type ConnectHint } from './cards/CardPorts.tsx';
-import {
-  unpackLayerDecomposition,
-  unpackSequentialStoryboards,
-} from '../engine/expansion.ts';
+import type { CardViewProps } from './cards/cardProps.ts';
+import { InspectorPanel, INSPECTOR_WIDTH } from './inspector/InspectorPanel.tsx';
 import { NavigationDock } from './NavigationDock.tsx';
-import { CanvasHeader } from './CanvasHeader.tsx';
-import { SelectionToolbar } from './SelectionToolbar.tsx';
+import { ADD_CARD_ITEMS, CanvasHeader } from './CanvasHeader.tsx';
 import { SettingsModal } from './SettingsModal.tsx';
+import { MediaViewer, type ViewerMedia } from './MediaViewer.tsx';
+import { ShortcutsDialog } from './ShortcutsDialog.tsx';
+import { Menu, useToast, type MenuEntry } from './ui/index.ts';
+
 interface SpatialCanvasProps {
   cards: SpatialCard[];
   setCards: React.Dispatch<React.SetStateAction<SpatialCard[]>>;
-  onAddImageCard: () => void;
-  onAddVideoCard: () => void;
-  onAddTextCard: () => void;
   onTriggerGenerate: (cardId: string) => void;
   /** Viewport to open with (a saved project's). */
   initialViewport?: CanvasTransform;
@@ -48,26 +51,61 @@ interface LinkDrag {
   hoverId?: string;
 }
 
+interface ContextMenuState {
+  at: Point;
+  items: MenuEntry[];
+  title?: string;
+}
+
 const bezier = (srcX: number, srcY: number, tgtX: number, tgtY: number) => {
   const dx = Math.max(80, Math.abs(tgtX - srcX) * 0.5);
   return `M ${srcX} ${srcY} C ${srcX + dx} ${srcY}, ${tgtX - dx} ${tgtY}, ${tgtX} ${tgtY}`;
 };
 
+const isTyping = () => {
+  const el = document.activeElement as HTMLElement | null;
+  const tag = el?.tagName?.toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || !!el?.isContentEditable;
+};
+
+/** Edits of these fields while typing merge into one undo step. */
+const COALESCE_MS = 1000;
+
 export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   cards,
   setCards,
-  onAddImageCard,
-  onAddVideoCard,
-  onAddTextCard,
   onTriggerGenerate,
   initialViewport,
   onViewportChange,
   headerSlot,
 }) => {
-  const containerRef = React.useRef<HTMLDivElement | null>(null);
-  const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const [linkDrag, setLinkDrag] = useState<LinkDrag | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [viewer, setViewer] = useState<ViewerMedia | null>(null);
+  const toast = useToast();
+
+  // --- Undo history ------------------------------------------------------------
+  const { record, undo: undoHistory, redo: redoHistory, canUndo, canRedo } = useHistory();
+  const cardsRef = useRef(cards);
+  cardsRef.current = cards;
+  const lastCoalesce = useRef<{ key: string; at: number } | null>(null);
+
+  const recordEdit = useCallback(() => {
+    lastCoalesce.current = null;
+    record(cardsRef.current);
+  }, [record]);
+
+  /** A user edit: records an undo step, then applies the change. */
+  const editCards = useCallback(
+    (updater: (prev: SpatialCard[]) => SpatialCard[]) => {
+      recordEdit();
+      setCards(updater);
+    },
+    [recordEdit, setCards]
+  );
 
   const {
     transform,
@@ -88,6 +126,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     handleMouseMove,
     handleMouseUp,
     handleStartDragCard,
+    handleSelectCard,
+    pointerRef,
   } = useSpatialCanvas({
     cards,
     setCards,
@@ -95,76 +135,15 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     initialZoom: initialViewport?.zoom,
     initialPanX: initialViewport?.panX,
     initialPanY: initialViewport?.panY,
+    onBeforeEdit: recordEdit,
   });
 
   useEffect(() => {
     onViewportChange?.(transform);
   }, [transform, onViewportChange]);
 
-  const availableImageCards = useMemo(
-    () => cards.filter((c) => c.type === 'image'),
-    [cards]
-  );
-
-  const imageCount = availableImageCards.length;
-  const videoCount = cards.filter((c) => c.type === 'video').length;
-  const textCount = cards.filter((c) => c.type === 'text').length;
-
-  const handleUpdateCard = useCallback(
-    (cardId: string, updater: Partial<SpatialCard>) => {
-      setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, ...updater } : c)));
-    },
-    [setCards]
-  );
-
-  const handleUnpackLayers = (parentCard: SpatialCard) => {
-    setCards((prev) => unpackLayerDecomposition(parentCard, prev));
-  };
-
-  const handleUnpackStoryboards = (parentCard: SpatialCard) => {
-    setCards((prev) => unpackSequentialStoryboards(parentCard, prev));
-  };
-
-  const removeReference = useCallback(
-    (videoId: string, imageId: string) => {
-      setCards((prev) =>
-        prev.map((c) => {
-          if (c.id !== videoId) return c;
-          const ref = c.references?.find((r) => r.cardId === imageId);
-          const prompt = ref ? c.prompt.replace(new RegExp(`@图${ref.tagIndex}\\b`, 'g'), '').trim() : c.prompt;
-          return { ...c, prompt, references: (c.references ?? []).filter((r) => r.cardId !== imageId) };
-        })
-      );
-    },
-    [setCards]
-  );
-
-  const handleDeleteCard = (cardId: string) => {
-    // Drop connections that point at the deleted card along with it.
-    setCards((prev) =>
-      prev
-        .filter((c) => c.id !== cardId)
-        .map((c) => {
-          const refs = c.references?.filter((r) => r.cardId !== cardId);
-          const promptSourceId = c.promptSourceId === cardId ? undefined : c.promptSourceId;
-          return refs?.length !== c.references?.length || promptSourceId !== c.promptSourceId
-            ? { ...c, references: refs, promptSourceId }
-            : c;
-        })
-    );
-    setSelectedCardIds((prev) => {
-      const next = new Set(prev);
-      next.delete(cardId);
-      return next;
-    });
-  };
-
-  const showNotice = useCallback((msg: string) => {
-    setNotice(msg);
-    window.setTimeout(() => setNotice((cur) => (cur === msg ? null : cur)), 2500);
-  }, []);
-
-  // --- Drag-to-connect ------------------------------------------------------
+  const selectedCards = useMemo(() => cards.filter((c) => selectedCardIds.has(c.id)), [cards, selectedCardIds]);
+  const availableImageCards = useMemo(() => cards.filter((c) => c.type === 'image'), [cards]);
 
   const toWorld = useCallback(
     (clientX: number, clientY: number) => {
@@ -173,6 +152,179 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     },
     [transform]
   );
+
+  /**
+   * World point at the centre of the canvas area left of the inspector: new and
+   * pasted cards get selected, which opens the inspector over the right side.
+   */
+  const viewportCenter = useCallback((): Point => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 400, y: 300 };
+    const visibleWidth = Math.max(rect.width - (INSPECTOR_WIDTH + 16), rect.width / 2);
+    return toWorld(rect.left + visibleWidth / 2, rect.top + rect.height / 2);
+  }, [toWorld]);
+
+  // --- Card operations -------------------------------------------------------
+
+  /**
+   * Updates a card. Typing and other rapid edits of the same fields merge into
+   * one undo step; `history: false` skips recording (automatic updates).
+   */
+  const handleUpdateCard = useCallback(
+    (cardId: string, patch: Partial<SpatialCard>, opts?: { history?: boolean }) => {
+      if (opts?.history !== false) {
+        const key = `${cardId}:${Object.keys(patch).sort().join(',')}`;
+        const now = Date.now();
+        const last = lastCoalesce.current;
+        if (!last || last.key !== key || now - last.at > COALESCE_MS) record(cardsRef.current);
+        lastCoalesce.current = { key, at: now };
+      }
+      setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, ...patch } : c)));
+    },
+    [record, setCards]
+  );
+
+  const addCard = useCallback(
+    (type: CardType, at?: Point) => {
+      const card = createCard(type, at ?? viewportCenter(), cardsRef.current);
+      editCards((prev) => [...prev, card]);
+      setSelectedCardIds(new Set([card.id]));
+    },
+    [editCards, viewportCenter, setSelectedCardIds]
+  );
+
+  const undo = useCallback(() => {
+    const restored = undoHistory(cardsRef.current);
+    if (restored) {
+      lastCoalesce.current = null;
+      setCards(restored);
+    }
+  }, [undoHistory, setCards]);
+
+  const redo = useCallback(() => {
+    const restored = redoHistory(cardsRef.current);
+    if (restored) {
+      lastCoalesce.current = null;
+      setCards(restored);
+    }
+  }, [redoHistory, setCards]);
+
+  const deleteCards = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      const gone = new Set(ids);
+      // Drop connections that point at the deleted cards along with them.
+      editCards((prev) =>
+        prev
+          .filter((c) => !gone.has(c.id))
+          .map((c) => {
+            const refs = c.references?.filter((r) => !gone.has(r.cardId));
+            const promptSourceId = c.promptSourceId && gone.has(c.promptSourceId) ? undefined : c.promptSourceId;
+            return refs?.length !== c.references?.length || promptSourceId !== c.promptSourceId
+              ? { ...c, references: refs, promptSourceId }
+              : c;
+          })
+      );
+      setSelectedCardIds((prev) => new Set([...prev].filter((id) => !gone.has(id))));
+      toast(`已删除 ${ids.length} 张卡片`, { action: { label: '撤销', onClick: undo } });
+    },
+    [editCards, setSelectedCardIds, toast, undo]
+  );
+
+  const duplicate = useCallback(
+    (source: SpatialCard[], at?: Point) => {
+      if (source.length === 0) return;
+      const minX = Math.min(...source.map((c) => c.x));
+      const minY = Math.min(...source.map((c) => c.y));
+      const copies = duplicateCards(source, at ?? { x: minX + 40, y: minY + 40 }, cardsRef.current);
+      editCards((prev) => [...prev, ...copies]);
+      setSelectedCardIds(new Set(copies.map((c) => c.id)));
+    },
+    [editCards, setSelectedCardIds]
+  );
+
+  // In-app clipboard for Ctrl+C / Ctrl+V.
+  const clipboardRef = useRef<SpatialCard[]>([]);
+
+  const pasteAtPointer = useCallback(() => {
+    if (clipboardRef.current.length === 0) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    const p = pointerRef.current;
+    const inside = rect && p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom;
+    duplicate(clipboardRef.current, inside ? toWorld(p.x, p.y) : viewportCenter());
+  }, [duplicate, pointerRef, toWorld, viewportCenter]);
+
+  const cardMenuItems = useCallback(
+    (card: SpatialCard): MenuEntry[] => [
+      { label: '生成', icon: <Sparkles className="w-3.5 h-3.5" />, onSelect: () => onTriggerGenerate(card.id) },
+      { label: '复制一份', icon: <Copy className="w-3.5 h-3.5" />, hint: 'Ctrl+D', onSelect: () => duplicate([card]) },
+      'separator',
+      { label: '删除', icon: <Trash2 className="w-3.5 h-3.5" />, hint: 'Delete', danger: true, onSelect: () => deleteCards([card.id]) },
+    ],
+    [onTriggerGenerate, duplicate, deleteCards]
+  );
+
+  const addMenuAt = useCallback(
+    (clientX: number, clientY: number) => {
+      const world = toWorld(clientX, clientY);
+      setContextMenu({
+        at: { x: clientX, y: clientY },
+        title: '在这里添加',
+        items: ADD_CARD_ITEMS((type) => addCard(type, world)).concat(
+          clipboardRef.current.length
+            ? ['separator', { label: `粘贴 ${clipboardRef.current.length} 张卡片`, hint: 'Ctrl+V', onSelect: () => duplicate(clipboardRef.current, world) }]
+            : []
+        ),
+      });
+    },
+    [toWorld, addCard, duplicate]
+  );
+
+  // --- Keyboard shortcuts ----------------------------------------------------
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isTyping() || isSettingsOpen || viewer || showShortcuts) return;
+      const mod = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      const selected = cardsRef.current.filter((c) => selectedCardIds.has(c.id));
+
+      if (mod && key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (mod && key === 'y') {
+        e.preventDefault();
+        redo();
+      } else if (mod && key === 'a') {
+        e.preventDefault();
+        setSelectedCardIds(new Set(cardsRef.current.map((c) => c.id)));
+      } else if (mod && key === 'd') {
+        e.preventDefault();
+        duplicate(selected);
+      } else if (mod && key === 'c') {
+        if (selected.length) {
+          clipboardRef.current = selected;
+          toast(`已复制 ${selected.length} 张卡片`);
+        }
+      } else if (mod && key === 'v') {
+        e.preventDefault();
+        pasteAtPointer();
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selected.length) {
+        e.preventDefault();
+        deleteCards(selected.map((c) => c.id));
+      } else if (!mod && key === 'v') {
+        setActiveTool('select');
+      } else if (!mod && key === 'h') {
+        setActiveTool('hand');
+      } else if (e.key === '?') {
+        setShowShortcuts(true);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedCardIds, undo, redo, duplicate, pasteAtPointer, deleteCards, setSelectedCardIds, setActiveTool, toast, isSettingsOpen, viewer, showShortcuts]);
+
+  // --- Drag-to-connect ------------------------------------------------------
 
   const cardIdAt = (clientX: number, clientY: number, excludeId: string): string | undefined => {
     const el = document.elementFromPoint(clientX, clientY)?.closest('[data-card-id]');
@@ -184,6 +336,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     const p = toWorld(e.clientX, e.clientY);
     setLinkDrag({ sourceId: source.id, x: p.x, y: p.y });
   };
+
+  const showNotice = useCallback((msg: string) => toast(msg, { tone: 'warning' }), [toast]);
 
   useEffect(() => {
     if (!linkDrag) return;
@@ -201,8 +355,10 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       const target = cards.find((c) => c.id === targetId);
       if (!source || !target) return;
       const res = connectCards(source, target);
-      if (res.ok) handleUpdateCard(target.id, res.patch);
-      else showNotice(res.reason);
+      if (res.ok) {
+        recordEdit();
+        handleUpdateCard(target.id, res.patch, { history: false });
+      } else showNotice(res.reason);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -212,7 +368,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     };
     // linkDrag itself changes on every move; only (re)bind when a drag starts or ends.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkDrag?.sourceId, toWorld, cards, handleUpdateCard, showNotice]);
+  }, [linkDrag?.sourceId, toWorld, cards, handleUpdateCard, showNotice, recordEdit]);
 
   const connectHintFor = (card: SpatialCard): ConnectHint => {
     if (!linkDrag || linkDrag.hoverId !== card.id) return undefined;
@@ -242,7 +398,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           midX: (srcX + tgtX) / 2,
           midY: (srcY + tgtY) / 2,
           label: `@图${ref.tagIndex}`,
-          onRemove: () => removeReference(card.id, src.id),
+          onRemove: () => handleUpdateCard(card.id, removeReferencePatch(card, src.id)),
         });
       });
 
@@ -262,7 +418,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       }
     }
     return rays;
-  }, [cards, removeReference, handleUpdateCard]);
+  }, [cards, handleUpdateCard]);
 
   const dragSource = linkDrag ? cards.find((c) => c.id === linkDrag.sourceId) : undefined;
   const dragPath =
@@ -270,74 +426,107 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       ? bezier(dragSource.x + dragSource.width, dragSource.y + PORT_Y, linkDrag.x, linkDrag.y)
       : null;
 
-  const linkedPromptFor = (card: SpatialCard) => {
-    const src = card.promptSourceId ? cards.find((c) => c.id === card.promptSourceId) : undefined;
-    return src ? { title: src.title, text: src.textOutput ?? '' } : undefined;
+  const linkedPromptFor = useCallback(
+    (card: SpatialCard) => {
+      const src = card.promptSourceId ? cards.find((c) => c.id === card.promptSourceId) : undefined;
+      return src ? { title: src.title, text: src.textOutput ?? '' } : undefined;
+    },
+    [cards]
+  );
+
+  // --- Canvas mouse --------------------------------------------------------
+
+  const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) addMenuAt(e.clientX, e.clientY);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    // Keep the native menu (copy/paste) inside text fields.
+    if (target.closest('input, textarea')) return;
+    e.preventDefault();
+    const cardId = target.closest('[data-card-id]')?.getAttribute('data-card-id');
+    const card = cardId ? cards.find((c) => c.id === cardId) : undefined;
+    if (card) {
+      if (!selectedCardIds.has(card.id)) setSelectedCardIds(new Set([card.id]));
+      setContextMenu({ at: { x: e.clientX, y: e.clientY }, items: cardMenuItems(card) });
+    } else {
+      addMenuAt(e.clientX, e.clientY);
+    }
   };
 
   // Grid background pattern scaling
   const gridPatternSize = 24 * transform.zoom;
   const gridOffsetX = transform.panX % gridPatternSize;
   const gridOffsetY = transform.panY % gridPatternSize;
+  const inspectorOpen = selectedCards.length > 0;
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#08090f] text-slate-100 select-none">
-      {/* Header Bar */}
-      <CanvasHeader
-        imageCount={imageCount}
-        videoCount={videoCount}
-        textCount={textCount}
-        onAddImageCard={onAddImageCard}
-        onAddVideoCard={onAddVideoCard}
-        onAddTextCard={onAddTextCard}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        projectSlot={headerSlot}
-      />
+    <div className="relative w-screen h-screen overflow-hidden bg-canvas-bg text-slate-100 select-none">
+      <CanvasHeader onAdd={(type) => addCard(type)} onOpenSettings={() => setIsSettingsOpen(true)} projectSlot={headerSlot} />
 
-      {/* Settings Modal */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-      />
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <ShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
+      {viewer && <MediaViewer media={viewer} onClose={() => setViewer(null)} />}
+      {contextMenu && (
+        <Menu at={contextMenu.at} items={contextMenu.items} title={contextMenu.title} onClose={() => setContextMenu(null)} />
+      )}
 
-      {/* Floating Navigation Dock */}
       <NavigationDock
         zoom={transform.zoom}
         activeTool={activeTool}
+        right={inspectorOpen ? INSPECTOR_WIDTH + 32 : 16}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={undo}
+        onRedo={redo}
         onZoomIn={zoomIn}
         onZoomOut={zoomOut}
         onResetZoom={resetZoom100}
         onFitView={fitView}
         onFocusSelection={() => focusSelection()}
         onToggleTool={setActiveTool}
+        onShowShortcuts={() => setShowShortcuts(true)}
       />
 
-      {/* Multi-Selection Alignment Toolbar */}
-      <SelectionToolbar
-        selectedCount={selectedCardIds.size}
+      <InspectorPanel
+        selected={selectedCards}
+        cards={cards}
+        onUpdateCard={handleUpdateCard}
         onAlign={alignSelected}
-        onArrangeGrid={arrangeSelectedGrid}
-        onClearSelection={() => setSelectedCardIds(new Set())}
+        onArrangeGrid={() => arrangeSelectedGrid(40, 2)}
+        onClose={() => setSelectedCardIds(new Set())}
+        linkedPromptFor={linkedPromptFor}
       />
 
-      {/* Empty canvas hint */}
+      {/* Empty canvas: offer the three card types right away */}
       {cards.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-          <div className="text-center space-y-2 text-slate-500">
-            <div className="text-sm font-semibold text-slate-400">画布是空的</div>
-            <div className="text-xs leading-relaxed">
-              点右上角「新增文本 / 生图 / 视频卡片」开始
-              <br />
-              拖动卡片右侧的圆点到另一张卡片即可连线
+          <div className="pointer-events-auto w-[min(92vw,440px)] p-6 rounded-2xl bg-canvas-surface/90 border border-slate-800 text-center shadow-2xl shadow-black/40">
+            <h2 className="text-sm font-semibold text-slate-100">从一张卡片开始</h2>
+            <p className="mt-1 text-xs text-slate-500">每张卡片完成一步生成，卡片之间可以连线传递提示词和参考图。</p>
+            <div className="mt-5 grid grid-cols-3 gap-2">
+              {(
+                [
+                  ['text', '文本', '写提示词', <FileText key="t" className="w-5 h-5 text-emerald-400" />],
+                  ['image', '图片', '生成图片', <ImageIcon key="i" className="w-5 h-5 text-pink-400" />],
+                  ['video', '视频', '生成视频', <Film key="v" className="w-5 h-5 text-indigo-400" />],
+                ] as const
+              ).map(([type, label, hint, icon]) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => addCard(type)}
+                  className="flex flex-col items-center gap-1.5 py-4 rounded-xl border border-slate-800 bg-canvas-bg hover:border-slate-600 hover:bg-slate-900 transition"
+                >
+                  {icon}
+                  <span className="text-xs font-semibold text-slate-200">{label}</span>
+                  <span className="text-[11px] text-slate-500">{hint}</span>
+                </button>
+              ))}
             </div>
+            <p className="mt-4 text-[11px] text-slate-500">也可以双击画布空白处添加 · 拖动卡片右侧的圆点连线</p>
           </div>
-        </div>
-      )}
-
-      {/* Connection feedback */}
-      {notice && (
-        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-50 px-3 py-1.5 rounded-xl bg-[#161925]/95 border border-amber-500/40 text-xs text-amber-200 shadow-2xl pointer-events-none">
-          {notice}
         </div>
       )}
 
@@ -348,12 +537,10 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onDoubleClick={handleDoubleClick}
+        onContextMenu={handleContextMenu}
         className={`w-full h-full relative overflow-hidden ${
-          linkDrag
-            ? 'cursor-crosshair'
-            : activeTool === 'hand' || isPanning
-            ? 'cursor-grab active:cursor-grabbing'
-            : 'cursor-default'
+          linkDrag ? 'cursor-crosshair' : activeTool === 'hand' || isPanning ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
         }`}
         style={{
           backgroundImage: `radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.12) 1px, transparent 0)`,
@@ -376,30 +563,12 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                 const isPrompt = ray.kind === 'prompt';
                 return (
                   <g key={ray.id}>
-                    {/* Glowing background ray */}
-                    <path
-                      d={ray.pathData}
-                      fill="none"
-                      stroke={isPrompt ? 'rgba(16, 185, 129, 0.2)' : 'rgba(236, 72, 153, 0.2)'}
-                      strokeWidth="8"
-                      strokeLinecap="round"
-                    />
-                    {/* Animated foreground dash ray */}
-                    <path
-                      d={ray.pathData}
-                      fill="none"
-                      stroke={isPrompt ? 'url(#ray-gradient-prompt)' : 'url(#ray-gradient)'}
-                      strokeWidth="2.5"
-                      strokeDasharray="6 6"
-                      className="animate-pulse"
-                    />
+                    <path d={ray.pathData} fill="none" stroke={isPrompt ? '#34d399' : '#f472b6'} strokeOpacity={0.7} strokeWidth="2" />
                     {/* Label pill at curve center; its × disconnects */}
-                    <foreignObject x={ray.midX - 34} y={ray.midY - 12} width={68} height={24}>
+                    <foreignObject x={ray.midX - 36} y={ray.midY - 12} width={72} height={24}>
                       <div
-                        className={`pointer-events-auto flex items-center justify-center gap-1 w-full h-full bg-[#12141e] border rounded-full text-[9px] font-mono font-bold shadow-lg ${
-                          isPrompt
-                            ? 'border-emerald-500/60 text-emerald-300 shadow-emerald-500/30'
-                            : 'border-pink-500/60 text-pink-300 shadow-pink-500/30'
+                        className={`pointer-events-auto flex items-center justify-center gap-1 w-full h-full bg-canvas-surface border rounded-full text-[11px] font-mono ${
+                          isPrompt ? 'border-emerald-500/60 text-emerald-300' : 'border-pink-500/60 text-pink-300'
                         }`}
                       >
                         <span>{ray.label}</span>
@@ -408,7 +577,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                           title="断开连线"
                           onMouseDown={(e) => e.stopPropagation()}
                           onClick={ray.onRemove}
-                          className="text-slate-500 hover:text-red-300 leading-none"
+                          className="text-slate-500 hover:text-rose-300 leading-none"
                         >
                           ×
                         </button>
@@ -420,46 +589,24 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
               {/* Line following the cursor while connecting */}
               {dragPath && (
-                <path
-                  d={dragPath}
-                  fill="none"
-                  stroke={dragSource?.type === 'text' ? '#34d399' : '#f472b6'}
-                  strokeWidth="2.5"
-                  strokeDasharray="6 4"
-                />
+                <path d={dragPath} fill="none" stroke={dragSource?.type === 'text' ? '#34d399' : '#f472b6'} strokeWidth="2" strokeDasharray="6 4" />
               )}
-
-              <defs>
-                <linearGradient
-                  id="ray-gradient"
-                  x1="0%"
-                  y1="0%"
-                  x2="100%"
-                  y2="0%"
-                >
-                  <stop offset="0%" stopColor="#ec4899" />
-                  <stop offset="50%" stopColor="#8b5cf6" />
-                  <stop offset="100%" stopColor="#6366f1" />
-                </linearGradient>
-                <linearGradient id="ray-gradient-prompt" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#10b981" />
-                  <stop offset="100%" stopColor="#22d3ee" />
-                </linearGradient>
-              </defs>
             </g>
           </svg>
 
           {/* Cards Render Layer */}
           <div className="pointer-events-auto">
             {cards.map((card) => {
-              const common = {
+              const common: CardViewProps = {
                 card,
                 isSelected: selectedCardIds.has(card.id),
-                onUpdateCard: handleUpdateCard,
-                onDeleteCard: handleDeleteCard,
-                onStartDrag: (e: React.MouseEvent<HTMLDivElement>) => handleStartDragCard(e, card),
-                onTriggerGenerate,
                 connectHint: connectHintFor(card),
+                onSelect: (e) => handleSelectCard(e, card),
+                onStartDrag: (e) => handleStartDragCard(e, card),
+                onUpdateCard: handleUpdateCard,
+                onTriggerGenerate,
+                menuItems: cardMenuItems(card),
+                onOpenViewer: setViewer,
               };
               if (card.type === 'text') {
                 return (
@@ -476,8 +623,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                   <ImageCardView
                     key={card.id}
                     {...common}
-                    onUnpackLayers={handleUnpackLayers}
-                    onUnpackStoryboards={handleUnpackStoryboards}
+                    onUnpackLayers={(c) => editCards((prev) => unpackLayerDecomposition(c, prev))}
+                    onUnpackStoryboards={(c) => editCards((prev) => unpackSequentialStoryboards(c, prev))}
                     linkedPrompt={linkedPromptFor(card)}
                     onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
                     onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
@@ -491,6 +638,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                   availableImageCards={availableImageCards}
                   linkedPrompt={linkedPromptFor(card)}
                   onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
+                  onNotice={showNotice}
                 />
               );
             })}
@@ -506,7 +654,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
               width: `${marqueeScreenBox.width}px`,
               height: `${marqueeScreenBox.height}px`,
             }}
-            className="absolute pointer-events-none border border-indigo-500/80 bg-indigo-500/15 rounded-md shadow-sm"
+            className="absolute pointer-events-none border border-indigo-500/80 bg-indigo-500/15 rounded-md"
           />
         )}
       </div>

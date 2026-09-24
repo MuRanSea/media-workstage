@@ -66,6 +66,8 @@ type Summary struct {
 	CreatedAt  time.Time      `json:"createdAt"`
 	UpdatedAt  time.Time      `json:"updatedAt"`
 	CardCounts map[string]int `json:"cardCounts"`
+	// Cover is the first image card's local result path ("/assets/..."), if any.
+	Cover string `json:"cover,omitempty"`
 }
 
 // Store manages the project folders under one root directory.
@@ -106,13 +108,15 @@ func (s *Store) List() ([]Summary, error) {
 	}
 	out := make([]Summary, 0, len(docs))
 	for _, d := range docs {
+		counts, cover := summarizeCards(d.Cards)
 		out = append(out, Summary{
 			ID:         d.ID,
 			Name:       d.Name,
 			Dir:        s.dirs[d.ID],
 			CreatedAt:  d.CreatedAt,
 			UpdatedAt:  d.UpdatedAt,
-			CardCounts: countCards(d.Cards),
+			CardCounts: counts,
+			Cover:      cover,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
@@ -367,18 +371,25 @@ func isJSONArray(raw json.RawMessage) bool {
 	return strings.HasPrefix(trimmed, "[") && json.Valid(raw)
 }
 
-func countCards(raw json.RawMessage) map[string]int {
+// summarizeCards counts cards by type and picks the first image card with a
+// local result as the project's cover.
+func summarizeCards(raw json.RawMessage) (map[string]int, string) {
 	counts := map[string]int{}
 	var cards []struct {
-		Type string `json:"type"`
+		Type      string `json:"type"`
+		ResultURL string `json:"resultUrl"`
 	}
 	if err := json.Unmarshal(raw, &cards); err != nil {
-		return counts
+		return counts, ""
 	}
+	cover := ""
 	for _, c := range cards {
 		counts[c.Type]++
+		if cover == "" && c.Type == "image" && strings.HasPrefix(c.ResultURL, "/"+AssetsDir+"/") {
+			cover = c.ResultURL
+		}
 	}
-	return counts
+	return counts, cover
 }
 
 var reservedWindowsNames = map[string]bool{

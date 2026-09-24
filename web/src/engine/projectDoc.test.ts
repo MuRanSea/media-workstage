@@ -54,6 +54,7 @@ describe('project document normalization', () => {
       ['b', 'running'],
     ]);
     expect(normalizeCards({})).toEqual([]);
+    expect(normalizeCards([card({ prompt: '输入画面主体与氛围描述...' })])[0].prompt).toBe('');
   });
 
   it('lists only cards with an unfinished task', () => {

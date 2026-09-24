@@ -1,117 +1,85 @@
 import React from 'react';
-import {
-  ZoomIn,
-  ZoomOut,
-  Maximize2,
-  Focus,
-  Hand,
-  MousePointer,
-} from 'lucide-react';
+import { Focus, Hand, HelpCircle, Maximize2, MousePointer2, Redo2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import type { CanvasTool } from '../types/canvas.ts';
+import { IconButton } from './ui/index.ts';
 
 interface NavigationDockProps {
   zoom: number;
   activeTool: CanvasTool;
+  /** Distance from the right edge, so the dock clears the inspector panel. */
+  right: number;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onResetZoom: () => void;
   onFitView: () => void;
   onFocusSelection: () => void;
   onToggleTool: (tool: CanvasTool) => void;
+  onShowShortcuts: () => void;
 }
+
+const Divider = () => <div className="h-5 w-px bg-slate-800 mx-0.5" />;
 
 export const NavigationDock: React.FC<NavigationDockProps> = ({
   zoom,
   activeTool,
+  right,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
   onZoomIn,
   onZoomOut,
   onResetZoom,
   onFitView,
   onFocusSelection,
   onToggleTool,
-}) => {
-  const zoomPercent = Math.round(zoom * 100);
-
-  return (
-    <div className="fixed bottom-6 right-6 z-40 flex items-center gap-1 bg-[#12141e]/90 backdrop-blur-md border border-slate-800/80 p-1.5 rounded-2xl shadow-2xl shadow-black/60 text-slate-300 select-none">
-      {/* Tool switcher */}
-      <div className="flex bg-slate-900/80 p-0.5 rounded-xl border border-slate-800 mr-1">
-        <button
-          type="button"
-          onClick={() => onToggleTool('select')}
-          title="选择/移动卡片 (V)"
-          className={`p-1.5 rounded-lg transition ${
-            activeTool === 'select'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <MousePointer className="w-3.5 h-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => onToggleTool('hand')}
-          title="抓手漫游画布 (Space)"
-          className={`p-1.5 rounded-lg transition ${
-            activeTool === 'hand'
-              ? 'bg-indigo-600 text-white shadow-sm'
-              : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Hand className="w-3.5 h-3.5" />
-        </button>
-      </div>
-
-      <div className="h-4 w-[1px] bg-slate-800" />
-
-      {/* Zoom controls */}
-      <button
-        type="button"
-        onClick={onZoomOut}
-        title="缩小 (-)"
-        className="p-1.5 hover:bg-slate-800/80 hover:text-white rounded-lg transition"
-      >
-        <ZoomOut className="w-3.5 h-3.5" />
-      </button>
-
-      <button
-        type="button"
-        onClick={onResetZoom}
-        title="重置缩放到 100% (1)"
-        className="px-2 py-1 hover:bg-slate-800/80 hover:text-white rounded-lg text-xs font-mono font-bold transition min-w-[50px] text-center"
-      >
-        {zoomPercent}%
-      </button>
-
-      <button
-        type="button"
-        onClick={onZoomIn}
-        title="放大 (+)"
-        className="p-1.5 hover:bg-slate-800/80 hover:text-white rounded-lg transition"
-      >
-        <ZoomIn className="w-3.5 h-3.5" />
-      </button>
-
-      <div className="h-4 w-[1px] bg-slate-800" />
-
-      {/* Quick view navigation */}
-      <button
-        type="button"
-        onClick={onFitView}
-        title="适应画布全景 (0)"
-        className="p-1.5 hover:bg-slate-800/80 hover:text-white rounded-lg transition flex items-center gap-1 text-xs"
-      >
-        <Maximize2 className="w-3.5 h-3.5" />
-      </button>
-
-      <button
-        type="button"
-        onClick={onFocusSelection}
-        title="聚焦所选卡片 (F)"
-        className="p-1.5 hover:bg-slate-800/80 hover:text-white rounded-lg transition flex items-center gap-1 text-xs"
-      >
-        <Focus className="w-3.5 h-3.5" />
-      </button>
-    </div>
-  );
-};
+  onShowShortcuts,
+}) => (
+  <div
+    style={{ right }}
+    className="fixed bottom-4 z-40 flex items-center gap-0.5 p-1 bg-canvas-surface/90 backdrop-blur-md border border-slate-800 rounded-xl shadow-lg shadow-black/40 text-slate-300 select-none transition-[right] duration-200"
+  >
+    <IconButton title="选择（V）" active={activeTool === 'select'} onClick={() => onToggleTool('select')}>
+      <MousePointer2 className="w-4 h-4" />
+    </IconButton>
+    <IconButton title="拖动画布（按住空格）" active={activeTool === 'hand'} onClick={() => onToggleTool('hand')}>
+      <Hand className="w-4 h-4" />
+    </IconButton>
+    <Divider />
+    <IconButton title="撤销（Ctrl+Z）" disabled={!canUndo} onClick={onUndo}>
+      <Undo2 className="w-4 h-4" />
+    </IconButton>
+    <IconButton title="重做（Ctrl+Shift+Z）" disabled={!canRedo} onClick={onRedo}>
+      <Redo2 className="w-4 h-4" />
+    </IconButton>
+    <Divider />
+    <IconButton title="缩小（-）" onClick={onZoomOut}>
+      <ZoomOut className="w-4 h-4" />
+    </IconButton>
+    <button
+      type="button"
+      onClick={onResetZoom}
+      title="缩放到 100%（1）"
+      className="h-8 min-w-[52px] px-1.5 rounded-lg text-xs font-mono hover:bg-slate-800 hover:text-white"
+    >
+      {Math.round(zoom * 100)}%
+    </button>
+    <IconButton title="放大（+）" onClick={onZoomIn}>
+      <ZoomIn className="w-4 h-4" />
+    </IconButton>
+    <IconButton title="显示全部卡片（0）" onClick={onFitView}>
+      <Maximize2 className="w-4 h-4" />
+    </IconButton>
+    <IconButton title="聚焦选中的卡片（F）" onClick={onFocusSelection}>
+      <Focus className="w-4 h-4" />
+    </IconButton>
+    <Divider />
+    <IconButton title="快捷键" onClick={onShowShortcuts}>
+      <HelpCircle className="w-4 h-4" />
+    </IconButton>
+  </div>
+);

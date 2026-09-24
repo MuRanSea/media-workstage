@@ -49,8 +49,8 @@ export const LinkedPromptBox: React.FC<{
   text: string;
   onUnlink: () => void;
 }> = ({ sourceTitle, text, onUnlink }) => (
-  <div className="rounded-xl border border-emerald-500/40 bg-emerald-950/20 p-2 space-y-1">
-    <div className="flex items-center justify-between text-[10px]">
+  <div className="rounded-xl border border-emerald-500/40 bg-emerald-950/20 px-2.5 py-2 space-y-1">
+    <div className="flex items-center justify-between text-[11px]">
       <span className="flex items-center gap-1 text-emerald-300 font-semibold min-w-0">
         <Link2 className="w-3 h-3 flex-shrink-0" />
         <span className="truncate">提示词来自「{sourceTitle}」</span>

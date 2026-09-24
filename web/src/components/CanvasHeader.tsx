@@ -1,116 +1,54 @@
 import React from 'react';
-import {
-  Sparkles,
-  Video,
-  Image as ImageIcon,
-  Plus,
-  Settings,
-  FileText,
-} from 'lucide-react';
+import { FileText, Film, Image as ImageIcon, Plus, Settings, Sparkles } from 'lucide-react';
+import type { CardType } from '../types/canvas.ts';
+import { navigate } from '../services/router.ts';
+import { IconButton, MenuButton, type MenuEntry } from './ui/index.ts';
 
 interface CanvasHeaderProps {
-  imageCount: number;
-  videoCount: number;
-  textCount: number;
-  onAddImageCard: () => void;
-  onAddVideoCard: () => void;
-  onAddTextCard: () => void;
+  onAdd: (type: CardType) => void;
   onOpenSettings: () => void;
   /** Project name, save status and switcher. */
   projectSlot?: React.ReactNode;
 }
 
-export const CanvasHeader: React.FC<CanvasHeaderProps> = ({
-  imageCount,
-  videoCount,
-  textCount,
-  onAddImageCard,
-  onAddVideoCard,
-  onAddTextCard,
-  onOpenSettings,
-  projectSlot,
-}) => {
-  return (
-    <header className="fixed top-4 left-4 right-4 z-40 flex items-center justify-between pointer-events-none select-none">
-      {/* Brand logo and stats */}
-      <div className="pointer-events-auto flex items-center gap-3 bg-[#12141e]/90 backdrop-blur-md border border-slate-800/80 px-3.5 py-2 rounded-2xl shadow-xl shadow-black/40">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-xl bg-gradient-to-tr from-pink-600 via-purple-600 to-indigo-600 flex items-center justify-center shadow-md shadow-pink-600/30">
-            <Sparkles className="w-4 h-4 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xs font-bold text-slate-100 tracking-wide flex items-center gap-1.5">
-              Media Workstage
-              <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-indigo-500/20 text-indigo-300 font-mono border border-indigo-500/30">
-                Spatial v1
-              </span>
-            </h1>
-          </div>
-        </div>
+export const ADD_CARD_ITEMS = (onAdd: (type: CardType) => void): MenuEntry[] => [
+  { label: '文本卡片', hint: '让模型写提示词', icon: <FileText className="w-4 h-4 text-emerald-400" />, onSelect: () => onAdd('text') },
+  { label: '图片卡片', hint: '文字生成图片', icon: <ImageIcon className="w-4 h-4 text-pink-400" />, onSelect: () => onAdd('image') },
+  { label: '视频卡片', hint: '文字或图片生成视频', icon: <Film className="w-4 h-4 text-indigo-400" />, onSelect: () => onAdd('video') },
+];
 
-        {projectSlot && (
-          <>
-            <div className="h-4 w-[1px] bg-slate-800" />
-            {projectSlot}
-          </>
+export const CanvasHeader: React.FC<CanvasHeaderProps> = ({ onAdd, onOpenSettings, projectSlot }) => (
+  <header className="fixed top-4 left-4 right-4 z-40 flex items-center justify-between gap-3 pointer-events-none select-none">
+    <div className="pointer-events-auto flex items-center gap-3 min-w-0 h-11 pl-1.5 pr-3 bg-canvas-surface/90 backdrop-blur-md border border-slate-800 rounded-xl shadow-lg shadow-black/30">
+      <button
+        type="button"
+        title="全部工程"
+        onClick={() => navigate('/')}
+        className="w-8 h-8 flex-shrink-0 rounded-lg bg-gradient-to-tr from-pink-600 to-indigo-600 flex items-center justify-center hover:opacity-90"
+      >
+        <Sparkles className="w-4 h-4 text-white" />
+      </button>
+      {projectSlot}
+    </div>
+
+    <div className="pointer-events-auto flex items-center gap-1.5 h-11 px-1.5 bg-canvas-surface/90 backdrop-blur-md border border-slate-800 rounded-xl shadow-lg shadow-black/30">
+      <MenuButton items={ADD_CARD_ITEMS(onAdd)} align="right" title="添加到画布中央">
+        {({ open, toggle }) => (
+          <button
+            type="button"
+            onClick={toggle}
+            className={`flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+              open ? 'bg-indigo-500 text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'
+            }`}
+          >
+            <Plus className="w-4 h-4" />
+            添加
+          </button>
         )}
-
-        <div className="h-4 w-[1px] bg-slate-800" />
-
-        {/* Card stats badges */}
-        <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
-          <span className="flex items-center gap-1">
-            <ImageIcon className="w-3 h-3 text-pink-400" /> {imageCount} 生图
-          </span>
-          <span className="text-slate-700">•</span>
-          <span className="flex items-center gap-1">
-            <Video className="w-3 h-3 text-indigo-400" /> {videoCount} 视频
-          </span>
-          <span className="text-slate-700">•</span>
-          <span className="flex items-center gap-1">
-            <FileText className="w-3 h-3 text-emerald-400" /> {textCount} 文本
-          </span>
-        </div>
-      </div>
-
-      {/* Action buttons */}
-      <div className="pointer-events-auto flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onAddTextCard}
-          className="flex items-center gap-1.5 bg-[#141724]/90 hover:bg-[#1a1e30] border border-emerald-500/30 hover:border-emerald-500/60 px-3 py-2 rounded-xl text-xs font-semibold text-emerald-300 shadow-lg shadow-emerald-950/40 backdrop-blur-md transition active:scale-95"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>新增文本卡片</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onAddImageCard}
-          className="flex items-center gap-1.5 bg-[#141724]/90 hover:bg-[#1a1e30] border border-pink-500/30 hover:border-pink-500/60 px-3 py-2 rounded-xl text-xs font-semibold text-pink-300 shadow-lg shadow-pink-950/40 backdrop-blur-md transition active:scale-95"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>新增生图卡片</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onAddVideoCard}
-          className="flex items-center gap-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 border border-indigo-400/30 px-3.5 py-2 rounded-xl text-xs font-bold text-white shadow-lg shadow-indigo-950/60 backdrop-blur-md transition active:scale-95"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>新增视频卡片</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          title="配置 API 密钥与服务商参数"
-          className="flex items-center justify-center w-8 h-8 bg-[#12141e]/90 hover:bg-[#1a1e30] border border-slate-700/80 hover:border-slate-600 rounded-xl text-slate-300 hover:text-white shadow-md transition active:scale-95"
-        >
-          <Settings className="w-4 h-4" />
-        </button>
-      </div>
-    </header>
-  );
-};
+      </MenuButton>
+      <IconButton title="服务商设置" onClick={onOpenSettings}>
+        <Settings className="w-4 h-4" />
+      </IconButton>
+    </div>
+  </header>
+);

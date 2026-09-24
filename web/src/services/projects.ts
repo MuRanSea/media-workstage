@@ -24,6 +24,8 @@ export interface ProjectSummary {
   createdAt: string;
   updatedAt: string;
   cardCounts: Partial<Record<SpatialCard['type'], number>>;
+  /** First image card's local result ("/assets/..."), shown as the project's cover. */
+  cover?: string;
 }
 
 export interface ProjectList {

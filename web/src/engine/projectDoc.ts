@@ -21,10 +21,13 @@ export function normalizeViewport(raw: unknown): ProjectViewport {
   };
 }
 
+/** Hint texts that older versions stored as the actual prompt of new cards. */
+const LEGACY_PLACEHOLDER_PROMPTS = new Set(['输入画面主体与氛围描述...', '运镜描述，输入 @图1 @图2 引用素材...']);
+
 /**
- * Cards from project.json. Drops entries that are not cards, and resets cards
- * whose submit never returned a task id (the page closed mid-request) to idle,
- * since nothing will ever update them.
+ * Cards from project.json. Drops entries that are not cards, resets cards whose
+ * submit never returned a task id (the page closed mid-request) to idle since
+ * nothing will ever update them, and clears legacy placeholder prompts.
  */
 export function normalizeCards(raw: unknown): SpatialCard[] {
   if (!Array.isArray(raw)) return [];
@@ -33,9 +36,12 @@ export function normalizeCards(raw: unknown): SpatialCard[] {
       (c): c is SpatialCard =>
         !!c && typeof c === 'object' && typeof (c as SpatialCard).id === 'string' && typeof (c as SpatialCard).type === 'string'
     )
-    .map((c) =>
-      !c.taskId && (c.status === 'queued' || c.status === 'running') ? { ...c, status: 'idle', progress: 0 } : c
-    );
+    .map((c) => {
+      let card = c;
+      if (!card.taskId && (card.status === 'queued' || card.status === 'running')) card = { ...card, status: 'idle', progress: 0 };
+      if (LEGACY_PLACEHOLDER_PROMPTS.has(card.prompt)) card = { ...card, prompt: '' };
+      return card;
+    });
 }
 
 /** Cards whose task may have finished while the project was closed. */
