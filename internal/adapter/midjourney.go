@@ -36,6 +36,13 @@ type midjourneyImagineRequest struct {
 	Base64Array   []string                 `json:"base64Array,omitempty"` // reference images as data URIs
 }
 
+type midjourneyBlendRequest struct {
+	BotType       string                   `json:"botType,omitempty"`
+	Base64Array   []string                 `json:"base64Array"`
+	Dimensions    string                   `json:"dimensions"` // PORTRAIT | SQUARE | LANDSCAPE
+	AccountFilter *midjourneyAccountFilter `json:"accountFilter,omitempty"`
+}
+
 // midjourneyAccountFilter picks the proxy account a job runs on; modes selects by speed.
 type midjourneyAccountFilter struct {
 	Modes []string `json:"modes"`
@@ -105,6 +112,8 @@ func (a *MidjourneyAdapter) SubmitTask(ctx context.Context, task *model.MediaTas
 	switch task.TaskMode {
 	case "action":
 		return a.submitAction(ctx, task)
+	case "blend":
+		return a.submitBlend(ctx, task)
 	default:
 		return a.submitImagine(ctx, task)
 	}
@@ -126,6 +135,42 @@ func (a *MidjourneyAdapter) submitImagine(ctx context.Context, task *model.Media
 		return "", err
 	}
 	return a.acceptedID(resp)
+}
+
+// submitBlend mixes 2–5 reference images into one grid; the card's ratio picks the shape.
+func (a *MidjourneyAdapter) submitBlend(ctx context.Context, task *model.MediaTask) (string, error) {
+	refs := parseReferenceAssets(task.ParamsJSON)
+	if len(refs) < 2 || len(refs) > midjourneyMaxReferences {
+		return "", fmt.Errorf("Midjourney Blend 需要 2–5 张参考图，当前 %d 张", len(refs))
+	}
+	images, err := midjourneyBase64Array(refs)
+	if err != nil {
+		return "", err
+	}
+	params := parseGenericImageParams(task.ParamsJSON)
+	resp, err := a.postSubmit(ctx, "/mj/submit/blend", midjourneyBlendRequest{
+		BotType:       midjourneyBotType(task.Model),
+		Base64Array:   images,
+		Dimensions:    midjourneyDimensions(params.AspectRatio),
+		AccountFilter: midjourneyAccountFilterFor(params, ""),
+	})
+	if err != nil {
+		return "", err
+	}
+	return a.acceptedID(resp)
+}
+
+// midjourneyDimensions maps a ratio onto Blend's three shapes (2:3, 1:1, 3:2).
+func midjourneyDimensions(ratio string) string {
+	r, ok := ratioValue(ratio)
+	switch {
+	case !ok || r == 1:
+		return "SQUARE"
+	case r < 1:
+		return "PORTRAIT"
+	default:
+		return "LANDSCAPE"
+	}
 }
 
 // submitAction runs one of the source task's buttons. An action that opens a modal (a

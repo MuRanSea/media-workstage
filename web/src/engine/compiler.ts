@@ -2,6 +2,7 @@ import { SEEDREAM_PIXEL_MAP, type MjSpeed, type ReferenceItem, type SpatialCard 
 import type { CreateTaskPayload, ProviderId } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
 import { resolveReferenceAsset } from './videoCompiler.ts';
+import { MJ_MAX_REFERENCES } from './connections.ts';
 
 export interface ImageCompilationInput {
   /** Provider running the model; defaults to 'ark'. Ark-protocol providers get Seedream rules. */
@@ -18,6 +19,7 @@ export interface ImageCompilationInput {
   background?: 'opaque' | 'transparent';
   imageResolution?: '1K' | '2K' | '4K';
   mjSpeed?: MjSpeed;
+  mjOperation?: 'imagine' | 'blend';
   /** Midjourney reference images, resolved against `allCards`. */
   references?: ReferenceItem[];
   allCards?: SpatialCard[];
@@ -107,6 +109,13 @@ function compileChannelImagePayload(provider: ProviderId, input: ImageCompilatio
   // Midjourney has no resolution; its speed picks the proxy account.
   payload.params = { aspect_ratio, ...(input.mjSpeed ? { speed: input.mjSpeed } : {}) };
   if (input.references?.length) payload.reference_assets = compileReferenceImages(input.references, input.allCards);
+  if (input.mjOperation === 'blend') {
+    const count = input.references?.length ?? 0;
+    if (count < 2 || count > MJ_MAX_REFERENCES) throw new Error(`Blend 需要连入 2–5 张图片，当前 ${count} 张`);
+    // Blend takes no prompt; the backend still records one.
+    payload.task_mode = 'blend';
+    payload.prompt = input.prompt.trim() || 'Blend';
+  }
   return payload;
 }
 
@@ -145,6 +154,7 @@ export function compileCardImagePayload(card: SpatialCard, allCards: SpatialCard
     background: card.background,
     imageResolution: card.imageResolution,
     mjSpeed: card.mjSpeed,
+    mjOperation: card.mjOperation,
     references: card.references,
     allCards,
   });

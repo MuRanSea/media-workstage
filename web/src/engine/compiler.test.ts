@@ -222,3 +222,37 @@ describe('Midjourney reference images', () => {
     ]);
   });
 });
+
+describe('Midjourney blend', () => {
+  const ref = (n: number) => ({ cardId: `i${n}`, tagIndex: n, role: 'reference_image' as const, label: `图${n}`, url: `/assets/images/t${n}/base.png` });
+  const blendCard = (refs: number): SpatialCard => ({
+    id: 'm1',
+    type: 'image',
+    title: '图片 9',
+    tagIndex: 9,
+    x: 0,
+    y: 0,
+    width: 340,
+    prompt: '',
+    provider: 'midjourney',
+    model: 'mj_imagine',
+    status: 'idle',
+    progress: 0,
+    imageRatioPreset: '2:3',
+    mjSpeed: 'FAST',
+    mjOperation: 'blend',
+    references: Array.from({ length: refs }, (_, i) => ref(i + 1)),
+  });
+
+  it('mixes the connected images, with no prompt needed', () => {
+    const payload = compileCardImagePayload(blendCard(3));
+    expect(payload.task_mode).toBe('blend');
+    expect(payload.prompt).toBe('Blend');
+    expect(payload.params).toEqual({ aspect_ratio: '2:3', speed: 'FAST' });
+    expect(payload.reference_assets).toHaveLength(3);
+  });
+
+  it('needs two to five images', () => {
+    expect(() => compileCardImagePayload(blendCard(1))).toThrow('2–5 张');
+  });
+});

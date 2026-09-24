@@ -40,16 +40,19 @@ export function imageModelPatch(card: SpatialCard, option: ModelOption): Partial
   };
 }
 
-/** Midjourney-only settings (speed, reference images) do not carry over to other channels. */
+/** Midjourney-only settings (speed, blend, reference images) do not carry over to other channels. */
 function midjourneyOnlyReset(option: ModelOption): Partial<SpatialCard> {
-  return option.protocol === 'midjourney' ? {} : { mjSpeed: undefined, references: undefined };
+  return option.protocol === 'midjourney' ? {} : { mjSpeed: undefined, mjOperation: undefined, references: undefined };
 }
 
 /** One-line size description, e.g. "2K · 16:9", "2048x1024" or "16:9 · Relax" (Midjourney). */
 export function imageSizeSummary(card: SpatialCard): string {
   const ratio = card.imageRatioPreset ?? '16:9';
   const protocol = protocolOf(card.provider ?? 'ark');
-  if (protocol === 'midjourney') return card.mjSpeed ? `${ratio} · ${MJ_SPEED_LABELS[card.mjSpeed]}` : ratio;
+  if (protocol === 'midjourney') {
+    const parts = [card.mjOperation === 'blend' ? 'Blend' : '', ratio, card.mjSpeed ? MJ_SPEED_LABELS[card.mjSpeed] : ''];
+    return parts.filter(Boolean).join(' · ');
+  }
   if (protocol !== 'ark') return `${card.imageResolution ?? '2K'} · ${ratio}`;
   if (card.sizeMode === 'custom_pixels') return card.customPixels ?? '';
   const def = IMAGE_MODELS.find((m) => m.id === card.model) ?? IMAGE_MODELS[0];

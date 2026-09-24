@@ -164,7 +164,11 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         </Button>
       )}
 
-      {linkedPrompt ? (
+      {card.mjOperation === 'blend' && protocolOf(provider) === 'midjourney' ? (
+        <p className="text-[11px] leading-relaxed text-slate-500 px-1">
+          Blend 混合连入的 {card.references?.length ?? 0} 张图片，不使用提示词（需要 2–5 张）。
+        </p>
+      ) : linkedPrompt ? (
         <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
       ) : (
         <AutoTextarea

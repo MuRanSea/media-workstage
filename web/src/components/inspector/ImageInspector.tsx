@@ -137,6 +137,29 @@ const ImageSettings: React.FC<Props> = ({ card, cards, update, linkedPromptText 
 
       {isMidjourney && (
         <Section title={`参考图 ${card.references?.length ?? 0}/${MJ_MAX_REFERENCES}`}>
+          <Field
+            label="生成方式"
+            hint={
+              card.mjOperation === 'blend'
+                ? '把连入的 2–5 张图片混合成一张四宫格，不使用提示词；比例只分竖、方、横三种。'
+                : '按提示词生成；连入的图片作为垫图。'
+            }
+          >
+            <Segmented
+              accent="pink"
+              value={card.mjOperation ?? 'imagine'}
+              onChange={(v) => update({ mjOperation: v === 'imagine' ? undefined : v })}
+              options={[
+                { value: 'imagine', label: '提示词生图' },
+                {
+                  value: 'blend',
+                  label: 'Blend 混合',
+                  disabled: (card.references?.length ?? 0) < 2 && card.mjOperation !== 'blend',
+                  title: '需要连入至少 2 张图片',
+                },
+              ]}
+            />
+          </Field>
           <ReferenceList
             refs={card.references ?? []}
             cards={cards}

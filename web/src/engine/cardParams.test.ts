@@ -68,6 +68,7 @@ describe('image params', () => {
   it('gives Midjourney a ratio and speed instead of a resolution', () => {
     expect(imageSizeSummary(base({ type: 'image', provider: 'midjourney', imageResolution: '4K', imageRatioPreset: '3:2' }))).toBe('3:2');
     expect(imageSizeSummary(base({ type: 'image', provider: 'midjourney', imageRatioPreset: '3:2', mjSpeed: 'RELAX' }))).toBe('3:2 · Relax');
+    expect(imageSizeSummary(base({ type: 'image', provider: 'midjourney', imageRatioPreset: '1:1', mjOperation: 'blend' }))).toBe('Blend · 1:1');
   });
 
   it('drops the Midjourney speed when switching to another channel', () => {
@@ -85,6 +86,7 @@ describe('image params', () => {
       references: [{ cardId: 'i1', tagIndex: 3, role: 'reference_image', label: 'a' }],
     });
     expect(imageModelPatch(card, opt('openai', 'gpt-image-2')).references).toBeUndefined();
+    expect('mjOperation' in imageModelPatch(card, opt('openai', 'gpt-image-2'))).toBe(true);
     expect('references' in imageModelPatch(card, opt('openai', 'gpt-image-2'))).toBe(true);
     expect('references' in imageModelPatch(card, opt('ark', 'doubao-seedream-5-0-lite-260128'))).toBe(true);
     expect('references' in imageModelPatch(card, opt('midjourney', 'NIJI_JOURNEY'))).toBe(false);

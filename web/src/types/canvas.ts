@@ -102,6 +102,8 @@ export interface SpatialCard {
   imageResolution?: '1K' | '2K' | '4K';
   /** Midjourney speed mode; unset leaves it to the gateway. */
   mjSpeed?: MjSpeed;
+  /** Midjourney: imagine from the prompt (default), or blend the reference images. */
+  mjOperation?: 'imagine' | 'blend';
 
   // Image specific parameters (Seedream 5.0 Series)
   imageMode?: ImageTaskMode;

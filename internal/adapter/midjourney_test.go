@@ -436,3 +436,46 @@ func TestMidjourneySubmit_ReferenceImageLimits(t *testing.T) {
 	}
 	assert.ErrorContains(t, submit(six), "最多 5 张")
 }
+
+func TestMidjourneySubmitBlend(t *testing.T) {
+	var path string
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, submitted = r.URL.Path, nil
+		_ = json.NewDecoder(r.Body).Decode(&submitted)
+		_, _ = io.WriteString(w, `{"code":1,"result":"blend-1"}`)
+	}))
+	defer srv.Close()
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+
+	png := localPNG(t, "blend.png")
+	blend := func(n int, ratio, speed string) *model.MediaTask {
+		refs := make([]model.ReferenceItem, n)
+		for i := range refs {
+			refs[i] = model.ReferenceItem{LocalPath: png}
+		}
+		params, _ := json.Marshal(map[string]any{"aspect_ratio": ratio, "speed": speed, "reference_assets": refs})
+		task := imageTask("midjourney", "NIJI_JOURNEY", string(params))
+		task.TaskMode = "blend"
+		return task
+	}
+
+	id, err := a.SubmitTask(context.Background(), blend(2, "2:3", "RELAX"))
+	require.NoError(t, err)
+	assert.Equal(t, "blend-1", id)
+	assert.Equal(t, "/mj/submit/blend", path)
+	assert.Equal(t, "NIJI_JOURNEY", submitted["botType"])
+	assert.Equal(t, "PORTRAIT", submitted["dimensions"])
+	assert.Equal(t, map[string]any{"modes": []any{"RELAX"}}, submitted["accountFilter"])
+	assert.Len(t, submitted["base64Array"], 2)
+	assert.NotContains(t, submitted, "prompt", "blend takes no prompt")
+
+	for ratio, want := range map[string]string{"1:1": "SQUARE", "16:9": "LANDSCAPE", "3:2": "LANDSCAPE", "9:16": "PORTRAIT", "": "SQUARE"} {
+		_, err := a.SubmitTask(context.Background(), blend(2, ratio, ""))
+		require.NoError(t, err)
+		assert.Equal(t, want, submitted["dimensions"], ratio)
+	}
+
+	_, err = a.SubmitTask(context.Background(), blend(1, "1:1", ""))
+	assert.ErrorContains(t, err, "2–5 张")
+}
