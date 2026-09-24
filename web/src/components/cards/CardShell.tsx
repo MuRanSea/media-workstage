@@ -228,3 +228,18 @@ export const SummaryRow: React.FC<{ model: string; spec: string; extra?: React.R
     {extra}
   </div>
 );
+
+const PREVIEW_MAX_HEIGHT = 480;
+
+/**
+ * Preview box shaped like its media (width ÷ height). Tall media stops at a max
+ * height and narrows to keep its shape, so nothing is ever cropped.
+ */
+export const MediaFrame: React.FC<{ aspect?: number; children: React.ReactNode }> = ({ aspect = 16 / 9, children }) => (
+  <div
+    className="relative mx-auto rounded-xl overflow-hidden border border-slate-800 bg-black group"
+    style={{ aspectRatio: aspect, width: `min(100%, ${Math.round(PREVIEW_MAX_HEIGHT * aspect)}px)` }}
+  >
+    {children}
+  </div>
+);

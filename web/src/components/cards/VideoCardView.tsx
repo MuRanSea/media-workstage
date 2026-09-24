@@ -8,7 +8,7 @@ import {
   isModelReady,
   isProviderMissing,
 } from '../../engine/channelModels.ts';
-import { videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
+import { requestedAspect, videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
 import { connectCards } from '../../engine/connections.ts';
 import { inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { useChannels } from '../../services/channels.ts';
@@ -21,6 +21,7 @@ import {
   CardShell,
   ErrorBox,
   GeneratingOverlay,
+  MediaFrame,
   StatusChip,
   SummaryRow,
   TagBadge,
@@ -53,6 +54,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionCursor, setMentionCursor] = useState(0);
+  const [loadedAspect, setLoadedAspect] = useState<number>();
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
 
   const channels = useChannels();
@@ -129,10 +131,19 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       ports={<InputPort />}
     >
       {/* Preview / player */}
-      <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-black aspect-video group">
+      <MediaFrame aspect={(videoUrl && loadedAspect) || requestedAspect(card)}>
         {videoUrl ? (
           <>
-            <video src={videoUrl} autoPlay loop muted playsInline controls className="w-full h-full object-cover" />
+            <video
+              src={videoUrl}
+              autoPlay
+              loop
+              muted
+              playsInline
+              controls
+              className="w-full h-full object-contain"
+              onLoadedMetadata={(e) => setLoadedAspect(e.currentTarget.videoWidth / e.currentTarget.videoHeight)}
+            />
             <button
               type="button"
               title="放大播放"
@@ -150,7 +161,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
         )}
         <StatusChip status={card.status} />
         {isGenerating && <GeneratingOverlay progress={card.progress} />}
-      </div>
+      </MediaFrame>
 
       <SummaryRow
         model={modelLabel}

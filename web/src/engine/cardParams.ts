@@ -46,6 +46,23 @@ export function imageSizeSummary(card: SpatialCard): string {
   return `${card.imageTier ?? def.defaultTier} · ${ratio}`;
 }
 
+// --- Preview shape -------------------------------------------------------------
+
+/** Width ÷ height from "9:16" or "2048x1024"; undefined for "adaptive" or anything unparsable. */
+export function parseAspect(value: string | undefined): number | undefined {
+  const m = value?.trim().match(/^(\d+(?:\.\d+)?)\s*[:x×*]\s*(\d+(?:\.\d+)?)$/i);
+  if (!m) return undefined;
+  const [w, h] = [Number(m[1]), Number(m[2])];
+  return w > 0 && h > 0 ? w / h : undefined;
+}
+
+/** The shape the card asked for, used to size its preview before a result has loaded. */
+export function requestedAspect(card: SpatialCard): number | undefined {
+  if (card.type === 'video') return card.mode === 'first_last_frame' ? undefined : parseAspect(card.ratio);
+  if (protocolOf(card.provider ?? 'ark') === 'ark' && card.sizeMode === 'custom_pixels') return parseAspect(card.customPixels);
+  return parseAspect(card.imageRatioPreset ?? '16:9');
+}
+
 // --- Video ---------------------------------------------------------------------
 
 export function videoModelDef(card: SpatialCard): VideoModelDef {

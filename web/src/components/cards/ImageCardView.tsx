@@ -9,7 +9,7 @@ import {
   isProviderMissing,
 } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
-import { imageSizeSummary } from '../../engine/cardParams.ts';
+import { imageSizeSummary, requestedAspect } from '../../engine/cardParams.ts';
 import { useChannels } from '../../services/channels.ts';
 import { assetStoredPath, assetUrl } from '../../engine/assetPaths.ts';
 import { Button } from '../ui/Button.tsx';
@@ -19,6 +19,7 @@ import {
   CardShell,
   ErrorBox,
   GeneratingOverlay,
+  MediaFrame,
   StatusChip,
   SummaryRow,
   TagBadge,
@@ -51,6 +52,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
   onStartConnect,
 }) => {
   const [selectedLayerIndex, setSelectedLayerIndex] = useState<number | null>(null);
+  const [loadedAspect, setLoadedAspect] = useState<number>();
   const channels = useChannels();
   const providerGroups = useMemo(() => buildProviderGroups(channels, 'image'), [channels]);
   const provider = card.provider ?? 'ark';
@@ -92,7 +94,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
       }
     >
       {/* Preview */}
-      <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-black aspect-[16/10] group">
+      <MediaFrame aspect={(displayUrl && loadedAspect) || requestedAspect(card)}>
         {displayUrl ? (
           <button
             type="button"
@@ -103,7 +105,8 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
             <img
               src={displayUrl}
               alt={card.title}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
+              onLoad={(e) => setLoadedAspect(e.currentTarget.naturalWidth / e.currentTarget.naturalHeight)}
               onError={(e) => ((e.target as HTMLElement).style.visibility = 'hidden')}
             />
             <span className="absolute bottom-2 right-2 p-1 rounded-md bg-black/60 text-white/80 opacity-0 group-hover:opacity-100 transition">
@@ -135,7 +138,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
             ))}
           </div>
         )}
-      </div>
+      </MediaFrame>
 
       <SummaryRow model={modelLabel} spec={imageSizeSummary(card)} />
 
