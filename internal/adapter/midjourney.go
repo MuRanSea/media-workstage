@@ -29,8 +29,14 @@ func NewMidjourneyAdapter(cfg ChannelConfig) *MidjourneyAdapter {
 }
 
 type midjourneyImagineRequest struct {
-	BotType string `json:"botType,omitempty"`
-	Prompt  string `json:"prompt"`
+	BotType       string                   `json:"botType,omitempty"`
+	Prompt        string                   `json:"prompt"`
+	AccountFilter *midjourneyAccountFilter `json:"accountFilter,omitempty"`
+}
+
+// midjourneyAccountFilter picks the proxy account a job runs on; modes selects by speed.
+type midjourneyAccountFilter struct {
+	Modes []string `json:"modes"`
 }
 
 type midjourneySubmitResponse struct {
@@ -103,9 +109,11 @@ func (a *MidjourneyAdapter) SubmitTask(ctx context.Context, task *model.MediaTas
 }
 
 func (a *MidjourneyAdapter) submitImagine(ctx context.Context, task *model.MediaTask) (string, error) {
+	params := parseGenericImageParams(task.ParamsJSON)
 	resp, err := a.postSubmit(ctx, "/mj/submit/imagine", midjourneyImagineRequest{
-		BotType: midjourneyBotType(task.Model),
-		Prompt:  midjourneyPrompt(task.Prompt, parseGenericImageParams(task.ParamsJSON)),
+		BotType:       midjourneyBotType(task.Model),
+		Prompt:        midjourneyPrompt(task.Prompt, params),
+		AccountFilter: midjourneyAccountFilterFor(params, task.Prompt),
 	})
 	if err != nil {
 		return "", err
@@ -300,6 +308,24 @@ func midjourneyBotType(modelID string) string {
 		return bot
 	}
 	return ""
+}
+
+// midjourneySpeedFlag matches a prompt's own speed parameter ("--relax", "—fast").
+var midjourneySpeedFlag = regexp.MustCompile(`(?i)(^|\s)(--|—)(fast|relax|turbo)(\s|$)`)
+
+// midjourneyAccountFilterFor asks the proxy for an account in the card's speed mode.
+// The prompt is left alone: gateways add their own mode flag to the final prompt, so
+// the speed goes through accountFilter only, and a speed flag the user typed wins.
+func midjourneyAccountFilterFor(params genericImageParams, prompt string) *midjourneyAccountFilter {
+	switch params.Speed {
+	case "FAST", "RELAX", "TURBO":
+	default:
+		return nil
+	}
+	if midjourneySpeedFlag.MatchString(prompt) {
+		return nil
+	}
+	return &midjourneyAccountFilter{Modes: []string{params.Speed}}
 }
 
 // midjourneyAspectFlag matches a prompt's own aspect parameter ("--ar 2:3", "--aspect 3:2"),

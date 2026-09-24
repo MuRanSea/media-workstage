@@ -6,6 +6,9 @@ export type TextPreset = 'image_prompt' | 'video_prompt' | 'free';
 export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video';
 export type ImageTaskMode = 'single' | 'layer_decomp' | 'sequential';
 export type CanvasTool = 'select' | 'hand';
+export type MjSpeed = 'FAST' | 'RELAX' | 'TURBO';
+
+export const MJ_SPEED_LABELS: Record<MjSpeed, string> = { FAST: 'Fast', RELAX: 'Relax', TURBO: 'Turbo' };
 
 export interface TaskAssetDto {
   id: string;
@@ -97,6 +100,8 @@ export interface SpatialCard {
 
   // Image parameters for non-Seedream channels (ratio reuses imageRatioPreset)
   imageResolution?: '1K' | '2K' | '4K';
+  /** Midjourney speed mode; unset leaves it to the gateway. */
+  mjSpeed?: MjSpeed;
 
   // Image specific parameters (Seedream 5.0 Series)
   imageMode?: ImageTaskMode;

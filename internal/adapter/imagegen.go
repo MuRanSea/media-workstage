@@ -29,6 +29,7 @@ type genericImageParams struct {
 	AspectRatio  string `json:"aspect_ratio"` // "16:9", "1:1", ... or "" / "auto"
 	Resolution   string `json:"resolution"`   // "1K" | "2K" | "4K"
 	OutputFormat string `json:"output_format"`
+	Speed        string `json:"speed"` // Midjourney: "FAST" | "RELAX" | "TURBO", or "" for the gateway default
 }
 
 func parseGenericImageParams(paramsJSON string) genericImageParams {
@@ -39,6 +40,7 @@ func parseGenericImageParams(paramsJSON string) genericImageParams {
 		p.AspectRatio = ""
 	}
 	p.Resolution = strings.ToUpper(strings.TrimSpace(p.Resolution))
+	p.Speed = strings.ToUpper(strings.TrimSpace(p.Speed))
 	return p
 }
 

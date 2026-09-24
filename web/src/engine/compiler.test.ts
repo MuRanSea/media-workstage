@@ -160,6 +160,14 @@ describe('Channel Image Payload Compiler', () => {
   });
 });
 
+describe('Midjourney payload', () => {
+  it('sends the ratio and the chosen speed, never a resolution', () => {
+    const input = { provider: 'midjourney', model: 'mj_imagine', prompt: 'a fox', imageRatioPreset: '3:2', imageResolution: '4K' as const };
+    expect(compileImageTaskPayload(input).params).toEqual({ aspect_ratio: '3:2' });
+    expect(compileImageTaskPayload({ ...input, mjSpeed: 'RELAX' }).params).toEqual({ aspect_ratio: '3:2', speed: 'RELAX' });
+  });
+});
+
 describe('Follow-up action payload', () => {
   it('runs a derived card as an action on its source task', () => {
     const payload = compileCardImagePayload({

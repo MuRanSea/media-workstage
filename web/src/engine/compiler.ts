@@ -1,4 +1,4 @@
-import { SEEDREAM_PIXEL_MAP, type SpatialCard } from '../types/canvas.ts';
+import { SEEDREAM_PIXEL_MAP, type MjSpeed, type SpatialCard } from '../types/canvas.ts';
 import type { CreateTaskPayload, ProviderId } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
 
@@ -16,6 +16,7 @@ export interface ImageCompilationInput {
   watermark?: boolean;
   background?: 'opaque' | 'transparent';
   imageResolution?: '1K' | '2K' | '4K';
+  mjSpeed?: MjSpeed;
 }
 
 /**
@@ -88,16 +89,18 @@ export function compileImageTaskPayload(input: ImageCompilationInput): CreateTas
  * adapter maps aspect_ratio + resolution onto each protocol's own size parameters.
  */
 function compileChannelImagePayload(provider: ProviderId, input: ImageCompilationInput): CreateTaskPayload {
+  const aspect_ratio = input.imageRatioPreset ?? '16:9';
   return {
     provider,
     model: input.model,
     task_type: 'image_generation',
     task_mode: 'single',
     prompt: input.prompt,
-    params: {
-      aspect_ratio: input.imageRatioPreset ?? '16:9',
-      resolution: input.imageResolution ?? '2K',
-    },
+    // Midjourney has no resolution; its speed picks the proxy account.
+    params:
+      protocolOf(provider) === 'midjourney'
+        ? { aspect_ratio, ...(input.mjSpeed ? { speed: input.mjSpeed } : {}) }
+        : { aspect_ratio, resolution: input.imageResolution ?? '2K' },
   };
 }
 
@@ -119,6 +122,7 @@ export function compileCardImagePayload(card: SpatialCard): CreateTaskPayload {
     watermark: card.watermark,
     background: card.background,
     imageResolution: card.imageResolution,
+    mjSpeed: card.mjSpeed,
   });
 }
 

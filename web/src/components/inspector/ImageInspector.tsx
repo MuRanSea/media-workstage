@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { IMAGE_MODELS, SEEDREAM_PIXEL_MAP, type SpatialCard } from '../../types/canvas.ts';
+import { IMAGE_MODELS, MJ_SPEED_LABELS, SEEDREAM_PIXEL_MAP, type MjSpeed, type SpatialCard } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
 import { imageModelPatch } from '../../engine/cardParams.ts';
@@ -11,6 +11,10 @@ import { DevJson } from './DevJson.tsx';
 
 const RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9'] as const;
 const RESOLUTIONS = ['1K', '2K', '4K'] as const;
+const MJ_SPEEDS: { value: MjSpeed | 'default'; label: string }[] = [
+  { value: 'default', label: '网关默认' },
+  ...(Object.keys(MJ_SPEED_LABELS) as MjSpeed[]).map((s) => ({ value: s, label: MJ_SPEED_LABELS[s] })),
+];
 
 interface Props {
   card: SpatialCard;
@@ -44,6 +48,7 @@ const ImageSettings: React.FC<Props> = ({ card, update, linkedPromptText }) => {
   const groups = useMemo(() => buildProviderGroups(channels, 'image'), [channels]);
   const provider = card.provider ?? 'ark';
   const isSeedream = protocolOf(provider) === 'ark';
+  const isMidjourney = protocolOf(provider) === 'midjourney';
   const def = IMAGE_MODELS.find((m) => m.id === card.model) ?? IMAGE_MODELS[0];
   const ratio = card.imageRatioPreset ?? '16:9';
   const tier = card.imageTier ?? def.defaultTier;
@@ -64,7 +69,7 @@ const ImageSettings: React.FC<Props> = ({ card, update, linkedPromptText }) => {
         />
       </Section>
 
-      <Section title="尺寸">
+      <Section title={isMidjourney ? '比例与速度' : '尺寸'}>
         {isSeedream ? (
           <>
             <Field label="设定方式">
@@ -99,6 +104,20 @@ const ImageSettings: React.FC<Props> = ({ card, update, linkedPromptText }) => {
                 </Field>
               </>
             )}
+          </>
+        ) : isMidjourney ? (
+          <>
+            <Field label="比例" hint="作为 --ar 加到提示词后面；提示词里自己写了 --ar 时以提示词为准。">
+              <Segmented accent="pink" mono columns={4} value={ratio} onChange={(r) => update({ imageRatioPreset: r })} options={ratioOptions} />
+            </Field>
+            <Field label="速度" hint="选择代理里对应模式的账号；Relax 更省额度但要排队。提示词里自己写了 --fast / --relax / --turbo 时以提示词为准。">
+              <Segmented
+                accent="pink"
+                value={card.mjSpeed ?? 'default'}
+                onChange={(v) => update({ mjSpeed: v === 'default' ? undefined : v })}
+                options={MJ_SPEEDS}
+              />
+            </Field>
           </>
         ) : (
           <>

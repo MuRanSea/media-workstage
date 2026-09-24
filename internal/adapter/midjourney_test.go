@@ -351,3 +351,34 @@ func TestMidjourneySubmitAction_RequiresSourceTask(t *testing.T) {
 	_, err := a.SubmitTask(context.Background(), actionTask("", "MJ::JOB::upsample::1::h"))
 	assert.ErrorContains(t, err, "来源任务")
 }
+
+func TestMidjourneySubmit_SpeedAccountFilter(t *testing.T) {
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		submitted = nil
+		_ = json.NewDecoder(r.Body).Decode(&submitted)
+		_, _ = io.WriteString(w, `{"code":1,"result":"1"}`)
+	}))
+	defer srv.Close()
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+
+	cases := []struct {
+		name, prompt, speed string
+		want                any
+	}{
+		{"relax picks relax accounts", "a fox", "RELAX", map[string]any{"modes": []any{"RELAX"}}},
+		{"lower case is accepted", "a fox", "turbo", map[string]any{"modes": []any{"TURBO"}}},
+		{"no speed leaves the gateway default", "a fox", "", nil},
+		{"unknown speed is ignored", "a fox", "warp", nil},
+		{"the prompt's own flag wins", "a fox --fast", "RELAX", nil},
+	}
+	for _, c := range cases {
+		params, _ := json.Marshal(map[string]string{"speed": c.speed})
+		task := imageTask("midjourney", "mj_imagine", string(params))
+		task.Prompt = c.prompt
+		_, err := a.SubmitTask(context.Background(), task)
+		require.NoError(t, err, c.name)
+		assert.Equal(t, c.want, submitted["accountFilter"], c.name)
+		assert.Equal(t, c.prompt, submitted["prompt"], "%s: the speed never changes the prompt", c.name)
+	}
+}

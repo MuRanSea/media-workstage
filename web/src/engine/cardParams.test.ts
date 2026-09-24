@@ -64,6 +64,18 @@ describe('image params', () => {
     expect(imageSizeSummary(base({ type: 'image', provider: 'ark', sizeMode: 'custom_pixels', customPixels: '2048x1024' }))).toBe('2048x1024');
     expect(imageSizeSummary(base({ type: 'image', provider: 'ark', imageTier: '2K', imageRatioPreset: '9:16' }))).toBe('2K · 9:16');
   });
+
+  it('gives Midjourney a ratio and speed instead of a resolution', () => {
+    expect(imageSizeSummary(base({ type: 'image', provider: 'midjourney', imageResolution: '4K', imageRatioPreset: '3:2' }))).toBe('3:2');
+    expect(imageSizeSummary(base({ type: 'image', provider: 'midjourney', imageRatioPreset: '3:2', mjSpeed: 'RELAX' }))).toBe('3:2 · Relax');
+  });
+
+  it('drops the Midjourney speed when switching to another channel', () => {
+    const card = base({ type: 'image', provider: 'midjourney', model: 'mj_imagine', mjSpeed: 'TURBO' });
+    expect(imageModelPatch(card, opt('openai', 'gpt-image-2')).mjSpeed).toBeUndefined();
+    expect('mjSpeed' in imageModelPatch(card, opt('openai', 'gpt-image-2'))).toBe(true);
+    expect('mjSpeed' in imageModelPatch(card, opt('midjourney', 'NIJI_JOURNEY'))).toBe(false);
+  });
 });
 
 describe('video params', () => {
