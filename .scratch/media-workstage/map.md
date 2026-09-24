@@ -9,6 +9,7 @@
 - **数据库与调度**：SQLite 双表 (`media_tasks` + `task_assets`)，Goroutine 令牌桶节流轮询器，SSE 实时推流。
 - **架构原则**：构建清晰的 `ProviderAdapter` 隔离层，统一抽象 Ark 与 MiniMax 的任务提交与轮询协议。
 - **资产传输**：本地图片/音频素材优先利用 Ark/MiniMax 原生 Base64 直传（单张<30MB, body≤64MB），大文件/超长视频走 TOS / 本地静态服务通道。
+- **服务商模型**：服务商是接入协议的实例，内置服务商为预置实例，可新增自定义 OpenAI 兼容服务商（issues 18–20）。详见 [docs/adr/0004-providers-as-protocol-instances.md](../../docs/adr/0004-providers-as-protocol-instances.md)。
 - **关联技能**：`domain-modeling`, `codebase-design`, `prototype`, `research`.
 
 ## Decisions so far

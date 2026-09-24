@@ -27,8 +27,19 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   - Storyboard Image Sequences (up to 15 images from Seedream 5.0 Lite sequential generation).
   - Video File & Output Frame Snapshots.
 
+- **Provider (服务商)**:
+  One configured connection the user generates through: a stable ID, a renameable display name, a base URL, a credential and the models bound to it. Every Provider speaks exactly one `Protocol`; several Providers may share a Protocol and offer the same model, told apart by display name. Cards and tasks reference a Provider by its ID. See ADR 0004.
+  _Avoid_: channel, 渠道
+
+- **Preset Provider (预置服务商)**:
+  A Provider that ships with the app (火山方舟, MiniMax, OpenAI, …) under a fixed legacy ID. It can be renamed and have its credential cleared, but never deleted. User-added Providers are **Custom Providers (自定义服务商)** and can be deleted.
+
+- **Protocol (接入协议)**:
+  The API dialect a Provider speaks (Ark native, MiniMax, OpenAI-compatible, Gemini, APIMart, MJ Proxy). Determines which `ProviderAdapter` serves the Provider and which card kinds it can run.
+  _Avoid_: provider type, vendor
+
 - **ProviderAdapter (服务商适配器)**:
-  The architectural boundary seam that isolates third-party API contracts (Volcengine Ark, MiniMax). Translates generic `MediaTaskRequest` into provider-specific payloads and normalizes polling responses.
+  The architectural boundary seam that isolates one `Protocol`'s third-party API contract. Translates generic `MediaTaskRequest` into protocol-specific payloads and normalizes polling responses; each Provider gets its own adapter instance.
 
 - **ArkAdapter (火山方舟适配器)**:
   The concrete provider adapter for Volcengine Ark native APIs (Seedance 2.5/2.0 video generation, Seedream 5.0 image generation).
