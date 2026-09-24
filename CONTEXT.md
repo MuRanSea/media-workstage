@@ -48,11 +48,18 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   The concrete provider adapter for MiniMax official video generation APIs (MiniMax-H3, Video-01).
 
 - **MidjourneyAdapter (Midjourney 适配器)**:
-  The concrete provider adapter for the MJ Proxy protocol (midjourney-proxy's `/mj` API, spoken by self-hosted proxies and new-api style relays). Text-to-image only; the result is Midjourney's 2×2 grid kept as one image, and the card's aspect ratio becomes `--ar` unless the prompt sets its own.
+  The concrete provider adapter for the MJ Proxy protocol (midjourney-proxy's `/mj` API, spoken by self-hosted proxies and new-api style relays). Dispatches on task mode: imagine (the 2×2 grid kept as one image; the card's aspect ratio becomes `--ar` unless the prompt sets its own; connected images go inline as reference images), `action` (a `Result action`), `blend` (2–5 images) and `describe` (prompts as a text result). The card's speed mode is sent as the proxy's `accountFilter.modes`, never added to the prompt.
 
 - **Bot type (MJ 机器人类型)**:
   What an MJ Proxy Provider binds as its models: `MID_JOURNEY` or `NIJI_JOURNEY`, sent as the request's `botType`. Relays like new-api list billing model names (`mj_imagine`) instead; those send no `botType`, leaving the proxy's default.
   _Avoid_: MJ model version (`--v` / `--niji` stay prompt parameters)
+
+- **Result action (结果动作)**:
+  A follow-up a provider offers on a finished task's result, such as Midjourney's U1–U4 / V1–V4 / reroll buttons. Stored on the task (`result_actions`) with the provider's own ID; running one creates a new task whose params name the source task and the action, and the server checks the source task offered it.
+
+- **Derived card (派生卡)**:
+  A card created by running an operation on another card's result — a `Result action` (an image card) or Midjourney Describe (a text card). It records its source card and source task (`derivedFrom`), is linked to the source by a labelled line, and keeps the source's provider and settings.
+  _Avoid_: child card, copy (a copy is "复制一份" and runs the same settings from scratch)
 
 - **LocalAssetStore (本地资产库)**:
   The local filesystem repository responsible for caching uploaded reference assets, downloading finished generation outputs, and serving them via local HTTP endpoints.

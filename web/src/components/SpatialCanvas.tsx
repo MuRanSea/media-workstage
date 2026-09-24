@@ -649,9 +649,10 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                     {/* Label pill at curve center; its × disconnects */}
                     <foreignObject x={ray.midX - 48} y={ray.midY - 12} width={96} height={24}>
                       <div
-                        className={`pointer-events-auto flex items-center justify-center gap-1 w-fit max-w-full h-full mx-auto px-2 bg-canvas-surface border rounded-full text-[11px] font-mono ${style.pill}`}
+                        title={ray.label}
+                        className={`pointer-events-auto flex items-center justify-center gap-1 w-fit max-w-full h-full mx-auto px-2 overflow-hidden bg-canvas-surface border rounded-full text-[11px] font-mono ${style.pill}`}
                       >
-                        <span className="truncate">{ray.label}</span>
+                        <span className="min-w-0 truncate">{ray.label}</span>
                         {ray.onRemove && (
                           <button
                             type="button"
