@@ -508,3 +508,49 @@ func TestTaskPoller_AllDownloadsFailedMarksTaskFailed(t *testing.T) {
 		t.Fatalf("no asset rows should be kept for a failed download, got %d", assets)
 	}
 }
+
+func TestTaskPoller_StoresResultActionsAndTextWithoutAssets(t *testing.T) {
+	database := setupTestDB(t)
+	fake := adapter.NewFakeProviderAdapter("midjourney")
+	poller := NewTaskPoller(TaskPollerConfig{
+		DB:                database,
+		Adapters:          map[string]adapter.ProviderAdapter{"midjourney": fake},
+		AssetDir:          t.TempDir(),
+		ImagePollInterval: 10 * time.Millisecond,
+		ImageInitialDelay: 10 * time.Millisecond,
+	})
+
+	taskID := uuid.New().String()
+	now := time.Now().UTC()
+	task := model.MediaTask{
+		ID: taskID, Provider: "midjourney", Model: "MID_JOURNEY", TaskType: "image_generation", TaskMode: "describe",
+		Prompt: "describe", ParamsJSON: `{}`, Status: model.TaskStatusQueued, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := database.Create(&task).Error; err != nil {
+		t.Fatalf("failed to create task: %v", err)
+	}
+	// A text-only result (Describe) succeeds without any file to download.
+	fake.SetNextPollResult(taskID, &adapter.PollResult{
+		Status: model.TaskStatusSucceeded, Progress: 100,
+		Text:    "1️⃣ a cat --ar 1:1",
+		Actions: []model.TaskAction{{ID: "MJ::JOB::upsample::1::h", Label: "U1"}},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	poller.ProcessTask(ctx, taskID)
+
+	var got model.MediaTask
+	if err := database.First(&got, "id = ?", taskID).Error; err != nil {
+		t.Fatalf("reload task: %v", err)
+	}
+	if got.Status != model.TaskStatusSucceeded {
+		t.Fatalf("want succeeded, got %s/%s (%s)", got.Status, got.ErrorCode, got.ErrorMessage)
+	}
+	if got.ResultText != "1️⃣ a cat --ar 1:1" {
+		t.Fatalf("result text not stored: %q", got.ResultText)
+	}
+	if len(got.ResultActions) != 1 || got.ResultActions[0].ID != "MJ::JOB::upsample::1::h" || got.ResultActions[0].Label != "U1" {
+		t.Fatalf("result actions not stored: %+v", got.ResultActions)
+	}
+}

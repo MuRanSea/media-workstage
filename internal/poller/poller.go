@@ -448,6 +448,8 @@ func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, r
 	task.OutputDurationSec = res.OutputDurationSec
 	task.UsageTokens = res.UsageTokens
 	task.BillingDetailsJSON = res.BillingDetailsJSON
+	task.ResultActions = res.Actions
+	task.ResultText = res.Text
 	task.CompletedAt = &now
 	task.UpdatedAt = now
 	task.Assets = downloadedAssets

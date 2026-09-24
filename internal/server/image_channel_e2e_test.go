@@ -120,7 +120,8 @@ func TestMidjourneyTask_EndToEnd(t *testing.T) {
 			resp := map[string]any{"id": "1730000000000001", "status": "IN_PROGRESS", "progress": "50%"}
 			if fetches.Add(1) > 1 {
 				resp = map[string]any{"id": "1730000000000001", "status": "SUCCESS", "progress": "100%",
-					"imageUrl": proxyURL + "/mj/image/1730000000000001"}
+					"imageUrl": proxyURL + "/mj/image/1730000000000001",
+					"buttons":  []map[string]any{{"customId": "MJ::JOB::upsample::1::h", "label": "U1", "emoji": ""}}}
 			}
 			_ = json.NewEncoder(w).Encode(resp)
 		case "/mj/image/1730000000000001":
@@ -174,6 +175,7 @@ func TestMidjourneyTask_EndToEnd(t *testing.T) {
 		Assets []struct {
 			LocalPath string `json:"local_path"`
 		} `json:"assets"`
+		ResultActions []map[string]string `json:"result_actions"`
 	}
 	require.Eventually(t, func() bool {
 		rec := httptest.NewRecorder()
@@ -184,6 +186,7 @@ func TestMidjourneyTask_EndToEnd(t *testing.T) {
 	}, 10*time.Second, 50*time.Millisecond)
 
 	require.Equal(t, "succeeded", task.Status, task.Error)
+	assert.Equal(t, []map[string]string{{"id": "MJ::JOB::upsample::1::h", "label": "U1"}}, task.ResultActions)
 	assert.Equal(t, "a red fox --ar 3:2", gotPrompt)
 	assert.Equal(t, "NIJI_JOURNEY", gotBot)
 	assert.GreaterOrEqual(t, fetches.Load(), int32(2), "the task was polled through its progress")

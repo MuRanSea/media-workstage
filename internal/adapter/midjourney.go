@@ -40,12 +40,24 @@ type midjourneySubmitResponse struct {
 }
 
 type midjourneyFetchResponse struct {
-	ID          string `json:"id"`
-	Status      string `json:"status"`   // NOT_START | SUBMITTED | MODAL | IN_PROGRESS | SUCCESS | FAILURE | CANCEL
-	Progress    string `json:"progress"` // "45%"
-	ImageURL    string `json:"imageUrl"`
-	FailReason  string `json:"failReason"`
-	Description string `json:"description"` // task description, or the error text of a relay envelope
+	ID          string             `json:"id"`
+	Action      string             `json:"action"`   // IMAGINE | UPSCALE | VARIATION | REROLL | DESCRIBE | BLEND | ...
+	Status      string             `json:"status"`   // NOT_START | SUBMITTED | MODAL | IN_PROGRESS | SUCCESS | FAILURE | CANCEL
+	Progress    string             `json:"progress"` // "45%"
+	ImageURL    string             `json:"imageUrl"`
+	FailReason  string             `json:"failReason"`
+	Description string             `json:"description"` // task description, or the error text of a relay envelope
+	Buttons     []midjourneyButton `json:"buttons"`
+	Properties  struct {
+		FinalPrompt string `json:"finalPrompt"`
+	} `json:"properties"`
+}
+
+// midjourneyButton is one follow-up the result offers; customId is what /mj/submit/action takes.
+type midjourneyButton struct {
+	CustomID string `json:"customId"`
+	Label    string `json:"label"`
+	Emoji    string `json:"emoji"`
 }
 
 // Submit codes that carry a task ID: 1 accepted, 22 queued.
@@ -124,6 +136,7 @@ func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 			Progress:  100,
 			ResultURL: resp.ImageURL,
 			Assets:    []model.TaskAsset{asset},
+			Actions:   midjourneyActions(resp.Buttons),
 		}, nil
 
 	case "FAILURE", "CANCEL":
@@ -147,6 +160,28 @@ func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 // PollTimeout covers Relax-mode queues, which routinely take several minutes per job.
 func (a *MidjourneyAdapter) PollTimeout(*model.MediaTask) time.Duration {
 	return 15 * time.Minute
+}
+
+// midjourneyInteractiveButtons marks buttons that need user input (a zoom factor, a
+// region mask, an image picker) or only bookmark the message; they are not offered.
+var midjourneyInteractiveButtons = []string{"CustomZoom", "Inpaint", "PicReader", "BOOKMARK"}
+
+// midjourneyActions turns the result's buttons into the follow-ups a card can run directly.
+func midjourneyActions(buttons []midjourneyButton) []model.TaskAction {
+	var actions []model.TaskAction
+next:
+	for _, b := range buttons {
+		if b.CustomID == "" {
+			continue
+		}
+		for _, marker := range midjourneyInteractiveButtons {
+			if strings.Contains(b.CustomID, "::"+marker+"::") {
+				continue next
+			}
+		}
+		actions = append(actions, model.TaskAction{ID: b.CustomID, Label: b.Label, Emoji: b.Emoji})
+	}
+	return actions
 }
 
 // setMidjourneyKey sends the key both ways: midjourney-proxy reads mj-api-secret,

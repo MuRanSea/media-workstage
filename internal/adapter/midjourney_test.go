@@ -241,3 +241,33 @@ func TestMidjourneyAdapter_RequiresBaseURL(t *testing.T) {
 	_, err := NewMidjourneyAdapter(ChannelConfig{APIKey: "k"}).SubmitTask(context.Background(), imageTask("midjourney", "MID_JOURNEY", `{}`))
 	assert.ErrorContains(t, err, "Base URL")
 }
+
+func TestMidjourneyPollTask_SuccessReturnsActions(t *testing.T) {
+	// Buttons as the real gateway returned them for an IMAGINE grid, plus ones needing user input.
+	body := `{"id":"1790217491102846","action":"IMAGINE","status":"SUCCESS","progress":"100%",
+	"imageUrl":"https://cdn.example.test/grid.webp","buttons":[
+	{"customId":"MJ::JOB::upsample::1::ade29d25","emoji":"","label":"U1","type":2,"style":2},
+	{"customId":"MJ::JOB::upsample::2::ade29d25","emoji":"","label":"U2","type":2,"style":2},
+	{"customId":"MJ::JOB::reroll::0::ade29d25::SOLO","emoji":"🔄","label":"","type":2,"style":2},
+	{"customId":"MJ::JOB::variation::1::ade29d25","emoji":"","label":"V1","type":2,"style":2},
+	{"customId":"MJ::CustomZoom::ade29d25","emoji":"🔍","label":"Custom Zoom","type":2,"style":2},
+	{"customId":"MJ::Inpaint::1::ade29d25::SOLO","emoji":"🖌️","label":"Vary (Region)","type":2,"style":2},
+	{"customId":"MJ::BOOKMARK::ade29d25","emoji":"❤️","label":"","type":2,"style":2}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	task := imageTask("midjourney", "mj_imagine", `{}`)
+	task.ProviderTaskID = "1790217491102846"
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSucceeded, res.Status)
+	assert.Equal(t, []model.TaskAction{
+		{ID: "MJ::JOB::upsample::1::ade29d25", Label: "U1"},
+		{ID: "MJ::JOB::upsample::2::ade29d25", Label: "U2"},
+		{ID: "MJ::JOB::reroll::0::ade29d25::SOLO", Emoji: "🔄"},
+		{ID: "MJ::JOB::variation::1::ade29d25", Label: "V1"},
+	}, res.Actions, "buttons needing user input (custom zoom, region, bookmark) are dropped")
+}
