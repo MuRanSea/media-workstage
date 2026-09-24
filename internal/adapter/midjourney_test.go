@@ -271,3 +271,83 @@ func TestMidjourneyPollTask_SuccessReturnsActions(t *testing.T) {
 		{ID: "MJ::JOB::variation::1::ade29d25", Label: "V1"},
 	}, res.Actions, "buttons needing user input (custom zoom, region, bookmark) are dropped")
 }
+
+func actionTask(sourceProviderTaskID, actionID string) *model.MediaTask {
+	params, _ := json.Marshal(map[string]string{
+		"source_task_id": "src-1", "source_provider_task_id": sourceProviderTaskID, "action_id": actionID,
+	})
+	task := imageTask("midjourney", "mj_imagine", string(params))
+	task.TaskMode = "action"
+	return task
+}
+
+func TestMidjourneySubmitAction_Body(t *testing.T) {
+	var path string
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&submitted)
+		_, _ = io.WriteString(w, `{"code":1,"description":"提交成功","result":"1790300000000001"}`)
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	id, err := a.SubmitTask(context.Background(), actionTask("1790217491102846", "MJ::JOB::upsample::2::h"))
+	require.NoError(t, err)
+	assert.Equal(t, "1790300000000001", id)
+	assert.Equal(t, "/mj/submit/action", path)
+	assert.Equal(t, map[string]any{
+		"taskId": "1790217491102846", "customId": "MJ::JOB::upsample::2::h", "chooseSameChannel": true,
+	}, submitted, "an action runs on the source task's channel; no prompt, bot or account filter")
+}
+
+func TestMidjourneySubmitAction_Code21NeedingModalSubmitsPrompt(t *testing.T) {
+	var modal map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mj/submit/action":
+			_, _ = io.WriteString(w, `{"code":21,"description":"窗口等待","result":"1790300000000002"}`)
+		case "/mj/task/1790300000000002/fetch":
+			_, _ = io.WriteString(w, `{"id":"1790300000000002","status":"MODAL"}`)
+		case "/mj/submit/modal":
+			_ = json.NewDecoder(r.Body).Decode(&modal)
+			_, _ = io.WriteString(w, `{"code":1,"description":"提交成功","result":"1790300000000002"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	id, err := a.SubmitTask(context.Background(), actionTask("1790217491102846", "MJ::JOB::variation::1::h"))
+	require.NoError(t, err)
+	assert.Equal(t, "1790300000000002", id)
+	assert.Equal(t, map[string]any{"taskId": "1790300000000002", "prompt": "a red fox"}, modal)
+}
+
+func TestMidjourneySubmitAction_Code21ExistingTaskIsReused(t *testing.T) {
+	modalCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mj/submit/action":
+			_, _ = io.WriteString(w, `{"code":21,"description":"任务已存在","result":"1790300000000003"}`)
+		case "/mj/task/1790300000000003/fetch":
+			_, _ = io.WriteString(w, `{"id":"1790300000000003","status":"SUCCESS","imageUrl":"https://cdn/x.png"}`)
+		case "/mj/submit/modal":
+			modalCalled = true
+		}
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	id, err := a.SubmitTask(context.Background(), actionTask("1790217491102846", "MJ::JOB::upsample::1::h"))
+	require.NoError(t, err)
+	assert.Equal(t, "1790300000000003", id)
+	assert.False(t, modalCalled)
+}
+
+func TestMidjourneySubmitAction_RequiresSourceTask(t *testing.T) {
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: "http://unused", APIKey: "k"})
+	_, err := a.SubmitTask(context.Background(), actionTask("", "MJ::JOB::upsample::1::h"))
+	assert.ErrorContains(t, err, "来源任务")
+}

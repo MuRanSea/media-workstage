@@ -60,51 +60,143 @@ type midjourneyButton struct {
 	Emoji    string `json:"emoji"`
 }
 
-// Submit codes that carry a task ID: 1 accepted, 22 queued.
+// midjourneyActionParams are the task params of a follow-up action (task_mode "action").
+type midjourneyActionParams struct {
+	SourceProviderTaskID string `json:"source_provider_task_id"`
+	ActionID             string `json:"action_id"`
+}
+
+type midjourneyActionRequest struct {
+	TaskID            string `json:"taskId"`
+	CustomID          string `json:"customId"`
+	ChooseSameChannel bool   `json:"chooseSameChannel"`
+}
+
+type midjourneyModalRequest struct {
+	TaskID string `json:"taskId"`
+	Prompt string `json:"prompt"`
+}
+
+// Submit codes: 1 accepted and 22 queued carry a new task ID. 21 is used both for "task
+// already exists" and "waiting for a modal"; the task's status tells them apart.
 const (
 	midjourneyCodeSubmitted = 1
+	midjourneyCodeExisting  = 21
 	midjourneyCodeQueued    = 22
 )
 
+// SubmitTask dispatches on the task mode: "action" runs a follow-up on a finished task,
+// anything else is an imagine.
 func (a *MidjourneyAdapter) SubmitTask(ctx context.Context, task *model.MediaTask) (string, error) {
 	if err := requireImageTask(a.name, task); err != nil {
 		return "", err
 	}
-	body, err := json.Marshal(midjourneyImagineRequest{
+	if baseURL, _ := a.credentials(); baseURL == "" {
+		return "", fmt.Errorf("%s 未填写 Base URL：Midjourney 没有官方地址，请在设置中填写代理或中转地址", a.name)
+	}
+	switch task.TaskMode {
+	case "action":
+		return a.submitAction(ctx, task)
+	default:
+		return a.submitImagine(ctx, task)
+	}
+}
+
+func (a *MidjourneyAdapter) submitImagine(ctx context.Context, task *model.MediaTask) (string, error) {
+	resp, err := a.postSubmit(ctx, "/mj/submit/imagine", midjourneyImagineRequest{
 		BotType: midjourneyBotType(task.Model),
 		Prompt:  midjourneyPrompt(task.Prompt, parseGenericImageParams(task.ParamsJSON)),
 	})
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal midjourney request: %w", err)
+		return "", err
 	}
-	baseURL, apiKey := a.credentials()
-	if baseURL == "" {
-		return "", fmt.Errorf("%s 未填写 Base URL：Midjourney 没有官方地址，请在设置中填写代理或中转地址", a.name)
+	return a.acceptedID(resp)
+}
+
+// submitAction runs one of the source task's buttons. An action that opens a modal (a
+// variation in remix mode, for one) is confirmed with the task's prompt.
+func (a *MidjourneyAdapter) submitAction(ctx context.Context, task *model.MediaTask) (string, error) {
+	var params midjourneyActionParams
+	_ = json.Unmarshal([]byte(task.ParamsJSON), &params)
+	if params.SourceProviderTaskID == "" || params.ActionID == "" {
+		return "", fmt.Errorf("%s 后续操作缺少来源任务或操作 ID", a.name)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/mj/submit/imagine", bytes.NewReader(body))
+	resp, err := a.postSubmit(ctx, "/mj/submit/action", midjourneyActionRequest{
+		TaskID:            params.SourceProviderTaskID,
+		CustomID:          params.ActionID,
+		ChooseSameChannel: true,
+	})
 	if err != nil {
 		return "", err
+	}
+	if resp.Code != midjourneyCodeExisting {
+		return a.acceptedID(resp)
+	}
+
+	id := resp.taskID()
+	if id == "" {
+		return "", fmt.Errorf("%s 提交失败（code %d）：%s", a.name, resp.Code, resp.Description)
+	}
+	existing, err := a.fetch(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if existing.Status != "MODAL" {
+		return id, nil
+	}
+	modal, err := a.postSubmit(ctx, "/mj/submit/modal", midjourneyModalRequest{TaskID: id, Prompt: strings.TrimSpace(task.Prompt)})
+	if err != nil {
+		return "", err
+	}
+	return a.acceptedID(modal)
+}
+
+// postSubmit sends a /mj/submit/* request and decodes the submit envelope.
+func (a *MidjourneyAdapter) postSubmit(ctx context.Context, path string, payload any) (*midjourneySubmitResponse, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal midjourney request: %w", err)
+	}
+	baseURL, apiKey := a.credentials()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	setMidjourneyKey(req, apiKey)
 
 	var resp midjourneySubmitResponse
 	if err := a.doJSON(req, &resp); err != nil {
-		return "", err
+		return nil, err
 	}
-	id := strings.Trim(strings.TrimSpace(string(resp.Result)), `"`)
+	return &resp, nil
+}
+
+// acceptedID returns the new task ID of an accepted (1) or queued (22) submission.
+func (a *MidjourneyAdapter) acceptedID(resp *midjourneySubmitResponse) (string, error) {
 	if resp.Code != midjourneyCodeSubmitted && resp.Code != midjourneyCodeQueued {
 		return "", fmt.Errorf("%s 提交失败（code %d）：%s", a.name, resp.Code, resp.Description)
 	}
-	if id == "" || id == "null" {
+	id := resp.taskID()
+	if id == "" {
 		return "", fmt.Errorf("%s did not return a task ID", a.name)
 	}
 	return id, nil
 }
 
-func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask) (*PollResult, error) {
+// taskID reads the result field, which carries the task ID as a string or a bare number.
+func (r *midjourneySubmitResponse) taskID() string {
+	id := strings.Trim(strings.TrimSpace(string(r.Result)), `"`)
+	if id == "null" {
+		return ""
+	}
+	return id
+}
+
+// fetch reads one task from /mj/task/{id}/fetch.
+func (a *MidjourneyAdapter) fetch(ctx context.Context, id string) (*midjourneyFetchResponse, error) {
 	baseURL, apiKey := a.credentials()
-	endpoint := fmt.Sprintf("%s/mj/task/%s/fetch", baseURL, url.PathEscape(task.ProviderTaskID))
+	endpoint := fmt.Sprintf("%s/mj/task/%s/fetch", baseURL, url.PathEscape(id))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -113,6 +205,14 @@ func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 
 	var resp midjourneyFetchResponse
 	if err := a.doJSON(req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask) (*PollResult, error) {
+	resp, err := a.fetch(ctx, task.ProviderTaskID)
+	if err != nil {
 		return nil, err
 	}
 
