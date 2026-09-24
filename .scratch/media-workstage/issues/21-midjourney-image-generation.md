@@ -6,7 +6,7 @@ Midjourney 服务商配好 Key 和地址后，图片卡的服务商选择器里�
 **Status:** resolved
 
 - [x] 后端 `MidjourneyAdapter`：`POST /mj/submit/imagine` 提交（code 1 提交成功、22 排队都算成功，任务 ID 兼容字符串与裸数字），`GET /mj/task/{id}/fetch` 轮询；同时发送 `Authorization: Bearer` 与 `mj-api-secret`
-- [x] 绑定的"模型"即 Bot type（`MID_JOURNEY` / `NIJI_JOURNEY`），作为 `botType` 发送
+- [x] 绑定的"模型"即 Bot type（`MID_JOURNEY` / `NIJI_JOURNEY`），作为 `botType` 发送；New API 列出的计费模型名（如 `mj_imagine`）不发 `botType`，走代理默认的 `MID_JOURNEY`
 - [x] 结果是 MJ 的 2×2 四宫格，原样作为一张图保存（不切图、不自动 U1–U4）
 - [x] 卡片宽高比拼成 `--ar W:H` 追加到 prompt；prompt 里已有 `--ar` / `--aspect`（含 `—ar`）时以 prompt 为准；分辨率对 MJ 无意义，忽略
 - [x] 只做文生图；视频 / 文本任务拒绝

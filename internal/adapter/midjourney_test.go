@@ -89,6 +89,26 @@ func TestMidjourneyPrompt_CardRatioYieldsToPromptParams(t *testing.T) {
 	}
 }
 
+func TestMidjourneyAdapter_OnlyBotTypesAreSentAsBotType(t *testing.T) {
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		submitted = nil
+		_ = json.NewDecoder(r.Body).Decode(&submitted)
+		_, _ = io.WriteString(w, `{"code":1,"result":"1"}`)
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	// new-api lists its billing model names (mj_imagine, ...); those leave the bot to the default.
+	_, err := a.SubmitTask(context.Background(), imageTask("midjourney", "mj_imagine", `{}`))
+	require.NoError(t, err)
+	assert.NotContains(t, submitted, "botType")
+
+	_, err = a.SubmitTask(context.Background(), imageTask("midjourney", "niji_journey", `{}`))
+	require.NoError(t, err)
+	assert.Equal(t, "NIJI_JOURNEY", submitted["botType"])
+}
+
 func TestMidjourneyAdapter_SubmitRejectionCarriesDescription(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, `{"code":24,"description":"可能包含敏感词","result":null}`)

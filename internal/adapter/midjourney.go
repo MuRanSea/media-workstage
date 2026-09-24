@@ -29,7 +29,7 @@ func NewMidjourneyAdapter(cfg ChannelConfig) *MidjourneyAdapter {
 }
 
 type midjourneyImagineRequest struct {
-	BotType string `json:"botType"`
+	BotType string `json:"botType,omitempty"`
 	Prompt  string `json:"prompt"`
 }
 
@@ -59,7 +59,7 @@ func (a *MidjourneyAdapter) SubmitTask(ctx context.Context, task *model.MediaTas
 		return "", err
 	}
 	body, err := json.Marshal(midjourneyImagineRequest{
-		BotType: task.Model,
+		BotType: midjourneyBotType(task.Model),
 		Prompt:  midjourneyPrompt(task.Prompt, parseGenericImageParams(task.ParamsJSON)),
 	})
 	if err != nil {
@@ -150,6 +150,17 @@ func (a *MidjourneyAdapter) PollTimeout(*model.MediaTask) time.Duration {
 func setMidjourneyKey(req *http.Request, apiKey string) {
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("mj-api-secret", apiKey)
+}
+
+// midjourneyBotType returns the botType for a bound model. Relays such as new-api list
+// billing model names (mj_imagine, ...) instead; those send no botType, so the proxy's
+// default (MID_JOURNEY) applies.
+func midjourneyBotType(modelID string) string {
+	switch bot := strings.ToUpper(strings.TrimSpace(modelID)); bot {
+	case "MID_JOURNEY", "NIJI_JOURNEY":
+		return bot
+	}
+	return ""
 }
 
 // midjourneyAspectFlag matches a prompt's own aspect parameter ("--ar 2:3", "--aspect 3:2"),
