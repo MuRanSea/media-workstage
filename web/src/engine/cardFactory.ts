@@ -82,7 +82,7 @@ function copyTitle(card: SpatialCard, newTag: number): string {
 }
 
 /** Task results are not copied: a duplicate starts idle with the same settings. */
-const RESULT_FIELDS = ['taskId', 'status', 'progress', 'errorMessage', 'resultUrl', 'outputAssets'] as const;
+const RESULT_FIELDS = ['taskId', 'status', 'progress', 'errorMessage', 'resultUrl', 'outputAssets', 'resultActions'] as const;
 
 /**
  * Copies of `source` cards placed with their top-left group corner at `at`.

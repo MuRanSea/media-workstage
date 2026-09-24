@@ -105,6 +105,7 @@ function compileChannelImagePayload(provider: ProviderId, input: ImageCompilatio
  * Convenience helper to compile directly from a SpatialCard.
  */
 export function compileCardImagePayload(card: SpatialCard): CreateTaskPayload {
+  if (card.derivedFrom?.operation === 'action') return compileActionPayload(card);
   return compileImageTaskPayload({
     provider: card.provider,
     model: card.model,
@@ -119,4 +120,21 @@ export function compileCardImagePayload(card: SpatialCard): CreateTaskPayload {
     background: card.background,
     imageResolution: card.imageResolution,
   });
+}
+
+/**
+ * A derived card runs its operation on the source card's task; the backend checks the
+ * source task offered that action. The prompt is only recorded (and confirms modals).
+ */
+function compileActionPayload(card: SpatialCard): CreateTaskPayload {
+  const from = card.derivedFrom!;
+  if (!from.actionId) throw new Error(`「${card.title}」缺少要执行的操作`);
+  return {
+    provider: card.provider ?? 'ark',
+    model: card.model,
+    task_type: 'image_generation',
+    task_mode: 'action',
+    prompt: card.prompt.trim() || from.label,
+    params: { source_task_id: from.taskId, action_id: from.actionId },
+  };
 }

@@ -90,6 +90,24 @@ describe('applyTaskToCard', () => {
     expect(next).toMatchObject({ status: 'failed', errorMessage: 'X' });
   });
 
+  it('keeps the follow-up actions a succeeded task offers', () => {
+    const actions = [{ id: 'MJ::JOB::upsample::1::h', label: 'U1' }];
+    const next = applyTaskToCard(card({ status: 'running' }), task({ status: 'succeeded', result_actions: actions }));
+    expect(next.resultActions).toEqual(actions);
+    // A new result replaces the old buttons, including with none.
+    expect(applyTaskToCard(next, task({ status: 'succeeded' })).resultActions).toBeUndefined();
+  });
+
+  it("fills a text card with a task's text result", () => {
+    const next = applyTaskToCard(
+      card({ type: 'text', status: 'running', textOutput: '' }),
+      task({ status: 'succeeded', result_text: '1️⃣ a cat --ar 1:1' })
+    );
+    expect(next.textOutput).toBe('1️⃣ a cat --ar 1:1');
+    // Image cards ignore text results.
+    expect(applyTaskToCard(card({}), task({ status: 'succeeded', result_text: 'x' })).textOutput).toBeUndefined();
+  });
+
   it('tracks progress while running', () => {
     expect(applyTaskToCard(card({ progress: 5 }), task({}))).toMatchObject({ status: 'running', progress: 40 });
   });

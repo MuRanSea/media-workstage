@@ -22,6 +22,25 @@ export interface TaskAssetDto {
   downloaded_at?: string;
 }
 
+/** A follow-up a provider offers on a finished result (Midjourney's U1–U4 / V1–V4 …). */
+export interface TaskActionDto {
+  /** The provider's own identifier, sent back to run the action. */
+  id: string;
+  label?: string;
+  emoji?: string;
+}
+
+/** Where a derived card came from: an operation run on another card's finished task. */
+export interface DerivedFrom {
+  cardId: string;
+  /** The source card's task; kept so the card can run again after the source card is gone. */
+  taskId: string;
+  actionId?: string;
+  /** Short name of the operation, shown on the connection ("U2", "重绘", …). */
+  label: string;
+  operation: 'action' | 'describe';
+}
+
 export interface ReferenceItem {
   cardId: string;
   tagIndex: number;
@@ -49,6 +68,10 @@ export interface SpatialCard {
   errorMessage?: string;
   resultUrl?: string;
   outputAssets?: TaskAssetDto[];
+  /** Follow-ups the finished result offers (Midjourney buttons). */
+  resultActions?: TaskActionDto[];
+  /** Set on cards created by running an operation on another card's result. */
+  derivedFrom?: DerivedFrom;
 
   /** Image/video cards: a text card whose output replaces this card's prompt. */
   promptSourceId?: string;

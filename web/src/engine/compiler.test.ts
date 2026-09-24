@@ -159,3 +159,32 @@ describe('Channel Image Payload Compiler', () => {
     expect(payload.params?.size).toBe('1024x1024');
   });
 });
+
+describe('Follow-up action payload', () => {
+  it('runs a derived card as an action on its source task', () => {
+    const payload = compileCardImagePayload({
+      id: 'c2',
+      type: 'image',
+      title: '图片 7 · U2',
+      tagIndex: 8,
+      x: 0,
+      y: 0,
+      width: 340,
+      prompt: 'a red fox',
+      provider: 'midjourney',
+      model: 'mj_imagine',
+      status: 'idle',
+      progress: 0,
+      imageRatioPreset: '16:9',
+      derivedFrom: { cardId: 'c1', taskId: 'task-grid', actionId: 'MJ::JOB::upsample::2::h', label: 'U2', operation: 'action' },
+    });
+    expect(payload).toEqual({
+      provider: 'midjourney',
+      model: 'mj_imagine',
+      task_type: 'image_generation',
+      task_mode: 'action',
+      prompt: 'a red fox',
+      params: { source_task_id: 'task-grid', action_id: 'MJ::JOB::upsample::2::h' },
+    });
+  });
+});

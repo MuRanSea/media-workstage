@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, FileText, Film, Image as ImageIcon, Sparkles, Trash2 } from 'lucide-react';
-import type { CardType, SpatialCard } from '../types/canvas.ts';
+import type { CardType, SpatialCard, TaskActionDto } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
 import { screenToWorld, type CanvasTransform, type Point } from '../engine/matrix.ts';
-import { connectCards, hasOutputPort } from '../engine/connections.ts';
+import { connectCards, hasOutputPort, withEffectivePrompt } from '../engine/connections.ts';
+import { spawnActionCard } from '../engine/mjActions.ts';
 import { createCard, duplicateCards } from '../engine/cardFactory.ts';
 import { useHistory } from '../engine/useHistory.ts';
 import { removeReferencePatch } from '../engine/cardParams.ts';
@@ -24,7 +25,8 @@ import { Menu, useToast, type MenuEntry } from './ui/index.ts';
 interface SpatialCanvasProps {
   cards: SpatialCard[];
   setCards: React.Dispatch<React.SetStateAction<SpatialCard[]>>;
-  onTriggerGenerate: (cardId: string) => void;
+  /** `card` is passed when the card was just added and is not in `cards` yet. */
+  onTriggerGenerate: (cardId: string, card?: SpatialCard) => void;
   /** Viewport to open with (a saved project's). */
   initialViewport?: CanvasTransform;
   /** Called whenever the viewport pans or zooms. */
@@ -35,12 +37,13 @@ interface SpatialCanvasProps {
 
 interface Ray {
   id: string;
-  kind: 'reference' | 'prompt';
+  kind: 'reference' | 'prompt' | 'derived';
   pathData: string;
   midX: number;
   midY: number;
   label: string;
-  onRemove: () => void;
+  /** Absent for links that cannot be disconnected (a derived card's origin). */
+  onRemove?: () => void;
 }
 
 /** In-progress connection drag: from a card's output port to the cursor (world coords). */
@@ -56,6 +59,12 @@ interface ContextMenuState {
   items: MenuEntry[];
   title?: string;
 }
+
+const RAY_STYLE: Record<Ray['kind'], { stroke: string; dash?: string; pill: string }> = {
+  reference: { stroke: '#f472b6', pill: 'border-pink-500/60 text-pink-300' },
+  prompt: { stroke: '#34d399', pill: 'border-emerald-500/60 text-emerald-300' },
+  derived: { stroke: '#a78bfa', dash: '5 4', pill: 'border-violet-500/60 text-violet-300' },
+};
 
 const bezier = (srcX: number, srcY: number, tgtX: number, tgtY: number) => {
   const dx = Math.max(80, Math.abs(tgtX - srcX) * 0.5);
@@ -254,6 +263,39 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     duplicate(clipboardRef.current, inside ? toWorld(p.x, p.y) : viewportCenter());
   }, [duplicate, pointerRef, toWorld, viewportCenter]);
 
+  /** Runs a follow-up of `source`'s result on a new card beside it (one undo step). */
+  const runAction = useCallback(
+    (source: SpatialCard, action: TaskActionDto) => {
+      let prompt = source.prompt;
+      try {
+        prompt = withEffectivePrompt(source, cardsRef.current).prompt;
+      } catch {
+        // The linked text card is empty; the source's own prompt is only a record here.
+      }
+      let card: SpatialCard;
+      try {
+        card = spawnActionCard(source, action, cardsRef.current, prompt);
+      } catch (err) {
+        toast((err as Error).message, { tone: 'error' });
+        return;
+      }
+      editCards((prev) => [...prev, card]);
+      onTriggerGenerate(card.id, card);
+    },
+    [editCards, onTriggerGenerate, toast]
+  );
+
+  /** Actions of `card` whose derived card is still generating, so they are not run twice. */
+  const busyActionsFor = useCallback(
+    (card: SpatialCard) =>
+      new Set(
+        cards
+          .filter((c) => c.derivedFrom?.cardId === card.id && (c.status === 'queued' || c.status === 'running'))
+          .map((c) => c.derivedFrom!.actionId!)
+      ),
+    [cards]
+  );
+
   const cardMenuItems = useCallback(
     (card: SpatialCard): MenuEntry[] => [
       { label: '生成', icon: <Sparkles className="w-3.5 h-3.5" />, onSelect: () => onTriggerGenerate(card.id) },
@@ -401,6 +443,20 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           onRemove: () => handleUpdateCard(card.id, removeReferencePatch(card, src.id)),
         });
       });
+
+      const origin = card.derivedFrom ? byId.get(card.derivedFrom.cardId) : undefined;
+      if (origin) {
+        const srcX = origin.x + origin.width;
+        const srcY = origin.y + PORT_Y;
+        rays.push({
+          id: `derived:${origin.id}->${card.id}`,
+          kind: 'derived',
+          pathData: bezier(srcX, srcY, tgtX, tgtY),
+          midX: (srcX + tgtX) / 2,
+          midY: (srcY + tgtY) / 2,
+          label: card.derivedFrom!.label,
+        });
+      }
 
       const textSrc = card.promptSourceId ? byId.get(card.promptSourceId) : undefined;
       if (textSrc) {
@@ -560,27 +616,27 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           <svg className="absolute top-0 left-0 w-[50000px] h-[50000px] pointer-events-none overflow-visible -translate-x-[25000px] -translate-y-[25000px]">
             <g transform="translate(25000, 25000)">
               {connectionRays.map((ray) => {
-                const isPrompt = ray.kind === 'prompt';
+                const style = RAY_STYLE[ray.kind];
                 return (
                   <g key={ray.id}>
-                    <path d={ray.pathData} fill="none" stroke={isPrompt ? '#34d399' : '#f472b6'} strokeOpacity={0.7} strokeWidth="2" />
+                    <path d={ray.pathData} fill="none" stroke={style.stroke} strokeOpacity={0.7} strokeWidth="2" strokeDasharray={style.dash} />
                     {/* Label pill at curve center; its × disconnects */}
-                    <foreignObject x={ray.midX - 36} y={ray.midY - 12} width={72} height={24}>
+                    <foreignObject x={ray.midX - 48} y={ray.midY - 12} width={96} height={24}>
                       <div
-                        className={`pointer-events-auto flex items-center justify-center gap-1 w-full h-full bg-canvas-surface border rounded-full text-[11px] font-mono ${
-                          isPrompt ? 'border-emerald-500/60 text-emerald-300' : 'border-pink-500/60 text-pink-300'
-                        }`}
+                        className={`pointer-events-auto flex items-center justify-center gap-1 w-fit max-w-full h-full mx-auto px-2 bg-canvas-surface border rounded-full text-[11px] font-mono ${style.pill}`}
                       >
-                        <span>{ray.label}</span>
-                        <button
-                          type="button"
-                          title="断开连线"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={ray.onRemove}
-                          className="text-slate-500 hover:text-rose-300 leading-none"
-                        >
-                          ×
-                        </button>
+                        <span className="truncate">{ray.label}</span>
+                        {ray.onRemove && (
+                          <button
+                            type="button"
+                            title="断开连线"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={ray.onRemove}
+                            className="text-slate-500 hover:text-rose-300 leading-none"
+                          >
+                            ×
+                          </button>
+                        )}
                       </div>
                     </foreignObject>
                   </g>
@@ -628,6 +684,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                     linkedPrompt={linkedPromptFor(card)}
                     onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
                     onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
+                    onRunAction={(action) => runAction(card, action)}
+                    busyActionIds={busyActionsFor(card)}
                   />
                 );
               }

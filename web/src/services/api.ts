@@ -1,4 +1,4 @@
-import type { TaskAssetDto } from '../types/canvas.ts';
+import type { TaskActionDto, TaskAssetDto } from '../types/canvas.ts';
 
 export interface CreateTaskPayload {
   /** Owning project; its folder receives the outputs and resolves reference paths. */
@@ -40,6 +40,10 @@ export interface BackendTaskResponse {
   updated_at: string;
   completed_at?: string;
   assets?: TaskAssetDto[];
+  /** Follow-ups the provider offers on the result. */
+  result_actions?: TaskActionDto[];
+  /** Text result (Midjourney Describe). */
+  result_text?: string;
 }
 
 /** Stable ID of a configured provider: a preset ID ('ark', 'openai', …) or a generated one. */

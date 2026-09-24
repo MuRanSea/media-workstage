@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Image as ImageIcon, Layers, LayoutGrid, Maximize2, Sparkles } from 'lucide-react';
-import { IMAGE_MODELS } from '../../types/canvas.ts';
+import { IMAGE_MODELS, type TaskActionDto } from '../../types/canvas.ts';
+import { actionLabel, groupActions } from '../../engine/mjActions.ts';
 import {
   MISSING_PROVIDER_HINT,
   buildProviderGroups,
@@ -33,6 +34,10 @@ interface ImageCardViewProps extends CardViewProps {
   linkedPrompt?: { title: string; text: string };
   onUnlinkPrompt?: () => void;
   onStartConnect?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  /** Runs one of the result's follow-ups on a new card. */
+  onRunAction?: (action: TaskActionDto) => void;
+  /** Follow-ups already running on a derived card. */
+  busyActionIds?: ReadonlySet<string>;
 }
 
 export const ImageCardView: React.FC<ImageCardViewProps> = ({
@@ -50,6 +55,8 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
   linkedPrompt,
   onUnlinkPrompt,
   onStartConnect,
+  onRunAction,
+  busyActionIds,
 }) => {
   const [selectedLayerIndex, setSelectedLayerIndex] = useState<number | null>(null);
   const [loadedAspect, setLoadedAspect] = useState<number>();
@@ -142,6 +149,10 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
 
       <SummaryRow model={modelLabel} spec={imageSizeSummary(card)} />
 
+      {onRunAction && card.status === 'succeeded' && card.resultActions?.length ? (
+        <ResultActions actions={card.resultActions} busy={busyActionIds} onRun={onRunAction} />
+      ) : null}
+
       {layerAssets.length > 0 && onUnpackLayers && (
         <Button size="sm" block icon={<Layers className="w-3.5 h-3.5" />} onClick={() => onUnpackLayers(card)}>
           把 {layerAssets.length} 个图层展开成卡片
@@ -177,5 +188,39 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         {isGenerating ? '生成中…' : missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个服务商还不支持生图' : card.resultUrl ? '重新生成' : '生成图片'}
       </Button>
     </CardShell>
+  );
+};
+
+/** The result's follow-ups (Midjourney U / V rows, then the rest); each opens a new card. */
+const ResultActions: React.FC<{
+  actions: TaskActionDto[];
+  busy?: ReadonlySet<string>;
+  onRun: (action: TaskActionDto) => void;
+}> = ({ actions, busy, onRun }) => {
+  const { upscale, variation, other } = groupActions(actions);
+  const row = (items: TaskActionDto[], columns: boolean) =>
+    items.length > 0 && (
+      <div className={columns ? 'grid grid-cols-4 gap-1' : 'flex flex-wrap gap-1'}>
+        {items.map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            disabled={busy?.has(a.id)}
+            title={`${actionLabel(a)}：在新卡片中执行`}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => onRun(a)}
+            className="px-2 py-1 rounded-md border border-slate-700 bg-slate-900/70 text-[11px] text-slate-200 hover:border-pink-500/60 hover:text-white disabled:opacity-40 disabled:cursor-wait transition"
+          >
+            {a.label && a.emoji ? `${a.emoji} ${a.label}` : actionLabel(a)}
+          </button>
+        ))}
+      </div>
+    );
+  return (
+    <div className="space-y-1">
+      {row(upscale, true)}
+      {row(variation, true)}
+      {row(other, false)}
+    </div>
   );
 };

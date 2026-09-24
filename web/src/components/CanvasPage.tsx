@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { type SpatialCard } from '../types/canvas.ts';
 import { SpatialCanvas } from './SpatialCanvas.tsx';
 import { ProjectSwitcher } from './ProjectSwitcher.tsx';
@@ -63,6 +63,9 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   setActiveProjectId(projectId);
 
   const [cards, setCards] = useState<SpatialCard[]>(() => normalizeCards(doc.cards));
+  // Latest cards for handlers that run right after a card was added in the same tick.
+  const cardsRef = useRef(cards);
+  cardsRef.current = cards;
   const [initialViewport] = useState(() => normalizeViewport(doc.viewport));
   const [name, setName] = useState(doc.name);
   const toast = useToast();
@@ -135,8 +138,9 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     }
   };
 
-  const handleTriggerGenerate = async (cardId: string) => {
-    const targetCard = cards.find((c) => c.id === cardId);
+  /** `card` is passed for a card created in the same tick, before it reaches `cards`. */
+  const handleTriggerGenerate = async (cardId: string, card?: SpatialCard) => {
+    const targetCard = card ?? cardsRef.current.find((c) => c.id === cardId);
     if (!targetCard) return;
     // Also reached from the context menu, which does not know the provider is gone.
     if (isProviderMissing(providers, targetCard.provider)) {
@@ -156,11 +160,11 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     );
     try {
       // A connected text card supplies the prompt.
-      const effectiveCard = withEffectivePrompt(targetCard, cards);
+      const effectiveCard = withEffectivePrompt(targetCard, cardsRef.current);
       const payload =
         effectiveCard.type === 'image'
           ? compileCardImagePayload(effectiveCard)
-          : compileCardVideoPayload(effectiveCard, cards);
+          : compileCardVideoPayload(effectiveCard, cardsRef.current);
 
       const backendTask = await apiCreateTask({ ...payload, project_id: projectId });
       const taskId = backendTask.id;

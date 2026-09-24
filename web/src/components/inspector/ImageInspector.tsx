@@ -17,9 +17,29 @@ interface Props {
   update: (patch: Partial<SpatialCard>) => void;
   /** Prompt supplied by a linked text card, for the JSON preview. */
   linkedPromptText?: string;
+  /** Title of the card a derived card came from, if it is still on the canvas. */
+  derivedSourceTitle?: string;
 }
 
-export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText }) => {
+export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText, derivedSourceTitle }) => {
+  if (card.derivedFrom) {
+    // A derived card runs its operation on the source's task with the source's settings.
+    return (
+      <>
+        <Section title="来源">
+          <p className="text-xs text-slate-300 leading-relaxed">
+            对「{derivedSourceTitle ?? '已删除的卡片'}」的生成结果执行 <span className="font-mono text-violet-300">{card.derivedFrom.label}</span>，
+            服务商、模型和尺寸沿用来源卡片。
+          </p>
+        </Section>
+        <DevJson compile={() => compileCardImagePayload(card)} />
+      </>
+    );
+  }
+  return <ImageSettings card={card} update={update} linkedPromptText={linkedPromptText} />;
+};
+
+const ImageSettings: React.FC<Props> = ({ card, update, linkedPromptText }) => {
   const channels = useChannels();
   const groups = useMemo(() => buildProviderGroups(channels, 'image'), [channels]);
   const provider = card.provider ?? 'ark';

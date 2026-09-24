@@ -23,6 +23,8 @@ export function applyTaskToCard(card: SpatialCard, task: BackendTaskResponse): S
         errorMessage: undefined,
         outputAssets: task.assets ?? card.outputAssets,
         resultUrl: assetStoredPath(display) ?? card.resultUrl,
+        resultActions: task.result_actions?.length ? task.result_actions : undefined,
+        ...(card.type === 'text' && task.result_text ? { textOutput: task.result_text } : {}),
       };
     }
     case 'failed':

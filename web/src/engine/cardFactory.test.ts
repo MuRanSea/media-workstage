@@ -63,6 +63,19 @@ describe('duplicateCards', () => {
     expect(ci.status).toBe('idle');
     expect(ci.resultUrl).toBeUndefined();
   });
+
+  it('keeps where a derived card came from, but not its result actions when dropping results', () => {
+    const derived: SpatialCard = {
+      ...img,
+      resultActions: [{ id: 'MJ::JOB::upsample::1::h', label: 'U1' }],
+      derivedFrom: { cardId: 'grid', taskId: 'task-grid', actionId: 'MJ::JOB::upsample::1::h', label: 'U1', operation: 'action' },
+    };
+    const [kept] = duplicateCards([derived], { x: 0, y: 0 }, [derived]);
+    expect(kept.resultActions).toEqual(derived.resultActions);
+    const [fresh] = duplicateCards([derived], { x: 0, y: 0 }, [derived], false);
+    expect(fresh.resultActions).toBeUndefined();
+    expect(fresh.derivedFrom).toEqual(derived.derivedFrom);
+  });
 });
 
 describe('mergeTaskState', () => {

@@ -87,7 +87,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
       <div className="flex-1 overflow-y-auto px-4">
         {single?.type === 'image' && (
-          <ImageInspector card={single} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
+          <ImageInspector
+            card={single}
+            update={update}
+            linkedPromptText={linkedPromptFor(single)?.text}
+            derivedSourceTitle={cards.find((c) => c.id === single.derivedFrom?.cardId)?.title}
+          />
         )}
         {single?.type === 'video' && (
           <VideoInspector card={single} cards={cards} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
