@@ -47,6 +47,13 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
 - **MiniMaxAdapter (海螺适配器)**:
   The concrete provider adapter for MiniMax official video generation APIs (MiniMax-H3, Video-01).
 
+- **MidjourneyAdapter (Midjourney 适配器)**:
+  The concrete provider adapter for the MJ Proxy protocol (midjourney-proxy's `/mj` API, spoken by self-hosted proxies and new-api style relays). Text-to-image only; the result is Midjourney's 2×2 grid kept as one image, and the card's aspect ratio becomes `--ar` unless the prompt sets its own.
+
+- **Bot type (MJ 机器人类型)**:
+  What an MJ Proxy Provider binds as its models: `MID_JOURNEY` or `NIJI_JOURNEY`, sent as the request's `botType`.
+  _Avoid_: MJ model version (`--v` / `--niji` stay prompt parameters)
+
 - **LocalAssetStore (本地资产库)**:
   The local filesystem repository responsible for caching uploaded reference assets, downloading finished generation outputs, and serving them via local HTTP endpoints.
 

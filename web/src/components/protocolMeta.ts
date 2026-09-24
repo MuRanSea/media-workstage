@@ -74,7 +74,7 @@ export const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
     keyLabel: 'API Secret',
     keyPlaceholder: '请输入 mj-api-secret 或中转令牌',
     hint: 'Midjourney 无官方 API，请填写兼容 /mj 接口的代理或中转地址（不含 /mj），支持内网与本机地址。',
-    adapterReady: false,
+    adapterReady: true,
   },
   gemini: {
     label: 'Gemini',

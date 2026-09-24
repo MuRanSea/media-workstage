@@ -1,0 +1,174 @@
+package adapter
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"media-workstage/internal/model"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestMidjourneyAdapter_SubmitThenPollLifecycle(t *testing.T) {
+	var submitted map[string]any
+	status, progress := "IN_PROGRESS", "45%"
+	var srvURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/mj/submit/imagine":
+			assert.Equal(t, "Bearer mj-key", r.Header.Get("Authorization"))
+			assert.Equal(t, "mj-key", r.Header.Get("mj-api-secret"))
+			_ = json.NewDecoder(r.Body).Decode(&submitted)
+			// new-api returns the task ID as a bare number.
+			_, _ = io.WriteString(w, `{"code":1,"description":"提交成功","properties":{},"result":1320098173412546}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/mj/task/1320098173412546/fetch":
+			assert.Equal(t, "Bearer mj-key", r.Header.Get("Authorization"))
+			resp := map[string]any{"id": "1320098173412546", "action": "IMAGINE", "status": status, "progress": progress}
+			if status == "SUCCESS" {
+				resp["imageUrl"] = srvURL + "/mj/image/1320098173412546.png"
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		case r.URL.Path == "/mj/image/1320098173412546.png":
+			_, _ = w.Write(pngBytes)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	srvURL = srv.URL
+
+	a := NewMidjourneyAdapter(ChannelConfig{ProviderID: "midjourney", BaseURL: srv.URL + "/", APIKey: "mj-key"})
+	task := imageTask("midjourney", "NIJI_JOURNEY", `{"aspect_ratio":"16:9","resolution":"2K"}`)
+	id, err := a.SubmitTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, "1320098173412546", id)
+	assert.Equal(t, "NIJI_JOURNEY", submitted["botType"])
+	assert.Equal(t, "a red fox --ar 16:9", submitted["prompt"])
+	task.ProviderTaskID = id
+
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusRunning, res.Status)
+	assert.Equal(t, 45, res.Progress)
+
+	status, progress = "SUCCESS", "100%"
+	res, err = a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSucceeded, res.Status)
+	require.Len(t, res.Assets, 1, "the 2x2 grid is kept as a single image")
+	assert.Equal(t, "images/task-1/base.png", filepath.ToSlash(res.Assets[0].LocalPath))
+	target := filepath.Join(t.TempDir(), res.Assets[0].LocalPath)
+	require.NoError(t, a.DownloadAsset(context.Background(), res.Assets[0].RemoteURL, target))
+	data, _ := os.ReadFile(target)
+	assert.Equal(t, pngBytes, data)
+}
+
+func TestMidjourneyPrompt_CardRatioYieldsToPromptParams(t *testing.T) {
+	cases := []struct{ prompt, ratio, want string }{
+		{"a red fox", "16:9", "a red fox --ar 16:9"},
+		{"a red fox --ar 2:3 --v 7", "16:9", "a red fox --ar 2:3 --v 7"},
+		{"a red fox --aspect 3:2", "1:1", "a red fox --aspect 3:2"},
+		{"a red fox --v 7", "1:1", "a red fox --v 7 --ar 1:1"},
+		{"a red fox", "", "a red fox"},
+		{"a red fox ", "auto", "a red fox"},
+		// Midjourney also takes an em dash, which autocorrect produces from "--".
+		{"a red fox —ar 9:16", "16:9", "a red fox —ar 9:16"},
+		// "--art" is not an aspect flag.
+		{"--artistic fox", "4:3", "--artistic fox --ar 4:3"},
+	}
+	for _, c := range cases {
+		params, _ := json.Marshal(map[string]string{"aspect_ratio": c.ratio})
+		assert.Equal(t, c.want, midjourneyPrompt(c.prompt, parseGenericImageParams(string(params))), c.prompt)
+	}
+}
+
+func TestMidjourneyAdapter_SubmitRejectionCarriesDescription(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"code":24,"description":"可能包含敏感词","result":null}`)
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	_, err := a.SubmitTask(context.Background(), imageTask("midjourney", "MID_JOURNEY", `{}`))
+	assert.ErrorContains(t, err, "可能包含敏感词")
+}
+
+func TestMidjourneyAdapter_QueuedSubmitStillReturnsTask(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"code":22,"description":"排队中","result":"1720000000000001"}`)
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	id, err := a.SubmitTask(context.Background(), imageTask("midjourney", "MID_JOURNEY", `{}`))
+	require.NoError(t, err)
+	assert.Equal(t, "1720000000000001", id)
+}
+
+func TestMidjourneyAdapter_FailedAndCancelledTasks(t *testing.T) {
+	status, reason := "FAILURE", "Banned prompt detected"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "t", "status": status, "failReason": reason, "progress": "0%"})
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	task := imageTask("midjourney", "MID_JOURNEY", `{}`)
+	task.ProviderTaskID = "t"
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailed, res.Status)
+	assert.Equal(t, "Banned prompt detected", res.ErrorMessage)
+
+	status, reason = "CANCEL", ""
+	res, err = a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailed, res.Status)
+	assert.NotEmpty(t, res.ErrorMessage)
+}
+
+func TestMidjourneyAdapter_RejectsVideoTasks(t *testing.T) {
+	task := imageTask("midjourney", "MID_JOURNEY", `{}`)
+	task.TaskType = "video_generation"
+	_, err := NewMidjourneyAdapter(ChannelConfig{APIKey: "k"}).SubmitTask(context.Background(), task)
+	assert.ErrorContains(t, err, "只支持生图任务")
+}
+
+func TestMidjourneyAdapter_HTTPErrorCarriesDescription(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"code":401,"description":"无效的令牌","result":null}`)
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	_, err := a.SubmitTask(context.Background(), imageTask("midjourney", "MID_JOURNEY", `{}`))
+	assert.ErrorContains(t, err, "无效的令牌")
+}
+
+func TestMidjourneyAdapter_UnknownTaskFailsInsteadOfRetrying(t *testing.T) {
+	// midjourney-proxy answers an unknown task ID with 200 and an empty body.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	task := imageTask("midjourney", "MID_JOURNEY", `{}`)
+	task.ProviderTaskID = "gone"
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailed, res.Status)
+	assert.Equal(t, "TaskNotFound", res.ErrorCode)
+}
+
+func TestMidjourneyAdapter_RequiresBaseURL(t *testing.T) {
+	// There is no official host: a key saved without an address cannot run.
+	_, err := NewMidjourneyAdapter(ChannelConfig{APIKey: "k"}).SubmitTask(context.Background(), imageTask("midjourney", "MID_JOURNEY", `{}`))
+	assert.ErrorContains(t, err, "Base URL")
+}

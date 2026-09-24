@@ -292,7 +292,12 @@ func TestNewProviderAdapter_BuildsByProtocolAndNamesInstance(t *testing.T) {
 	require.True(t, ok)
 	assert.IsType(t, &GeminiImageAdapter{}, g)
 
-	for _, p := range []model.Protocol{model.ProtocolKling, model.ProtocolMidjourney, "unknown"} {
+	mj, ok := NewProviderAdapter(model.ProtocolMidjourney, "mj-relay", "http://relay", "k", nil)
+	require.True(t, ok)
+	assert.IsType(t, &MidjourneyAdapter{}, mj)
+	assert.Equal(t, "mj-relay", mj.ProviderName())
+
+	for _, p := range []model.Protocol{model.ProtocolKling, "unknown"} {
 		_, ok := NewProviderAdapter(p, "x", "", "k", nil)
 		assert.False(t, ok, p)
 	}

@@ -571,12 +571,16 @@ func TestProviderAdapters_MockOnlyWhereTheProviderRunsMocked(t *testing.T) {
 	assert.IsType(t, &adapter.FakeProviderAdapter{}, adapters["minimax"])
 
 	adapters = ProviderAdapters(map[string]string{
-		"openai_api_key":   "sk-db",
-		"kling_api_key":    "kling-db",
-		"minimax_api_key":  "mm-db",
-		"minimax_group_id": "g1",
+		"openai_api_key":      "sk-db",
+		"kling_api_key":       "kling-db",
+		"minimax_api_key":     "mm-db",
+		"minimax_group_id":    "g1",
+		"midjourney_api_key":  "mj-db",
+		"midjourney_base_url": "http://mj-proxy:8080",
 	})
 	assert.IsType(t, &adapter.OpenAIImageAdapter{}, adapters["openai"])
+	require.IsType(t, &adapter.MidjourneyAdapter{}, adapters["midjourney"])
+	assert.Equal(t, "http://mj-proxy:8080", adapters["midjourney"].(adapter.ConfigurableAdapter).GetConfig().BaseURL)
 	assert.Equal(t, "openai", adapters["openai"].ProviderName())
 	assert.IsType(t, &adapter.MiniMaxAdapter{}, adapters["minimax"])
 	assert.Equal(t, "g1", adapters["minimax"].(adapter.ConfigurableAdapter).GetConfig().Extra["group_id"])

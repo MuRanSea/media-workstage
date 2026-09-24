@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -56,7 +57,7 @@ func ratioValue(ratio string) (float64, bool) {
 }
 
 // channelImageBase carries the credentials, HTTP client and hot-reload plumbing
-// shared by the image-only channel adapters (OpenAI, Gemini, APIMart).
+// shared by the image-only channel adapters (OpenAI, Gemini, APIMart, Midjourney).
 type channelImageBase struct {
 	name       string
 	defaultURL string
@@ -128,8 +129,9 @@ func (b *channelImageBase) credentials() (baseURL, apiKey string) {
 	return b.baseURL, b.apiKey
 }
 
-// doJSON sends a JSON request and decodes a 2xx response into out; non-2xx bodies
-// are surfaced through errMessage so provider error text reaches the card.
+// doJSON sends a JSON request and decodes a 2xx response into out, leaving out untouched
+// for an empty body; non-2xx bodies are surfaced through errMessage so provider error
+// text reaches the card.
 func (b *channelImageBase) doJSON(req *http.Request, out any) error {
 	resp, err := b.client.Do(req)
 	if err != nil {
@@ -142,6 +144,9 @@ func (b *channelImageBase) doJSON(req *http.Request, out any) error {
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &ProviderHTTPError{Provider: b.name, Status: resp.StatusCode, Message: errMessage(body)}
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("failed to parse %s response: %w", b.name, err)
@@ -163,8 +168,9 @@ func (e *ProviderHTTPError) Error() string {
 // errMessage extracts a human-readable message from common error envelopes.
 func errMessage(body []byte) string {
 	var env struct {
-		Error   json.RawMessage `json:"error"`
-		Message string          `json:"message"`
+		Error       json.RawMessage `json:"error"`
+		Message     string          `json:"message"`
+		Description string          `json:"description"` // midjourney-proxy
 	}
 	if json.Unmarshal(body, &env) == nil {
 		var obj struct {
@@ -179,6 +185,9 @@ func errMessage(body []byte) string {
 		}
 		if env.Message != "" {
 			return env.Message
+		}
+		if env.Description != "" {
+			return env.Description
 		}
 	}
 	text := strings.TrimSpace(string(body))

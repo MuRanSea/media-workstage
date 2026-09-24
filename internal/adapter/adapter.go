@@ -75,6 +75,8 @@ func NewProviderAdapter(protocol model.Protocol, providerID, baseURL, apiKey str
 		return NewGeminiImageAdapter(cfg), true
 	case model.ProtocolAPIMart:
 		return NewAPIMartAdapter(cfg), true
+	case model.ProtocolMidjourney:
+		return NewMidjourneyAdapter(cfg), true
 	}
 	return nil, false
 }

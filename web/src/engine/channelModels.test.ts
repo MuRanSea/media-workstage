@@ -69,6 +69,29 @@ describe('buildProviderGroups', () => {
   });
 });
 
+describe('Midjourney readiness', () => {
+  it('runs the bot types as image models, and nothing for text or video', () => {
+    const mj = channel({
+      id: 'midjourney',
+      is_configured: true,
+      models: [
+        { id: 'MID_JOURNEY', type: 'image' },
+        { id: 'NIJI_JOURNEY', type: 'image' },
+        { id: 'mj-video', type: 'video' },
+        { id: 'mj-chat', type: 'chat' },
+      ],
+    });
+    const image = buildProviderGroups([mj], 'image');
+    expect(image.map((g) => [g.provider, g.name, g.ready])).toEqual([['midjourney', 'Midjourney', true]]);
+    expect(image[0].options.map((o) => [o.id, o.ready])).toEqual([
+      ['MID_JOURNEY', true],
+      ['NIJI_JOURNEY', true],
+    ]);
+    expect(buildProviderGroups([mj], 'video').map((g) => g.ready)).toEqual([false]);
+    expect(buildProviderGroups([mj], 'text').map((g) => g.ready)).toEqual([false]);
+  });
+});
+
 describe('APIMart video readiness', () => {
   it('enables only Kling models on APIMart video', () => {
     const groups = buildProviderGroups(
