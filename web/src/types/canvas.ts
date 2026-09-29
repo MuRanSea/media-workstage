@@ -70,6 +70,10 @@ export interface SpatialCard {
   /** Download URL from the file upload API, valid until fileExpiresAt (unix seconds). */
   fileUrl?: string;
   fileExpiresAt?: number;
+  /** Which copy video cards send when this card is a reference; undefined = automatic. */
+  uploadRefMode?: 'asset' | 'url';
+  /** Video cards: the task whose result already got its own card (so it is not spawned twice). */
+  spawnedTaskId?: string;
 
   // Text card (LLM) fields: prompt is the user's idea, textOutput the model's answer
   textPreset?: TextPreset;

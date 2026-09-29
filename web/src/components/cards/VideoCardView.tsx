@@ -11,6 +11,8 @@ import {
 import { requestedAspect, videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
 import { connectCards } from '../../engine/connections.ts';
 import { cardTag, refTag } from '../../engine/refTags.ts';
+import { UPLOAD_REF_LABELS, uploadRefKind } from '../../engine/uploadRefs.ts';
+import { protocolOf } from '../../engine/providers.ts';
 import { inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { useChannels } from '../../services/channels.ts';
 import { assetUrl } from '../../engine/assetPaths.ts';
@@ -173,12 +175,15 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       {card.mode !== 'text_to_video' && (
         <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
           <span className="text-slate-500">参考</span>
-          {refs.map((ref) => (
+          {refs.map((ref) => {
+            const src = availableImageCards.find((c) => c.id === ref.cardId);
+            const sent = src?.type === 'upload' ? uploadRefKind(src, protocolOf(provider) ?? 'ark') : undefined;
+            return (
             <button
               key={ref.cardId}
               type="button"
               onClick={() => insertTag(refTag(ref))}
-              title={`插入 ${refTag(ref)} 到提示词`}
+              title={`插入 ${refTag(ref)} 到提示词${sent ? `（发送${UPLOAD_REF_LABELS[sent]}）` : src?.type === 'upload' ? '（素材还没准备好，请在上传卡片处理）' : ''}`}
               className={`font-mono px-1.5 py-px rounded-md border ${
                 availableImageCards.find((c) => c.id === ref.cardId)?.type === 'upload'
                   ? 'bg-amber-500/15 text-amber-300 border-amber-500/30 hover:bg-amber-500/25'
@@ -186,8 +191,14 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
               }`}
             >
               {refTag(ref)}
+              {src?.type === 'upload' && (
+                <span className={`ml-1 font-sans ${sent ? 'text-slate-300' : 'text-rose-300'}`}>
+                  {sent ? UPLOAD_REF_LABELS[sent] : '未就绪'}
+                </span>
+              )}
             </button>
-          ))}
+            );
+          })}
           <button
             type="button"
             onClick={(e) => {

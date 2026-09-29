@@ -20,6 +20,7 @@ import { getTextPreset } from '../engine/textPresets.ts';
 import { MISSING_PROVIDER_HINT, isProviderMissing } from '../engine/channelModels.ts';
 import { useChannels } from '../services/channels.ts';
 import { applyTaskToCard } from '../engine/taskSync.ts';
+import { markExistingResults, spawnVideoResultCards } from '../engine/resultCards.ts';
 import { cardsAwaitingTask, normalizeCards, normalizeViewport } from '../engine/projectDoc.ts';
 import { setActiveProjectId } from '../engine/assetPaths.ts';
 import { useAutosave } from '../engine/useAutosave.ts';
@@ -62,7 +63,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   // Card media paths resolve against this project's folder.
   setActiveProjectId(projectId);
 
-  const [cards, setCards] = useState<SpatialCard[]>(() => normalizeCards(doc.cards));
+  const [cards, setCards] = useState<SpatialCard[]>(() => markExistingResults(normalizeCards(doc.cards)));
   const [initialViewport] = useState(() => normalizeViewport(doc.viewport));
   const [name, setName] = useState(doc.name);
   const toast = useToast();
@@ -73,6 +74,11 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     initialRevision: doc.revision,
     cards,
   });
+
+  // A finished video also gets its own card on the right, ready to be wired into another video.
+  useEffect(() => {
+    if (cards.some((c) => c.type === 'video' && c.status === 'succeeded')) setCards(spawnVideoResultCards);
+  }, [cards]);
 
   useEffect(() => {
     document.title = `${name} · Media Workstage`;

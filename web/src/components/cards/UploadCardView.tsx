@@ -6,6 +6,7 @@ import { assetUrl, getActiveProjectId } from '../../engine/assetPaths.ts';
 import { liveFileUrl } from '../../engine/uploadRefs.ts';
 import { cardTag } from '../../engine/refTags.ts';
 import { Button } from '../ui/Button.tsx';
+import { Segmented } from '../ui/Segmented.tsx';
 import { inputClass } from '../ui/accent.ts';
 import { OutputPort } from './CardPorts.tsx';
 import { CardShell, ErrorBox, MediaFrame } from './CardShell.tsx';
@@ -93,6 +94,7 @@ export const UploadCardView: React.FC<UploadCardViewProps> = ({
         assetError: undefined,
         fileUrl: undefined,
         fileExpiresAt: undefined,
+        uploadRefMode: undefined,
       });
       setLoadedAspect(undefined);
     } catch (err) {
@@ -335,6 +337,29 @@ export const UploadCardView: React.FC<UploadCardViewProps> = ({
                   {card.fileUrl}
                 </span>
                 <CopyButton text={card.fileUrl} />
+              </div>
+            )}
+
+            {(card.assetId || card.fileUrl) && (
+              <div className="space-y-1 pt-1">
+                <div className="text-[11px] text-slate-400">连到视频卡片时使用</div>
+                <Segmented
+                  accent="amber"
+                  value={card.uploadRefMode ?? 'auto'}
+                  onChange={(v) => onUpdateCard(card.id, { uploadRefMode: v === 'auto' ? undefined : v })}
+                  options={[
+                    { value: 'auto', label: '自动', title: 'Seedance 用素材 ID，其余模型用链接' },
+                    { value: 'asset', label: '素材 ID', title: '只有 Seedance（火山方舟）能用素材 ID' },
+                    { value: 'url', label: '链接', title: '所有模型都能用，7 天有效' },
+                  ]}
+                />
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  {card.uploadRefMode === 'asset'
+                    ? '仅 Seedance 可用；连到其他模型会提示改选链接。'
+                    : card.uploadRefMode === 'url'
+                    ? '所有模型可用，链接 7 天内有效。'
+                    : 'Seedance 用素材 ID（审核通过后），其余模型用链接。'}
+                </p>
               </div>
             )}
 

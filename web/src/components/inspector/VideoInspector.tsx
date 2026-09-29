@@ -6,6 +6,7 @@ import { protocolOf } from '../../engine/providers.ts';
 import { VIDEO_MODE_LABELS, removeReferencePatch, videoModePatch, videoModelDef, videoModelPatch } from '../../engine/cardParams.ts';
 import { compileCardVideoPayload, inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { refTag } from '../../engine/refTags.ts';
+import { UPLOAD_REF_LABELS, uploadRefKind } from '../../engine/uploadRefs.ts';
 import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from '../cards/ProviderModelPicker.tsx';
 import { Field, Section, Segmented, Toggle, inputClass } from '../ui/index.ts';
@@ -99,7 +100,13 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
                   <li key={ref.cardId} className="flex items-center gap-2 rounded-lg bg-canvas-bg border border-canvas-border px-2 py-1.5 text-xs">
                     <span className={`font-mono ${src?.type === 'upload' ? 'text-amber-300' : 'text-pink-300'}`}>{refTag(ref)}</span>
                     <span className="flex-1 min-w-0 truncate text-slate-300">{src?.title ?? ref.label}</span>
-                    <span className="text-[11px] text-slate-500">{ROLE_LABELS[ref.role] ?? ref.role}</span>
+                    <span className="text-[11px] text-slate-500">
+                      {ROLE_LABELS[ref.role] ?? ref.role}
+                      {src?.type === 'upload' && (() => {
+                        const sent = uploadRefKind(src, protocolOf(provider) ?? 'ark');
+                        return sent ? ` · 发送${UPLOAD_REF_LABELS[sent]}` : ' · 未就绪';
+                      })()}
+                    </span>
                     <button type="button" title="移除" onClick={() => update(removeReferencePatch(card, ref.cardId))} className="p-0.5 text-slate-500 hover:text-rose-400">
                       <X className="w-3.5 h-3.5" />
                     </button>
