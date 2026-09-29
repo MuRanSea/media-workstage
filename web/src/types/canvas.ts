@@ -45,6 +45,8 @@ export interface ResultSnapshot {
   model: string;
   params: Record<string, string | number | boolean>;
   seed?: number;
+  /** Video runs: the reference images they were submitted with. */
+  references?: Pick<ReferenceItem, 'cardId' | 'tagIndex' | 'role' | 'label'>[];
 }
 
 export interface SpatialCard {

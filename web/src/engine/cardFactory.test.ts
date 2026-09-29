@@ -6,12 +6,20 @@ import type { SpatialCard } from '../types/canvas.ts';
 
 describe('createCard', () => {
   it('centres the card on the point with an empty prompt and the next tag', () => {
-    const existing = [createCard('video', { x: 0, y: 0 }, [])];
-    const card = createCard('video', { x: 1000, y: 500 }, existing);
-    expect(card.x).toBe(1000 - 230);
+    const existing = [createCard('text', { x: 0, y: 0 }, [])];
+    const card = createCard('text', { x: 1000, y: 500 }, existing);
+    expect(card.x).toBe(1000 - 170);
     expect(card.y).toBe(500 - 120);
     expect(card.prompt).toBe('');
     expect(card.tagIndex).toBe(2);
+    expect(card.title).toBe('提示词助手 2');
+  });
+
+  it('numbers video generation cards by their own count, without a tag', () => {
+    const existing = [createCard('image', { x: 0, y: 0 }, []), createCard('video', { x: 0, y: 0 }, [])];
+    const card = createCard('video', { x: 0, y: 0 }, existing);
+    expect(card.role).toBe('generation');
+    expect(card.tagIndex).toBeUndefined();
     expect(card.title).toBe('视频 2');
   });
 

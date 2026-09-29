@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addPendingResult, applyTaskToCards, estimateCardHeight, runsInProgress, resultCardsOf } from './resultCards.ts';
+import { addPendingResult, applyTaskToCards, estimateCardHeight, runsInProgress, resultCardsOf, snapshotOf } from './resultCards.ts';
 import { createCard } from './cardFactory.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 import type { BackendTaskResponse } from '../services/api.ts';
@@ -48,8 +48,7 @@ describe('new image cards', () => {
     expect(card.tagIndex).toBeUndefined();
   });
 
-  it('leave video and text cards on the legacy model', () => {
-    expect(createCard('video', { x: 0, y: 0 }, []).role).toBeUndefined();
+  it('leave text cards on the legacy model', () => {
     expect(createCard('text', { x: 0, y: 0 }, []).role).toBeUndefined();
   });
 });
@@ -255,5 +254,118 @@ describe('estimateCardHeight', () => {
     const g = gen({ imageRatioPreset: '9:16' });
     expect(estimateCardHeight(g)).toBeLessThan(estimateCardHeight({ ...g, role: 'result' }));
     expect(estimateCardHeight(g)).toBe(estimateCardHeight({ ...g, imageRatioPreset: '16:9' }));
+  });
+});
+
+describe('video result cards', () => {
+  const videoGen = (patch: Partial<SpatialCard> = {}): SpatialCard => ({
+    ...createCard('video', { x: 230, y: 120 }, []),
+    id: 'v1',
+    title: '镜头',
+    prompt: '镜头缓缓推进',
+    x: 0,
+    y: 0,
+    ...patch,
+  });
+  const videoAsset = (taskId: string, path: string) => ({
+    id: `${taskId}-a0`,
+    task_id: taskId,
+    asset_index: 0,
+    kind: 'video' as const,
+    z_index: 0,
+    local_path: path,
+  });
+
+  it('new video cards are generation cards without a tag', () => {
+    const card = createCard('video', { x: 0, y: 0 }, []);
+    expect(card.role).toBe('generation');
+    expect(card.tagIndex).toBeUndefined();
+  });
+
+  it('adds a queued, untagged video result card with a video snapshot', () => {
+    const g = videoGen({ mode: 'text_to_video', resolution: '1080p', duration: 10, ratio: '9:16', generateAudio: false, seed: 42 });
+    const cards = addPendingResult([g], g, task({ task_type: 'video_generation' }));
+    const [r] = results(cards);
+
+    expect(r).toMatchObject({
+      role: 'result',
+      type: 'video',
+      sourceId: 'v1',
+      taskId: 'task-1',
+      status: 'queued',
+      title: '镜头 #1',
+      ratio: '9:16',
+    });
+    expect(r.tagIndex).toBeUndefined();
+    expect(r.references).toBeUndefined();
+    expect(r.snapshot).toEqual({
+      prompt: '镜头缓缓推进',
+      provider: 'ark',
+      model: g.model,
+      params: { mode: 'text_to_video', resolution: '1080p', duration: 10, ratio: '9:16', generateAudio: false },
+      seed: 42,
+    });
+    expect(r.x).toBeGreaterThanOrEqual(g.x + g.width);
+  });
+
+  it('summarises the reference images the run used', () => {
+    const img: SpatialCard = { ...gen({ id: 'img-r' }), role: 'result', tagIndex: 3, title: '街景 #1', x: -2000 };
+    const g = videoGen({
+      mode: 'first_last_frame',
+      prompt: '从 @图3 开始',
+      references: [{ cardId: 'img-r', tagIndex: 3, role: 'first_frame', label: '街景 #1', url: '/assets/images/x.png' }],
+    });
+    const cards = addPendingResult([img, g], g, task());
+    const r = cards.find((c) => c.id === 'result-task-1')!;
+
+    expect(r.snapshot?.references).toEqual([{ cardId: 'img-r', tagIndex: 3, role: 'first_frame', label: '街景 #1' }]);
+    expect(r.snapshot?.params.mode).toBe('first_last_frame');
+    // A result card has no input port, so it holds no live references itself.
+    expect(r.references).toBeUndefined();
+    // Later edits to the generation card's references do not reach the snapshot.
+    g.references!.push({ cardId: 'other', tagIndex: 9, role: 'last_frame', label: 'x' });
+    expect(r.snapshot?.references).toHaveLength(1);
+  });
+
+  it('records the ratio and reference roles the mode actually sends', () => {
+    const ref = (cardId: string, role: 'first_frame' | 'last_frame' | 'reference_image') =>
+      ({ cardId, tagIndex: 1, role, label: cardId });
+    const refs = [ref('a', 'reference_image'), ref('b', 'reference_image')];
+
+    const flf = snapshotOf(videoGen({ mode: 'first_last_frame', ratio: '16:9', references: refs }));
+    expect(flf.params.ratio).toBe('adaptive');
+    expect(flf.references?.map((r) => r.role)).toEqual(['first_frame', 'last_frame']);
+
+    const allModal = snapshotOf(videoGen({ mode: 'all_modal', references: [ref('a', 'first_frame')] }));
+    expect(allModal.references?.map((r) => r.role)).toEqual(['reference_image']);
+
+    expect(snapshotOf(videoGen({ mode: 'text_to_video', references: refs })).references).toBeUndefined();
+  });
+
+  it('plays the video once the task succeeds and keeps the error on failure', () => {
+    const g = videoGen();
+    let cards = addPendingResult([g], g, task({ id: 'task-1' }));
+    cards = addPendingResult(cards, g, task({ id: 'task-2' }));
+    expect(results(cards)).toHaveLength(2);
+
+    cards = applyTaskToCards(cards, task({ id: 'task-1', status: 'running', progress: 55 }));
+    expect(runsInProgress(cards, 'v1')).toBe(2);
+    cards = applyTaskToCards(cards, task({ id: 'task-1', status: 'succeeded', assets: [videoAsset('task-1', 'videos/task-1/out.mp4')] }));
+    cards = applyTaskToCards(cards, task({ id: 'task-2', status: 'expired', error_message: '任务过期' }));
+
+    expect(results(cards)[0]).toMatchObject({ status: 'succeeded', progress: 100, resultUrl: '/assets/videos/task-1/out.mp4' });
+    expect(results(cards)[1]).toMatchObject({ status: 'expired', errorMessage: '任务过期' });
+    expect(cards[0]).toBe(g);
+    expect(runsInProgress(cards, 'v1')).toBe(0);
+  });
+
+  it('sizes the placeholder from the requested ratio so a second result lands below it', () => {
+    const g = videoGen({ ratio: '9:16' });
+    let cards = addPendingResult([g], g, task({ id: 'task-1' }));
+    cards = addPendingResult(cards, g, task({ id: 'task-2' }));
+    const [a, b] = results(cards);
+    expect(b.x).toBe(a.x);
+    expect(b.y).toBeGreaterThanOrEqual(a.y + estimateCardHeight(a));
+    expect(estimateCardHeight(a)).toBeGreaterThan(estimateCardHeight({ ...a, ratio: '16:9' }));
   });
 });

@@ -239,7 +239,9 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       // A connected text card supplies the prompt.
       const submitted = withEffectivePrompt(card, cards);
       if (!submitted.prompt.trim()) throw new Error('请先填写提示词');
-      const accepted = await apiCreateTask({ ...compileCardImagePayload(submitted), project_id: projectId });
+      const payload =
+        submitted.type === 'video' ? compileCardVideoPayload(submitted, cards) : compileCardImagePayload(submitted);
+      const accepted = await apiCreateTask({ ...payload, project_id: projectId });
       setCards((prev) =>
         addPendingResult(prev, submitted, accepted, measuredHeight).map((c) =>
           c.id === card.id && c.errorMessage ? { ...c, errorMessage: undefined } : c

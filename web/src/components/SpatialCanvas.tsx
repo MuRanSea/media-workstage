@@ -667,6 +667,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                   linkedPrompt={linkedPromptFor(card)}
                   onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
                   onNotice={showNotice}
+                  isSubmitting={!!submittingIds?.has(card.id)}
+                  runsInProgress={card.role === 'generation' ? runsInProgress(cards, card.id) : 0}
                 />
               );
             })}

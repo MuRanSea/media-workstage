@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Image as ImageIcon, Layers, LayoutGrid, Loader2, Maximize2, Sparkles } from 'lucide-react';
+import { Image as ImageIcon, Layers, LayoutGrid, Maximize2, Sparkles } from 'lucide-react';
 import { IMAGE_MODELS } from '../../types/canvas.ts';
 import {
   MISSING_PROVIDER_HINT,
@@ -20,6 +20,7 @@ import {
   ErrorBox,
   GeneratingOverlay,
   MediaFrame,
+  RunsBadge,
   StatusChip,
   SummaryRow,
   TagBadge,
@@ -105,7 +106,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         onSelect={onSelect}
         onStartDrag={onStartDrag}
         onRename={(title) => onUpdateCard(card.id, { title })}
-        badges={runsInProgress > 0 && <RunsBadge count={runsInProgress} />}
+        badges={<RunsBadge count={runsInProgress} accent="pink" />}
         menuItems={menuItems}
         ports={<InputPort />}
       >
@@ -230,14 +231,3 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
     </CardShell>
   );
 };
-
-/** "N 个生成中" on a generation card while its runs are queued or running. */
-const RunsBadge: React.FC<{ count: number }> = ({ count }) => (
-  <span
-    title="这张卡片还有生成任务在进行"
-    className="flex-shrink-0 flex items-center gap-1 text-[11px] px-1.5 py-px rounded-md border border-pink-500/30 bg-pink-500/10 text-pink-200"
-  >
-    <Loader2 className="w-3 h-3 animate-spin" />
-    {count} 个生成中
-  </span>
-);

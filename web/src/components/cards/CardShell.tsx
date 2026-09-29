@@ -122,6 +122,18 @@ export const TagBadge: React.FC<{ tagIndex?: number; accent: Accent }> = ({ tagI
   </span>
 );
 
+/** "N 个生成中" on a generation card while its runs are queued or running. */
+export const RunsBadge: React.FC<{ count: number; accent: Accent }> = ({ count, accent }) =>
+  count <= 0 ? null : (
+  <span
+    title="这张卡片还有生成任务在进行"
+    className={`flex-shrink-0 flex items-center gap-1 text-[11px] px-1.5 py-px rounded-md border ${ACCENT[accent].soft}`}
+  >
+    <Loader2 className="w-3 h-3 animate-spin" />
+    {count} 个生成中
+  </span>
+);
+
 /** Textarea that grows with its content up to `maxRows`. */
 export const AutoTextarea: React.FC<
   React.TextareaHTMLAttributes<HTMLTextAreaElement> & {

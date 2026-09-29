@@ -4,6 +4,7 @@ import { applyTaskToCard, isTerminalStatus } from './taskSync.ts';
 import { nextTagIndex } from './cardFactory.ts';
 import { firstFreeSlotRight } from './layout.ts';
 import { requestedAspect } from './cardParams.ts';
+import { sentVideoSettings } from './videoCompiler.ts';
 
 /** Image settings a result card records and reuses to shape its preview. */
 const IMAGE_PARAMS = [
@@ -18,20 +19,27 @@ const IMAGE_PARAMS = [
   'background',
 ] as const;
 
+/** Video settings a result card records; the ratio also shapes its preview. */
+const VIDEO_PARAMS = ['mode', 'resolution', 'duration', 'ratio', 'generateAudio'] as const;
+
 /** Rendered height of a card; the page supplies measured heights when it has them. */
 export type HeightOf = (card: SpatialCard) => number | undefined;
 
 const HEADER = 40;
 const PADDING = 24;
 const PREVIEW_MAX_HEIGHT = 480;
+/** Model / spec summary row under a result card's preview. */
+const SUMMARY_ROW = 30;
+/** Generation card body: prompt, summary row and the Generate button; video adds reference chips. */
+const GENERATION_BODY = { image: 150, video: 180, text: 150 } as const;
 
 /** Height a card will roughly render at, from its preview's shape. */
 export function estimateCardHeight(card: SpatialCard): number {
   const aspect = requestedAspect(card) ?? 16 / 9;
   const preview = Math.min((card.width - PADDING) / aspect, PREVIEW_MAX_HEIGHT);
-  if (card.role === 'result') return HEADER + PADDING + preview;
-  // Prompt, summary row and the Generate button; no preview.
-  if (card.role === 'generation') return HEADER + PADDING + 150;
+  if (card.role === 'result') return HEADER + PADDING + preview + SUMMARY_ROW;
+  // No preview on generation cards.
+  if (card.role === 'generation') return HEADER + PADDING + GENERATION_BODY[card.type];
   if (card.type === 'text') return 300;
   return HEADER + PADDING + preview + 200;
 }
@@ -55,18 +63,29 @@ export function runsInProgress(cards: SpatialCard[], generationId: string): numb
 
 /** What `submitted` (the card as sent, prompt already resolved) was generated with. */
 export function snapshotOf(submitted: SpatialCard): ResultSnapshot {
+  const isVideo = submitted.type === 'video';
   const params: ResultSnapshot['params'] = {};
-  for (const key of IMAGE_PARAMS) {
+  for (const key of isVideo ? VIDEO_PARAMS : IMAGE_PARAMS) {
     const value = submitted[key];
     if (value !== undefined) params[key] = value;
   }
-  return {
+  const snapshot: ResultSnapshot = {
     prompt: submitted.prompt,
     provider: submitted.provider,
     model: submitted.model,
     params,
-    seed: submitted.seedImage,
+    seed: isVideo ? submitted.seed : submitted.seedImage,
   };
+  if (isVideo) {
+    // Record what the compiler sends, which the mode can rewrite.
+    const sent = sentVideoSettings(submitted);
+    params.mode = sent.mode;
+    params.ratio = sent.ratio;
+    if (sent.references.length) {
+      snapshot.references = sent.references.map(({ cardId, tagIndex, role, label }) => ({ cardId, tagIndex, role, label }));
+    }
+  }
+  return snapshot;
 }
 
 /**

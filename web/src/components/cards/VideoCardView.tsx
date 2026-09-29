@@ -22,6 +22,7 @@ import {
   ErrorBox,
   GeneratingOverlay,
   MediaFrame,
+  RunsBadge,
   StatusChip,
   SummaryRow,
   TagBadge,
@@ -34,6 +35,10 @@ interface VideoCardViewProps extends CardViewProps {
   onUnlinkPrompt?: () => void;
   /** Explains why an image could not be attached. */
   onNotice: (message: string) => void;
+  /** Generation cards: the submit request is in flight. */
+  isSubmitting?: boolean;
+  /** Generation cards: result cards still queued or running. */
+  runsInProgress?: number;
 }
 
 export const VideoCardView: React.FC<VideoCardViewProps> = ({
@@ -50,6 +55,8 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   linkedPrompt,
   onUnlinkPrompt,
   onNotice,
+  isSubmitting = false,
+  runsInProgress = 0,
 }) => {
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -67,6 +74,9 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   const isGenerating = card.status === 'running' || card.status === 'queued';
   const videoUrl = assetUrl(card.resultUrl);
   const refs = card.references ?? [];
+  // Generation cards only configure runs; each run's video lands on its own result card.
+  const isGeneration = card.role === 'generation';
+  const isResult = card.role === 'result';
 
   /** Same rules as dragging a line from the image card onto this one. */
   const attach = (image: SpatialCard): boolean => {
@@ -116,59 +126,50 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
           (img) => mentionQuery === '' || `图${img.tagIndex}`.includes(mentionQuery) || img.title.toLowerCase().includes(mentionQuery.toLowerCase())
         );
 
-  return (
-    <CardShell
-      card={card}
-      accent="indigo"
-      icon={<Film className="w-4 h-4" />}
-      isSelected={isSelected}
-      connectHint={connectHint}
-      onSelect={onSelect}
-      onStartDrag={onStartDrag}
-      onRename={(title) => onUpdateCard(card.id, { title })}
-      badges={<TagBadge tagIndex={card.tagIndex} accent="indigo" />}
-      menuItems={menuItems}
-      ports={<InputPort />}
-    >
-      {/* Preview / player */}
-      <MediaFrame aspect={(videoUrl && loadedAspect) || requestedAspect(card)}>
-        {videoUrl ? (
-          <>
-            <video
-              src={videoUrl}
-              autoPlay
-              loop
-              muted
-              playsInline
-              controls
-              className="w-full h-full object-contain"
-              onLoadedMetadata={(e) => setLoadedAspect(e.currentTarget.videoWidth / e.currentTarget.videoHeight)}
-            />
-            <button
-              type="button"
-              title="放大播放"
-              onClick={() => onOpenViewer({ url: videoUrl, kind: 'video', title: card.title })}
-              className="absolute top-2 left-2 p-1 rounded-md bg-black/60 text-white/80 opacity-0 group-hover:opacity-100 transition"
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-            </button>
-          </>
-        ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-gradient-to-br from-indigo-950/30 via-slate-900 to-slate-950">
-            <Film className="w-6 h-6 text-indigo-400/60" />
-            <span className="text-[11px] text-slate-500">生成的视频会在这里播放</span>
-          </div>
-        )}
-        <StatusChip status={card.status} />
-        {isGenerating && <GeneratingOverlay progress={card.progress} />}
-      </MediaFrame>
+  const player = (
+    <MediaFrame aspect={(videoUrl && loadedAspect) || requestedAspect(card)}>
+      {videoUrl ? (
+        <>
+          <video
+            src={videoUrl}
+            autoPlay
+            loop
+            muted
+            playsInline
+            controls
+            className="w-full h-full object-contain"
+            onLoadedMetadata={(e) => setLoadedAspect(e.currentTarget.videoWidth / e.currentTarget.videoHeight)}
+          />
+          <button
+            type="button"
+            title="放大播放"
+            onClick={() => onOpenViewer({ url: videoUrl, kind: 'video', title: card.title })}
+            className="absolute top-2 left-2 p-1 rounded-md bg-black/60 text-white/80 opacity-0 group-hover:opacity-100 transition"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+          </button>
+        </>
+      ) : (
+        <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-gradient-to-br from-indigo-950/30 via-slate-900 to-slate-950">
+          <Film className="w-6 h-6 text-indigo-400/60" />
+          <span className="text-[11px] text-slate-500">{isResult ? '等待生成结果' : '生成的视频会在这里播放'}</span>
+        </div>
+      )}
+      <StatusChip status={card.status} />
+      {isGenerating && <GeneratingOverlay progress={card.progress} />}
+    </MediaFrame>
+  );
 
-      <SummaryRow
-        model={modelLabel}
-        spec={videoSpecSummary(card)}
-        extra={card.generateAudio && def.supportsAudio ? <Volume2 className="w-3 h-3 text-emerald-400 flex-shrink-0" /> : null}
-      />
+  const summary = (
+    <SummaryRow
+      model={modelLabel}
+      spec={videoSpecSummary(card)}
+      extra={card.generateAudio && def.supportsAudio ? <Volume2 className="w-3 h-3 text-emerald-400 flex-shrink-0" /> : null}
+    />
+  );
 
+  const referencesAndPrompt = (
+    <>
       {/* Reference chips: click to insert the tag into the prompt */}
       {card.mode !== 'text_to_video' && (
         <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
@@ -250,7 +251,57 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
           )}
         </div>
       )}
+    </>
+  );
 
+  const shell = {
+    card,
+    accent: 'indigo' as const,
+    icon: <Film className="w-4 h-4" />,
+    isSelected,
+    connectHint,
+    onSelect,
+    onStartDrag,
+    onRename: (title: string) => onUpdateCard(card.id, { title }),
+    menuItems,
+  };
+
+  if (isResult) {
+    // A finished output: nothing to configure, and nothing downstream takes video yet.
+    return (
+      <CardShell {...shell}>
+        {player}
+        {summary}
+        {card.errorMessage && <ErrorBox message={card.errorMessage} />}
+      </CardShell>
+    );
+  }
+
+  if (isGeneration) {
+    return (
+      <CardShell {...shell} badges={<RunsBadge count={runsInProgress} accent="indigo" />} ports={<InputPort />}>
+        {summary}
+        {referencesAndPrompt}
+        {card.errorMessage && <ErrorBox message={card.errorMessage} />}
+        <Button
+          variant="primary"
+          accent="indigo"
+          block
+          disabled={isSubmitting || missing || !canGenerate}
+          onClick={() => onTriggerGenerate(card.id)}
+          icon={!missing && canGenerate ? <Sparkles className="w-3.5 h-3.5" /> : undefined}
+        >
+          {missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个模型还不支持生成视频' : '生成'}
+        </Button>
+      </CardShell>
+    );
+  }
+
+  return (
+    <CardShell {...shell} badges={<TagBadge tagIndex={card.tagIndex} accent="indigo" />} ports={<InputPort />}>
+      {player}
+      {summary}
+      {referencesAndPrompt}
       {card.errorMessage && <ErrorBox message={card.errorMessage} />}
 
       <Button

@@ -30,16 +30,16 @@ export function placeCard(at: Point, width: number, cards: SpatialCard[]): Point
 }
 
 /**
- * A new card of `type` centred on world point `at`. Image cards are generation
- * cards, whose @图N tags go to their result cards instead; video and text
+ * A new card of `type` centred on world point `at`. Image and video cards are
+ * generation cards, which carry no @图N tag (image result cards get one); text
  * cards still use the legacy model and carry a tag.
  */
 export function createCard(type: CardType, at: Point, cards: SpatialCard[]): SpatialCard {
   const width = CARD_WIDTH[type];
   const tag = nextTagIndex(cards);
   const identity =
-    type === 'image'
-      ? { role: 'generation' as const, title: `${TITLES[type]} ${cards.filter((c) => c.type === 'image' && c.role === 'generation').length + 1}` }
+    type !== 'text'
+      ? { role: 'generation' as const, title: `${TITLES[type]} ${cards.filter((c) => c.type === type && c.role === 'generation').length + 1}` }
       : { tagIndex: tag, title: `${TITLES[type]} ${tag}` };
   const common = {
     id: newCardId(),

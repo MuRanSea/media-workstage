@@ -84,6 +84,25 @@ export function inferVideoProvider(modelId: string): 'ark' | 'minimax' {
 }
 
 /**
+ * The mode, ratio and references a video card's task is actually sent with:
+ * text-to-video drops references, first/last frame takes an adaptive ratio and
+ * re-roles by order, all-modal makes every image a plain reference.
+ */
+export function sentVideoSettings(card: SpatialCard): { mode: VideoTaskMode; ratio: string; references: ReferenceItem[] } {
+  const mode: VideoTaskMode = card.mode ?? 'all_modal';
+  const references = card.references ?? [];
+  if (mode === 'text_to_video') return { mode, ratio: card.ratio ?? '16:9', references: [] };
+  if (mode === 'first_last_frame') {
+    return {
+      mode,
+      ratio: 'adaptive',
+      references: references.map((ref, idx) => ({ ...ref, role: idx === 0 ? 'first_frame' : 'last_frame' })),
+    };
+  }
+  return { mode, ratio: card.ratio ?? '16:9', references: references.map((ref) => ({ ...ref, role: 'reference_image' })) };
+}
+
+/**
  * Compiles and strictly validates a video generation task payload for Ark (Seedance) or MiniMax.
  * Used identically by both the JSON inspector and POST /api/tasks.
  */
@@ -100,15 +119,13 @@ export function compileVideoTaskPayload(
   if (modelDef.modes && !modelDef.modes.includes(mode)) {
     throw new Error(`Model ${card.model} does not support ${mode} mode`);
   }
-  let references = card.references ?? [];
-  let ratio = card.ratio ?? '16:9';
+  const { ratio, references } = sentVideoSettings(card);
   let compiledPrompt = card.prompt;
 
   if (!card.prompt || card.prompt.trim() === '') {
     throw new Error('Video generation requires a non-empty prompt');
   }
   if (mode === 'text_to_video') {
-    references = [];
     compiledPrompt = compiledPrompt.replace(/@?图\d+\s*/g, '').trim();
   } else if (mode === 'first_last_frame') {
     if (references.length === 0) {
@@ -119,22 +136,10 @@ export function compileVideoTaskPayload(
         `first_last_frame mode accepts at most ${Math.min(2, modelDef.maxRefs)} reference images for ${card.model}`
       );
     }
-    ratio = 'adaptive';
-    references = references.map((ref, idx) => ({
-      ...ref,
-      role: idx === 0 ? 'first_frame' : 'last_frame',
-    }));
-  } else if (mode === 'all_modal') {
-    const maxRefs = modelDef.maxRefs;
-    if (references.length > maxRefs) {
-      throw new Error(
-        `Model ${card.model} supports at most ${maxRefs} reference assets, got ${references.length}`
-      );
-    }
-    references = references.map((ref) => ({
-      ...ref,
-      role: 'reference_image',
-    }));
+  } else if (mode === 'all_modal' && references.length > modelDef.maxRefs) {
+    throw new Error(
+      `Model ${card.model} supports at most ${modelDef.maxRefs} reference assets, got ${references.length}`
+    );
   }
 
   // 2. Resolve assets & renumber prompt from global @图N to sequential 图1, 图2, ...
@@ -171,7 +176,7 @@ export function compileVideoTaskPayload(
   const params: Record<string, unknown> = {
     resolution: card.resolution ?? (isMiniMax ? '1080P' : '720p'),
     duration: card.duration ?? (isMiniMax ? 6 : 5),
-    ratio: mode === 'first_last_frame' ? 'adaptive' : ratio,
+    ratio,
     seed: typeof card.seed === 'number' && !isNaN(card.seed) ? card.seed : -1,
   };
 
