@@ -22,7 +22,7 @@ import { useChannels } from '../services/channels.ts';
 import { applyTaskToCard } from '../engine/taskSync.ts';
 import { addPendingResult, applyTaskToCards, settleTextRun, type HeightOf, type TextRunOutcome } from '../engine/resultCards.ts';
 import type { BackendTaskResponse } from '../services/api.ts';
-import { cardsAwaitingTask, normalizeCards, normalizeViewport } from '../engine/projectDoc.ts';
+import { cardsAwaitingTask, normalizeCards, normalizeViewport, restoredAwaitingTask } from '../engine/projectDoc.ts';
 import { setActiveProjectId } from '../engine/assetPaths.ts';
 import { useAutosave } from '../engine/useAutosave.ts';
 
@@ -110,16 +110,30 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       return next;
     });
 
+  /** Catches `awaiting` cards up with their tasks' latest state. */
+  const fetchTasks = useCallback(
+    (awaiting: SpatialCard[]) => {
+      for (const card of awaiting) {
+        apiGetTask(card.taskId!)
+          .then(updateTaskCards)
+          .catch(() => {});
+      }
+    },
+    [updateTaskCards]
+  );
+
   // Tasks that finished while the project was closed never reached us over SSE.
   useEffect(() => {
-    for (const card of cardsAwaitingTask(cards)) {
-      apiGetTask(card.taskId!)
-        .then(updateTaskCards)
-        .catch(() => {});
-    }
+    fetchTasks(cardsAwaitingTask(cards));
     // Only on open: later updates arrive over SSE.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A placeholder brought back by undo missed the events sent while it was deleted.
+  const fetchRestoredTasks = useCallback(
+    (restored: SpatialCard[], before: SpatialCard[]) => fetchTasks(restoredAwaitingTask(restored, before)),
+    [fetchTasks]
+  );
 
   // Subscribe to SSE backend push events
   useEffect(() => {
@@ -304,6 +318,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       textRuns={textRuns}
       initialViewport={initialViewport}
       onViewportChange={onViewportChange}
+      onRestore={fetchRestoredTasks}
       headerSlot={
         <ProjectSwitcher
           projectId={projectId}

@@ -1,6 +1,5 @@
 import type { CardType, SpatialCard } from '../types/canvas.ts';
 import type { Point } from './matrix.ts';
-import { isTerminalStatus } from './taskSync.ts';
 
 const CARD_WIDTH: Record<CardType, number> = { image: 340, video: 460, text: 340 };
 const CASCADE = 32;
@@ -94,7 +93,7 @@ const RESULT_FIELDS = ['taskId', 'status', 'progress', 'errorMessage', 'resultUr
  */
 export function duplicateCards(source: SpatialCard[], at: Point, existing: SpatialCard[], keepResults = true): SpatialCard[] {
   // A running result card cannot be copied: the copy would never get the task's updates.
-  source = source.filter((c) => !(c.role === 'result' && !isTerminalStatus(c.status)));
+  source = source.filter((c) => !(c.role === 'result' && (c.status === 'queued' || c.status === 'running')));
   if (source.length === 0) return [];
   const minX = Math.min(...source.map((c) => c.x));
   const minY = Math.min(...source.map((c) => c.y));

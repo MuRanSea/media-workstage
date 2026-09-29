@@ -239,4 +239,31 @@ describe('removeCards', () => {
     expect(next[1].references?.map((r) => r.cardId)).toEqual(['ri2']);
     expect(next[2]).toEqual(untouched);
   });
+
+  it('deleting a linked result card leaves its generation card and sibling results untouched', () => {
+    const g = card({ id: 'g', type: 'image', role: 'generation', tagIndex: undefined });
+    const r1 = card({ id: 'r1', type: 'image', role: 'result', sourceId: 'g', tagIndex: 1 });
+    const r2 = card({ id: 'r2', type: 'image', role: 'result', sourceId: 'g', tagIndex: 2 });
+    const linked = video({ role: 'generation', references: [{ cardId: 'r1', tagIndex: 1, role: 'reference_image', label: 'a' }] });
+
+    const next = removeCards([g, r1, r2, linked], ['r1']);
+
+    expect(next.slice(0, 2)).toEqual([g, r2]);
+    expect(next[2].references).toEqual([]);
+  });
+
+  it('keeps the results of a deleted generation card as standalone result cards', () => {
+    const g = card({ id: 'g', type: 'image', role: 'generation', tagIndex: undefined });
+    const r1 = card({ id: 'r1', type: 'image', role: 'result', sourceId: 'g', taskId: 't1', status: 'succeeded' });
+    const r2 = card({ id: 'r2', type: 'image', role: 'result', sourceId: 'g', taskId: 't2', status: 'running' });
+    const other = card({ id: 'r3', type: 'image', role: 'result', sourceId: 'g2' });
+
+    const next = removeCards([g, r1, r2, other], ['g']);
+
+    expect(next.map((c) => c.id)).toEqual(['r1', 'r2', 'r3']);
+    expect(next[0]).toEqual({ ...r1, sourceId: undefined });
+    // A running placeholder keeps its task, so its result still arrives.
+    expect(next[1]).toEqual({ ...r2, sourceId: undefined });
+    expect(next[2]).toBe(other);
+  });
 });

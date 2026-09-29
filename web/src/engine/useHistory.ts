@@ -9,23 +9,30 @@ const TASK_FIELDS = ['taskId', 'status', 'progress', 'errorMessage', 'resultUrl'
 
 /**
  * A restored snapshot with each surviving card's task state taken from `current`,
- * so undoing an edit never rolls back a generation that finished meanwhile. With
- * `keepTaskResults` (undo), result cards tasks added since the snapshot are kept;
- * redo leaves it off so redoing a delete removes the card again.
+ * so undoing an edit never rolls back a generation that finished meanwhile. Result
+ * cards that tasks added since the snapshot are kept, except those in `dropped`:
+ * redo passes the cards the redone edit deleted, so redoing a delete removes them
+ * again. A kept result whose generation card is not restored becomes standalone.
  */
-export function mergeTaskState(restored: SpatialCard[], current: SpatialCard[], keepTaskResults = false): SpatialCard[] {
+export function mergeTaskState(
+  restored: SpatialCard[],
+  current: SpatialCard[],
+  dropped: ReadonlySet<string> = new Set()
+): SpatialCard[] {
   const byId = new Map(current.map((c) => [c.id, c]));
   const restoredIds = new Set(restored.map((c) => c.id));
-  const added = keepTaskResults ? current.filter((c) => isTaskResult(c) && !restoredIds.has(c.id)) : [];
-  return restored.map((card) => {
+  const added = current.filter((c) => isTaskResult(c) && !restoredIds.has(c.id) && !dropped.has(c.id));
+  const merged = restored.map((card) => {
     const live = byId.get(card.id);
     if (!live) return card;
-    const merged: SpatialCard = { ...card };
+    const next: SpatialCard = { ...card };
     for (const f of TASK_FIELDS) {
-      (merged as unknown as Record<string, unknown>)[f] = live[f];
+      (next as unknown as Record<string, unknown>)[f] = live[f];
     }
-    return merged;
-  }).concat(added);
+    return next;
+  });
+  const ids = new Set([...restoredIds, ...added.map((c) => c.id)]);
+  return merged.concat(added.map((c) => (c.sourceId && !ids.has(c.sourceId) ? { ...c, sourceId: undefined } : c)));
 }
 
 /**
@@ -34,7 +41,8 @@ export function mergeTaskState(restored: SpatialCard[], current: SpatialCard[], 
  */
 export function useHistory() {
   const past = useRef<SpatialCard[][]>([]);
-  const future = useRef<SpatialCard[][]>([]);
+  // Each redo step also keeps the snapshot its undo restored, to tell which cards the edit deleted.
+  const future = useRef<{ cards: SpatialCard[]; restoredByUndo: SpatialCard[] }[]>([]);
   // Bumped so canUndo/canRedo re-render.
   const [, setVersion] = useState(0);
 
@@ -48,9 +56,9 @@ export function useHistory() {
   const undo = useCallback((current: SpatialCard[]): SpatialCard[] | null => {
     const prev = past.current.pop();
     if (!prev) return null;
-    future.current.push(current);
+    future.current.push({ cards: current, restoredByUndo: prev });
     setVersion((v) => v + 1);
-    return mergeTaskState(prev, current, true);
+    return mergeTaskState(prev, current);
   }, []);
 
   const redo = useCallback((current: SpatialCard[]): SpatialCard[] | null => {
@@ -58,7 +66,9 @@ export function useHistory() {
     if (!next) return null;
     past.current.push(current);
     setVersion((v) => v + 1);
-    return mergeTaskState(next, current);
+    const kept = new Set(next.cards.map((c) => c.id));
+    const dropped = new Set(next.restoredByUndo.filter((c) => !kept.has(c.id)).map((c) => c.id));
+    return mergeTaskState(next.cards, current, dropped);
   }, []);
 
   return {

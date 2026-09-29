@@ -48,3 +48,12 @@ export function normalizeCards(raw: unknown): SpatialCard[] {
 export function cardsAwaitingTask(cards: SpatialCard[]): SpatialCard[] {
   return cards.filter((c) => c.taskId && !isTerminalStatus(c.status) && c.status !== 'idle');
 }
+
+/**
+ * Cards in `restored` still waiting on a task that were not in `before`: a
+ * placeholder brought back by undo missed the task events sent while it was gone.
+ */
+export function restoredAwaitingTask(restored: SpatialCard[], before: SpatialCard[]): SpatialCard[] {
+  const had = new Set(before.map((c) => c.id));
+  return cardsAwaitingTask(restored).filter((c) => !had.has(c.id));
+}

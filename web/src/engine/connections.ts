@@ -104,7 +104,10 @@ export function withEffectivePrompt(card: SpatialCard, cards: SpatialCard[]): Sp
   return { ...card, prompt: source.textOutput.trim() };
 }
 
-/** `cards` without the cards in `ids`, and without the prompt sources and references that pointed at them. */
+/**
+ * `cards` without the cards in `ids`, and without the prompt sources and references
+ * that pointed at them. Result cards of a deleted generation card stay, standalone.
+ */
 export function removeCards(cards: SpatialCard[], ids: Iterable<string>): SpatialCard[] {
   const gone = new Set(ids);
   return cards
@@ -112,8 +115,9 @@ export function removeCards(cards: SpatialCard[], ids: Iterable<string>): Spatia
     .map((c) => {
       const refs = c.references?.filter((r) => !gone.has(r.cardId));
       const promptSourceId = c.promptSourceId && gone.has(c.promptSourceId) ? undefined : c.promptSourceId;
-      return refs?.length !== c.references?.length || promptSourceId !== c.promptSourceId
-        ? { ...c, references: refs, promptSourceId }
+      const sourceId = c.sourceId && gone.has(c.sourceId) ? undefined : c.sourceId;
+      return refs?.length !== c.references?.length || promptSourceId !== c.promptSourceId || sourceId !== c.sourceId
+        ? { ...c, references: refs, promptSourceId, sourceId }
         : c;
     });
 }

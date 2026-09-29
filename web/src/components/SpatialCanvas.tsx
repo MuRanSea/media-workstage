@@ -36,6 +36,8 @@ interface SpatialCanvasProps {
   onViewportChange?: (viewport: CanvasTransform) => void;
   /** Project controls rendered inside the header's brand area. */
   headerSlot?: React.ReactNode;
+  /** Undo/redo replaced the cards: `restored` are shown, `before` were. */
+  onRestore?: (restored: SpatialCard[], before: SpatialCard[]) => void;
 }
 
 interface Ray {
@@ -86,6 +88,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   initialViewport,
   onViewportChange,
   headerSlot,
+  onRestore,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -203,20 +206,24 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   );
 
   const undo = useCallback(() => {
-    const restored = undoHistory(cardsRef.current);
+    const before = cardsRef.current;
+    const restored = undoHistory(before);
     if (restored) {
       lastCoalesce.current = null;
       setCards(restored);
+      onRestore?.(restored, before);
     }
-  }, [undoHistory, setCards]);
+  }, [undoHistory, setCards, onRestore]);
 
   const redo = useCallback(() => {
-    const restored = redoHistory(cardsRef.current);
+    const before = cardsRef.current;
+    const restored = redoHistory(before);
     if (restored) {
       lastCoalesce.current = null;
       setCards(restored);
+      onRestore?.(restored, before);
     }
-  }, [redoHistory, setCards]);
+  }, [redoHistory, setCards, onRestore]);
 
   const deleteCards = useCallback(
     (ids: string[]) => {
@@ -235,10 +242,12 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       const minX = Math.min(...source.map((c) => c.x));
       const minY = Math.min(...source.map((c) => c.y));
       const copies = duplicateCards(source, at ?? { x: minX + 40, y: minY + 40 }, cardsRef.current);
+      if (copies.length < source.length) toast('生成中的结果卡不能复制', { tone: 'warning' });
+      if (copies.length === 0) return;
       editCards((prev) => [...prev, ...copies]);
       setSelectedCardIds(new Set(copies.map((c) => c.id)));
     },
-    [editCards, setSelectedCardIds]
+    [editCards, setSelectedCardIds, toast]
   );
 
   // In-app clipboard for Ctrl+C / Ctrl+V.
