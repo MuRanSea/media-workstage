@@ -1,4 +1,4 @@
-import { resolveVideoModelDef, type SpatialCard, type ReferenceItem, type VideoTaskMode } from '../types/canvas.ts';
+import { maxReferenceVideos, resolveVideoModelDef, type SpatialCard, type ReferenceItem, type VideoTaskMode } from '../types/canvas.ts';
 import type { CreateTaskPayload } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
 import { refNoun } from './refTags.ts';
@@ -143,6 +143,10 @@ export function compileVideoTaskPayload(
       ...ref,
       role: ref.role === 'reference_video' ? 'reference_video' : 'reference_image',
     }));
+  }
+
+  if (references.some((r) => r.role === 'reference_video') && maxReferenceVideos(protocol, card.model) === 0) {
+    throw new Error(`${card.model} 不支持参考视频，请断开视频连线或换用 Seedance、Kling Omni、MiniMax H3`);
   }
 
   // 2. Resolve assets & renumber prompt from global @图N to sequential 图1, 图2, ...

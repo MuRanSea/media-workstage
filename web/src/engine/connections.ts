@@ -1,4 +1,4 @@
-import { resolveVideoModelDef, type ReferenceItem, type SpatialCard } from '../types/canvas.ts';
+import { maxReferenceVideos, resolveVideoModelDef, type ReferenceItem, type SpatialCard } from '../types/canvas.ts';
 import { inferVideoProvider } from './videoCompiler.ts';
 import { protocolOf } from './providers.ts';
 import { refTag } from './refTags.ts';
@@ -91,7 +91,11 @@ function attachVideoToVideo(clip: SpatialCard, video: SpatialCard): ConnectResul
   const provider = video.provider ?? inferVideoProvider(video.model);
   const protocol = protocolOf(provider);
   const def = resolveVideoModelDef(protocol, video.model);
-  if (protocol !== 'ark') return { ok: false, reason: `${def.name} 不支持参考视频，请换用 Seedance 模型` };
+  const maxVideos = maxReferenceVideos(protocol, video.model);
+  if (maxVideos === 0) return { ok: false, reason: `${def.name} 不支持参考视频，请换用 Seedance、Kling Omni 或 MiniMax H3` };
+  if (refs.filter((r) => r.role === 'reference_video').length >= maxVideos) {
+    return { ok: false, reason: `${def.name} 最多 ${maxVideos} 个参考视频` };
+  }
 
   const mode = video.mode ?? 'all_modal';
   if (mode === 'first_last_frame') return { ok: false, reason: '首尾帧模式不能带参考视频，请先切换到「多图参考」' };

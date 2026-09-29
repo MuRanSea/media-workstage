@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { connectCards } from './connections.ts';
 import { compileCardVideoPayload } from './videoCompiler.ts';
-import { videoModePatch } from './cardParams.ts';
+import { videoModePatch, videoModelPatch } from './cardParams.ts';
 import { createCard, duplicateCards } from './cardFactory.ts';
 import { refTag } from './refTags.ts';
 import type { SpatialCard } from '../types/canvas.ts';
@@ -61,8 +61,44 @@ describe('upload cards as video references', () => {
   it('refuses reference videos in first/last-frame mode and for non-Ark models', () => {
     const frame = connectCards(uploadVideo(), video({ mode: 'first_last_frame' }));
     expect(frame.ok).toBe(false);
-    const kling = connectCards(uploadVideo(), video({ provider: 'apimart', model: 'kling-v3-omni' }));
+    const kling = connectCards(uploadVideo(), video({ provider: 'apimart', model: 'kling-v3' }));
     expect(kling.ok).toBe(false);
+  });
+
+  it('takes one reference video on Kling Omni through APIMart, but not a second', () => {
+    const omni = video({ provider: 'apimart', model: 'kling-v3-omni', prompt: '' });
+    const res = connectCards(uploadVideo(), omni);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const withOne = { ...omni, ...res.patch };
+    expect(connectCards(uploadVideo({ id: 'u3', tagIndex: 5 }), withOne).ok).toBe(false);
+  });
+
+  it('drops reference videos when the model is switched to one that cannot take them', () => {
+    const refs = [{ cardId: 'u2', tagIndex: 4, role: 'reference_video' as const, label: '动作' }];
+    const patch = videoModelPatch(video({ references: refs, prompt: '看 @视频4' }), {
+      provider: 'apimart',
+      protocol: 'apimart',
+      id: 'kling-v3',
+      label: 'Kling v3',
+    } as never);
+    expect(patch.references).toEqual([]);
+    expect(patch.prompt).toBe('看');
+  });
+
+  it('refuses to compile a reference video for a model that cannot take one', () => {
+    const refs = [{ cardId: 'u2', tagIndex: 4, role: 'reference_video' as const, label: '动作' }];
+    const kling = video({ provider: 'apimart', model: 'kling-v3', references: refs });
+    expect(() => compileCardVideoPayload(kling, [uploadVideo({ fileUrl: 'https://t/m.mp4' })])).toThrow(/does not support|不支持参考视频/);
+  });
+
+  it('sends only the download URL (never asset://) to non-Ark protocols', () => {
+    const refs = [{ cardId: 'u2', tagIndex: 4, role: 'reference_video' as const, label: '动作' }];
+    const omni = video({ provider: 'apimart', model: 'kling-v3-omni', references: refs, prompt: '看 @视频4' });
+    const onlyAsset = uploadVideo({ assetId: 'a', assetStatus: 'Active' });
+    expect(() => compileCardVideoPayload(omni, [onlyAsset])).toThrow(/获取链接/);
+    const both = uploadVideo({ assetId: 'a', assetStatus: 'Active', fileUrl: 'https://t/m.mp4' });
+    expect(compileCardVideoPayload(omni, [both]).reference_assets?.[0]).toMatchObject({ url: 'https://t/m.mp4' });
   });
 
   it('only connects uploads to video cards, and refuses duplicates', () => {

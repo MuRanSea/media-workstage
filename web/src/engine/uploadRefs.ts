@@ -19,17 +19,22 @@ export function liveFileUrl(card: SpatialCard): string | undefined {
  */
 export function uploadReference(card: SpatialCard, protocol: Protocol): { url?: string; localPath?: string } {
   const asset = protocol === 'ark' ? assetUri(card) : undefined;
-  const url = asset ?? liveFileUrl(card) ?? assetUri(card);
+  // asset:// only means something to Ark; other protocols need a real download URL.
+  const url = asset ?? liveFileUrl(card) ?? (protocol === 'ark' ? assetUri(card) : undefined);
   if (url) return { url };
   if (!card.resultUrl) throw new Error(`上传卡片「${card.title}」还没有选择${card.mediaKind === 'video' ? '视频' : '图片'}`);
   if (card.mediaKind === 'video') {
-    if (card.assetId && card.assetStatus === 'Processing') {
+    if (protocol === 'ark' && card.assetId && card.assetStatus === 'Processing') {
       throw new Error(`上传卡片「${card.title}」的素材还在审核中，请稍后再试`);
     }
-    if (card.assetStatus === 'Failed') {
+    if (protocol === 'ark' && card.assetStatus === 'Failed') {
       throw new Error(`上传卡片「${card.title}」的素材审核未通过：${card.assetError ?? '未知原因'}`);
     }
-    throw new Error(`视频不能内联发送：请先在上传卡片「${card.title}」上传到素材库或获取链接`);
+    throw new Error(
+      protocol === 'ark'
+        ? `视频不能内联发送：请先在上传卡片「${card.title}」上传到素材库或获取链接`
+        : `该模型需要视频的公网链接：请先在上传卡片「${card.title}」点「获取链接」`
+    );
   }
   return { localPath: card.resultUrl };
 }

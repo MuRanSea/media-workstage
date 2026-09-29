@@ -1,5 +1,6 @@
 import {
   IMAGE_MODELS,
+  maxReferenceVideos,
   resolveVideoModelDef,
   type SpatialCard,
   type VideoModelDef,
@@ -93,6 +94,20 @@ export function videoModePatch(
   return { mode, ratio: nextRatio, references };
 }
 
+/** A model that cannot take reference videos loses the ones already attached (with their prompt tags). */
+function dropUnsupportedVideoRefs(card: SpatialCard, option: ModelOption): Partial<SpatialCard> {
+  const limit = maxReferenceVideos(option.protocol, option.id);
+  const videos = (card.references ?? []).filter((r) => r.role === 'reference_video');
+  if (videos.length <= limit) return {};
+  const kept = videos.slice(0, limit);
+  let prompt = card.prompt;
+  for (const dropped of videos.slice(limit)) {
+    prompt = prompt.replace(new RegExp(`${refTag(dropped)}\\b`, 'g'), '').replace(/\s{2,}/g, ' ').trim();
+  }
+  const base = videoModePatch(card, card.mode ?? 'all_modal', Infinity).references ?? [];
+  return { prompt, references: base.filter((r) => r.role !== 'reference_video' || kept.some((k) => k.cardId === r.cardId)) };
+}
+
 /**
  * Switching a video card's model resets resolution and duration to what the model
  * supports, and moves to a mode it accepts (keeping attached images as frames when possible).
@@ -111,6 +126,7 @@ export function videoModelPatch(card: SpatialCard, option: ModelOption): Partial
     resolution: def.resolutions[0],
     duration: def.durations.includes(5) ? 5 : def.durations[0],
     ...videoModePatch(card, mode, def.maxRefs, def.ratios[0]),
+    ...dropUnsupportedVideoRefs(card, option),
   };
 }
 

@@ -298,6 +298,17 @@ export function resolveVideoModelDef(protocol: Protocol | undefined, modelId: st
   return { ...base, id: modelId, name: modelId, tag: '' };
 }
 
+/** How many reference videos a model takes on a protocol; 0 when it takes none. */
+export function maxReferenceVideos(protocol: Protocol | undefined, modelId: string): number {
+  if (protocol === 'ark') return 10;
+  if (protocol === 'apimart') {
+    const m = modelId.toLowerCase();
+    if (m.includes('omni') || m.includes('-o1')) return 1;
+    if (m.startsWith('minimax-h3')) return 3;
+  }
+  return 0;
+}
+
 export function getModelMaxReferences(modelId: string): number {
   const found = VIDEO_MODELS.find(
     (m) => m.id === modelId || m.id.toLowerCase() === modelId.toLowerCase()
