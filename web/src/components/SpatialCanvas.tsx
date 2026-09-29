@@ -152,6 +152,29 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     onViewportChange?.(transform);
   }, [transform, onViewportChange]);
 
+  // A generated video's new result card may be off screen: say so, and offer to jump to it.
+  const seenCardIds = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const seen = seenCardIds.current;
+    seenCardIds.current = new Set(cards.map((c) => c.id));
+    if (!seen) return;
+    for (const card of cards) {
+      if (seen.has(card.id) || !card.resultOfCardId) continue;
+      const source = cards.find((c) => c.id === card.resultOfCardId);
+      toast(`「${source?.title ?? '视频'}」生成完成，结果已放到右侧的新卡片`, {
+        tone: 'success',
+        durationMs: 8000,
+        action: {
+          label: '查看',
+          onClick: () => {
+            setSelectedCardIds(new Set([card.id]));
+            focusSelection(card.id);
+          },
+        },
+      });
+    }
+  }, [cards, toast, focusSelection, setSelectedCardIds]);
+
   const selectedCards = useMemo(() => cards.filter((c) => selectedCardIds.has(c.id)), [cards, selectedCardIds]);
   // Cards a video card can take as references: generated images and uploaded images/videos.
   const availableImageCards = useMemo(() => cards.filter((c) => c.type === 'image' || c.type === 'upload'), [cards]);

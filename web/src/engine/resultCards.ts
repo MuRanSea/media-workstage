@@ -36,6 +36,7 @@ export function spawnVideoResultCards(cards: SpatialCard[]): SpatialCard[] {
       ...result,
       ...pos,
       title: `${card.title} 结果`,
+      resultOfCardId: card.id,
       resultUrl: card.resultUrl,
       uploadName: `${card.title}.mp4`,
       status: 'succeeded',

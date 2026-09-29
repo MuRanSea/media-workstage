@@ -74,6 +74,8 @@ export interface SpatialCard {
   uploadRefMode?: 'asset' | 'url';
   /** Video cards: the task whose result already got its own card (so it is not spawned twice). */
   spawnedTaskId?: string;
+  /** Upload cards made from a generated video: the video card it came from. */
+  resultOfCardId?: string;
 
   // Text card (LLM) fields: prompt is the user's idea, textOutput the model's answer
   textPreset?: TextPreset;
