@@ -5,13 +5,14 @@ import { addPendingResult } from './resultCards.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 
 describe('createCard', () => {
-  it('centres the card on the point with an empty prompt and the next tag', () => {
-    const existing = [createCard('text', { x: 0, y: 0 }, [])];
+  it('centres the card on the point with an empty prompt, numbered by its own type', () => {
+    const existing = [createCard('text', { x: 0, y: 0 }, []), createCard('image', { x: 0, y: 0 }, [])];
     const card = createCard('text', { x: 1000, y: 500 }, existing);
     expect(card.x).toBe(1000 - 170);
     expect(card.y).toBe(500 - 120);
     expect(card.prompt).toBe('');
-    expect(card.tagIndex).toBe(2);
+    expect(card.role).toBe('generation');
+    expect(card.tagIndex).toBeUndefined();
     expect(card.title).toBe('提示词助手 2');
   });
 

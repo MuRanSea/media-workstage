@@ -28,6 +28,8 @@ interface SpatialCanvasProps {
   onTriggerGenerate: (cardId: string) => void;
   /** Generation cards whose submit request is in flight. */
   submittingIds?: ReadonlySet<string>;
+  /** Prompt-assistant requests in flight, per generation card (not saved). */
+  textRuns?: ReadonlyMap<string, number>;
   /** Viewport to open with (a saved project's). */
   initialViewport?: CanvasTransform;
   /** Called whenever the viewport pans or zooms. */
@@ -80,6 +82,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   setCards,
   onTriggerGenerate,
   submittingIds,
+  textRuns,
   initialViewport,
   onViewportChange,
   headerSlot,
@@ -640,7 +643,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                     key={card.id}
                     {...common}
                     linkedCount={cards.filter((c) => c.promptSourceId === card.id).length}
-                    onStartConnect={(e) => startConnect(card, e)}
+                    onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
+                    runsInProgress={card.role === 'generation' ? textRuns?.get(card.id) ?? 0 : 0}
                   />
                 );
               }

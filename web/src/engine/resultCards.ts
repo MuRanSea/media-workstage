@@ -1,7 +1,7 @@
 import type { ResultSnapshot, SpatialCard } from '../types/canvas.ts';
 import type { BackendTaskResponse } from '../services/api.ts';
 import { applyTaskToCard, isTerminalStatus } from './taskSync.ts';
-import { nextTagIndex } from './cardFactory.ts';
+import { newCardId, nextTagIndex } from './cardFactory.ts';
 import { firstFreeSlotRight } from './layout.ts';
 import { requestedAspect } from './cardParams.ts';
 import { sentVideoSettings } from './videoCompiler.ts';
@@ -32,12 +32,16 @@ const PREVIEW_MAX_HEIGHT = 480;
 const SUMMARY_ROW = 30;
 /** Generation card body: prompt, summary row and the Generate button; video adds reference chips. */
 const GENERATION_BODY = { image: 150, video: 180, text: 150 } as const;
+/** Text result card body: summary row and a few rows of editable text. */
+const TEXT_RESULT_BODY = 160;
 
 /** Height a card will roughly render at, from its preview's shape. */
 export function estimateCardHeight(card: SpatialCard): number {
   const aspect = requestedAspect(card) ?? 16 / 9;
   const preview = Math.min((card.width - PADDING) / aspect, PREVIEW_MAX_HEIGHT);
-  if (card.role === 'result') return HEADER + PADDING + preview + SUMMARY_ROW;
+  if (card.role === 'result') {
+    return card.type === 'text' ? HEADER + PADDING + TEXT_RESULT_BODY : HEADER + PADDING + preview + SUMMARY_ROW;
+  }
   // No preview on generation cards.
   if (card.role === 'generation') return HEADER + PADDING + GENERATION_BODY[card.type];
   if (card.type === 'text') return 300;
@@ -47,9 +51,14 @@ export function estimateCardHeight(card: SpatialCard): number {
 /** Result cards take their id from the task that produced them. */
 export const resultIdFor = (taskId: string) => `result-${taskId}`;
 
-/** A result card a task produced (as opposed to a user's pasted copy of one). */
+/** Text runs have no backend task; their result cards get a fresh id under this prefix. */
+const TEXT_RESULT_PREFIX = 'result-text-';
+
+/** A result card a run produced (as opposed to a user's pasted copy of one). */
 export function isTaskResult(card: SpatialCard): boolean {
-  return card.role === 'result' && !!card.taskId && card.id === resultIdFor(card.taskId);
+  if (card.role !== 'result') return false;
+  if (card.taskId) return card.id === resultIdFor(card.taskId);
+  return card.type === 'text' && card.id.startsWith(TEXT_RESULT_PREFIX);
 }
 
 export function resultCardsOf(cards: SpatialCard[], generationId: string): SpatialCard[] {
@@ -63,6 +72,14 @@ export function runsInProgress(cards: SpatialCard[], generationId: string): numb
 
 /** What `submitted` (the card as sent, prompt already resolved) was generated with. */
 export function snapshotOf(submitted: SpatialCard): ResultSnapshot {
+  if (submitted.type === 'text') {
+    return {
+      prompt: submitted.prompt,
+      provider: submitted.provider,
+      model: submitted.model,
+      params: submitted.textPreset ? { textPreset: submitted.textPreset } : {},
+    };
+  }
   const isVideo = submitted.type === 'video';
   const params: ResultSnapshot['params'] = {};
   for (const key of isVideo ? VIDEO_PARAMS : IMAGE_PARAMS) {
@@ -122,6 +139,11 @@ export function addPendingResult(
     progress: 0,
   };
 
+  return [...cards, applyTaskToCard(placeResult(cards, submitted, draft, heightOf), task)];
+}
+
+/** `draft` moved to the first free slot right of the generation card `submitted` came from. */
+function placeResult(cards: SpatialCard[], submitted: SpatialCard, draft: SpatialCard, heightOf: HeightOf): SpatialCard {
   const height = (c: SpatialCard) => heightOf(c) ?? estimateCardHeight(c);
   // The generation card may have been dragged while the request was in flight.
   const anchor = cards.find((c) => c.id === submitted.id) ?? submitted;
@@ -130,7 +152,48 @@ export function addPendingResult(
     { width: draft.width, height: height(draft) },
     cards.map((c) => ({ ...c, height: height(c) }))
   );
-  return [...cards, applyTaskToCard({ ...draft, ...slot }, task)];
+  return { ...draft, ...slot };
+}
+
+export type TextRunOutcome = { text: string } | { error: string };
+
+/**
+ * Settles a prompt-assistant run of `submitted` (the card as sent). Text runs
+ * are synchronous, so there is no placeholder: a returned text becomes a new,
+ * editable text result card and clears the generation card's error; a failure
+ * only shows on the generation card.
+ */
+export function settleTextRun(
+  cards: SpatialCard[],
+  submitted: SpatialCard,
+  outcome: TextRunOutcome,
+  heightOf: HeightOf = () => undefined
+): SpatialCard[] {
+  const setError = (errorMessage: string | undefined) =>
+    cards.map((c) => (c.id === submitted.id && c.errorMessage !== errorMessage ? { ...c, errorMessage } : c));
+  if ('error' in outcome) return setError(outcome.error);
+
+  const snapshot = snapshotOf(submitted);
+  const draft: SpatialCard = {
+    id: `${TEXT_RESULT_PREFIX}${newCardId()}`,
+    role: 'result',
+    sourceId: submitted.id,
+    snapshot,
+    type: 'text',
+    title: `${submitted.title} #${resultCardsOf(cards, submitted.id).length + 1}`,
+    x: 0,
+    y: 0,
+    width: submitted.width,
+    prompt: snapshot.prompt,
+    provider: submitted.provider,
+    model: submitted.model,
+    textPreset: submitted.textPreset,
+    textOutput: outcome.text,
+    status: 'succeeded',
+    progress: 100,
+  };
+  const current = setError(undefined);
+  return [...current, placeResult(current, submitted, draft, heightOf)];
 }
 
 /**

@@ -20,7 +20,7 @@ import { getTextPreset } from '../engine/textPresets.ts';
 import { MISSING_PROVIDER_HINT, isProviderMissing } from '../engine/channelModels.ts';
 import { useChannels } from '../services/channels.ts';
 import { applyTaskToCard } from '../engine/taskSync.ts';
-import { addPendingResult, applyTaskToCards, type HeightOf } from '../engine/resultCards.ts';
+import { addPendingResult, applyTaskToCards, settleTextRun, type HeightOf, type TextRunOutcome } from '../engine/resultCards.ts';
 import type { BackendTaskResponse } from '../services/api.ts';
 import { cardsAwaitingTask, normalizeCards, normalizeViewport } from '../engine/projectDoc.ts';
 import { setActiveProjectId } from '../engine/assetPaths.ts';
@@ -98,6 +98,18 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     setSubmittingIds(new Set(submittingRef.current));
   };
 
+  // Prompt-assistant requests in flight per generation card. Text runs are synchronous
+  // and have no placeholder card, so the count lives here and is never saved.
+  const [textRuns, setTextRuns] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const countTextRun = (cardId: string, delta: number) =>
+    setTextRuns((prev) => {
+      const next = new Map(prev);
+      const n = (next.get(cardId) ?? 0) + delta;
+      if (n > 0) next.set(cardId, n);
+      else next.delete(cardId);
+      return next;
+    });
+
   // Tasks that finished while the project was closed never reached us over SSE.
   useEffect(() => {
     for (const card of cardsAwaitingTask(cards)) {
@@ -129,6 +141,29 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     }
   };
 
+  /** Runs a prompt-assistant generation card once; each returned text becomes its own result card. */
+  const runTextGeneration = async (card: SpatialCard) => {
+    const settle = (outcome: TextRunOutcome) =>
+      setCards((prev) => settleTextRun(prev, card, outcome, measuredHeight));
+    if (!card.provider || !card.model) return settle({ error: '请先选择服务商和模型' });
+    if (!card.prompt.trim()) return settle({ error: '请先填写想法' });
+    countTextRun(card.id, 1);
+    try {
+      const { text } = await apiGenerateText({
+        provider: card.provider,
+        model: card.model,
+        system: getTextPreset(card.textPreset).system,
+        prompt: card.prompt,
+      });
+      settle({ text });
+    } catch (err) {
+      settle({ error: (err as Error).message || '文本生成失败' });
+    } finally {
+      countTextRun(card.id, -1);
+    }
+  };
+
+  /** Legacy text cards (no role) write their output back onto themselves. */
   const handleGenerateText = async (card: SpatialCard) => {
     const update = (patch: Partial<SpatialCard>) =>
       setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, ...patch } : c)));
@@ -161,7 +196,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       return;
     }
     if (targetCard.type === 'text') {
-      await handleGenerateText(targetCard);
+      await (targetCard.role === 'generation' ? runTextGeneration(targetCard) : handleGenerateText(targetCard));
       return;
     }
     if (targetCard.role === 'generation') {
@@ -266,6 +301,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       setCards={setCards}
       onTriggerGenerate={handleTriggerGenerate}
       submittingIds={submittingIds}
+      textRuns={textRuns}
       initialViewport={initialViewport}
       onViewportChange={onViewportChange}
       headerSlot={

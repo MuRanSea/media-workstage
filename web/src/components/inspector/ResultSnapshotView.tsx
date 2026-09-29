@@ -2,6 +2,7 @@ import React from 'react';
 import type { SpatialCard } from '../../types/canvas.ts';
 import { compileCardImagePayload } from '../../engine/compiler.ts';
 import { VIDEO_MODE_LABELS } from '../../engine/cardParams.ts';
+import { TEXT_PRESETS } from '../../engine/textPresets.ts';
 import { useChannels } from '../../services/channels.ts';
 import { Section } from '../ui/index.ts';
 import { DevJson } from './DevJson.tsx';
@@ -21,6 +22,7 @@ const PARAM_LABELS: Record<string, string> = {
   duration: '时长',
   ratio: '比例',
   generateAudio: '生成音频',
+  textPreset: '预设',
 };
 
 const REFERENCE_ROLE_LABELS: Record<string, string> = {
@@ -46,6 +48,7 @@ const VALUE_LABELS: Record<string, string> = {
 const formatValue = (key: string, v: string | number | boolean) => {
   if (typeof v === 'boolean') return v ? '开' : '关';
   if (key === 'duration') return v === -1 ? '自适应' : `${v}s`;
+  if (key === 'textPreset') return TEXT_PRESETS.find((p) => p.id === v)?.label ?? String(v);
   return VALUE_LABELS[String(v)] ?? String(v);
 };
 
@@ -67,11 +70,12 @@ export const ResultSnapshotView: React.FC<{ card: SpatialCard }> = ({ card }) =>
       </Section>
     );
   }
+  const isText = card.type === 'text';
   const providerName = channels.find((p) => p.id === snapshot.provider)?.name ?? snapshot.provider ?? '—';
 
   return (
     <>
-      <Section title="提示词">
+      <Section title={isText ? '想法' : '提示词'}>
         <p className="rounded-xl bg-canvas-bg border border-canvas-border px-2.5 py-1.5 text-xs leading-relaxed text-slate-300 whitespace-pre-wrap break-words select-text">
           {snapshot.prompt || <span className="text-slate-500">（空）</span>}
         </p>
@@ -84,7 +88,7 @@ export const ResultSnapshotView: React.FC<{ card: SpatialCard }> = ({ card }) =>
             {formatValue(key, value)}
           </Row>
         ))}
-        <Row label="Seed">{snapshot.seed === undefined || snapshot.seed === -1 ? '随机' : snapshot.seed}</Row>
+        {!isText && <Row label="Seed">{snapshot.seed === undefined || snapshot.seed === -1 ? '随机' : snapshot.seed}</Row>}
         <p className="text-[11px] leading-relaxed text-slate-500">生成时的参数，只读。要换参数请改生成卡后再生成。</p>
       </Section>
       {snapshot.references?.length ? (

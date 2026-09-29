@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addPendingResult, applyTaskToCards, estimateCardHeight, runsInProgress, resultCardsOf, snapshotOf } from './resultCards.ts';
+import { addPendingResult, applyTaskToCards, isTaskResult, settleTextRun, estimateCardHeight, runsInProgress, resultCardsOf, snapshotOf } from './resultCards.ts';
 import { createCard } from './cardFactory.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 import type { BackendTaskResponse } from '../services/api.ts';
@@ -46,10 +46,6 @@ describe('new image cards', () => {
     const card = createCard('image', { x: 0, y: 0 }, []);
     expect(card.role).toBe('generation');
     expect(card.tagIndex).toBeUndefined();
-  });
-
-  it('leave text cards on the legacy model', () => {
-    expect(createCard('text', { x: 0, y: 0 }, []).role).toBeUndefined();
   });
 });
 
@@ -367,5 +363,98 @@ describe('video result cards', () => {
     expect(b.x).toBe(a.x);
     expect(b.y).toBeGreaterThanOrEqual(a.y + estimateCardHeight(a));
     expect(estimateCardHeight(a)).toBeGreaterThan(estimateCardHeight({ ...a, ratio: '16:9' }));
+  });
+});
+
+describe('text result cards', () => {
+  const textGen = (patch: Partial<SpatialCard> = {}): SpatialCard => ({
+    ...createCard('text', { x: 170, y: 120 }, []),
+    id: 't1',
+    title: '提示词助手 1',
+    prompt: '雨夜的街道',
+    provider: 'openai',
+    model: 'gpt-x',
+    textPreset: 'image_prompt',
+    x: 0,
+    y: 0,
+    ...patch,
+  });
+
+  it('new prompt-assistant cards are generation cards without a tag', () => {
+    const card = createCard('text', { x: 0, y: 0 }, []);
+    expect(card.role).toBe('generation');
+    expect(card.tagIndex).toBeUndefined();
+  });
+
+  it('adds a finished, editable text result card right of the generation card', () => {
+    const g = textGen();
+    const cards = settleTextRun([g], g, { text: '赛博朋克街道，霓虹灯，雨' }, () => 200);
+    const [r] = results(cards);
+
+    expect(cards).toHaveLength(2);
+    expect(r).toMatchObject({
+      role: 'result',
+      type: 'text',
+      sourceId: 't1',
+      status: 'succeeded',
+      textOutput: '赛博朋克街道，霓虹灯，雨',
+      title: '提示词助手 1 #1',
+      x: g.x + g.width + 40,
+      y: 0,
+    });
+    expect(r.tagIndex).toBeUndefined();
+    expect(r.taskId).toBeUndefined();
+    expect(r.snapshot).toEqual({
+      prompt: '雨夜的街道',
+      provider: 'openai',
+      model: 'gpt-x',
+      params: { textPreset: 'image_prompt' },
+    });
+    expect(isTaskResult(r)).toBe(true);
+    expect(cards[0]).toBe(g);
+  });
+
+  it('gives every run its own card, stacked below the previous one', () => {
+    const g = textGen();
+    const height = () => 200;
+    const once = settleTextRun([g], g, { text: '第一版' }, height);
+    const twice = settleTextRun(once, g, { text: '第二版' }, height);
+    const [a, b] = results(twice);
+
+    expect(results(twice)).toHaveLength(2);
+    expect(a.id).not.toBe(b.id);
+    expect([a.textOutput, b.textOutput]).toEqual(['第一版', '第二版']);
+    expect(b.title).toBe('提示词助手 1 #2');
+    expect(b.x).toBe(a.x);
+    expect(b.y).toBe(a.y + 200 + 40);
+  });
+
+  it('snapshots the settings it was submitted with, not later edits', () => {
+    const g = textGen();
+    const edited = { ...g, prompt: '改过的想法', textPreset: 'free' as const };
+    const [r] = results(settleTextRun([edited], g, { text: 'x' }));
+    expect(r.snapshot).toMatchObject({ prompt: '雨夜的街道', params: { textPreset: 'image_prompt' } });
+  });
+
+  it('keeps a failure on the generation card and adds no card', () => {
+    const g = textGen();
+    const cards = settleTextRun([g], g, { error: '额度不足' });
+    expect(results(cards)).toHaveLength(0);
+    expect(cards[0]).toMatchObject({ id: 't1', errorMessage: '额度不足', status: 'idle' });
+  });
+
+  it('clears the generation card error on the next successful run', () => {
+    const g = textGen();
+    const failed = settleTextRun([g], g, { error: '额度不足' });
+    const cards = settleTextRun(failed, failed[0], { text: 'ok' });
+    expect(cards[0].errorMessage).toBeUndefined();
+    expect(results(cards)).toHaveLength(1);
+  });
+
+  it('still lands next to the generation card if it was deleted meanwhile', () => {
+    const g = textGen();
+    const cards = settleTextRun([], g, { text: 'ok' });
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({ role: 'result', sourceId: 't1', x: g.x + g.width + 40 });
   });
 });
