@@ -4,6 +4,7 @@ import {
   getMarqueeRect,
   alignCards,
   autoArrangeGrid,
+  firstFreeSlotRight,
   type LayoutCard,
 } from './layout.ts';
 
@@ -84,5 +85,36 @@ describe('Spatial Canvas Layout & Selection Math', () => {
 
     expect(c4.x).toBe(340);
     expect(c4.y).toBe(340);
+  });
+});
+
+describe('firstFreeSlotRight', () => {
+  const anchor: LayoutCard = { id: 'g', x: 100, y: 100, width: 300, height: 200 };
+  const size = { width: 300, height: 200 };
+
+  it('starts level with the top of the anchor, one gap to its right', () => {
+    expect(firstFreeSlotRight(anchor, size, [anchor], 40)).toEqual({ x: 440, y: 100 });
+  });
+
+  it('steps down past anything already in the column', () => {
+    const blocker: LayoutCard = { id: 'b', x: 500, y: 150, width: 300, height: 300 };
+    expect(firstFreeSlotRight(anchor, size, [anchor, blocker], 40)).toEqual({ x: 440, y: 490 });
+  });
+
+  it('takes a gap between cards when it is tall enough', () => {
+    const top: LayoutCard = { id: 'a', x: 440, y: 100, width: 300, height: 200 };
+    const low: LayoutCard = { id: 'b', x: 440, y: 900, width: 300, height: 200 };
+    expect(firstFreeSlotRight(anchor, size, [anchor, top, low], 40)).toEqual({ x: 440, y: 340 });
+  });
+
+  it('skips a gap that is too short', () => {
+    const top: LayoutCard = { id: 'a', x: 440, y: 100, width: 300, height: 200 };
+    const mid: LayoutCard = { id: 'b', x: 440, y: 400, width: 300, height: 200 };
+    expect(firstFreeSlotRight(anchor, size, [anchor, top, mid], 40)).toEqual({ x: 440, y: 640 });
+  });
+
+  it('ignores cards outside the column', () => {
+    const farRight: LayoutCard = { id: 'b', x: 2000, y: 100, width: 300, height: 200 };
+    expect(firstFreeSlotRight(anchor, size, [anchor, farRight], 40)).toEqual({ x: 440, y: 100 });
   });
 });

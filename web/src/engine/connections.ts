@@ -6,13 +6,15 @@ export type ConnectResult =
   | { ok: true; patch: Partial<SpatialCard> }
   | { ok: false; reason: string };
 
-/** Which card types expose an output port (can be dragged from). */
+/** Which cards expose an output port (can be dragged from): never generation cards, which hold no output. */
 export function hasOutputPort(card: SpatialCard): boolean {
+  if (card.role === 'generation') return false;
   return card.type === 'image' || card.type === 'text';
 }
 
-/** Which card types expose an input port (can be dropped on). */
+/** Which cards expose an input port (can be dropped on): never result cards, which are finished. */
 export function hasInputPort(card: SpatialCard): boolean {
+  if (card.role === 'result') return false;
   return card.type === 'image' || card.type === 'video';
 }
 
@@ -24,6 +26,8 @@ export function hasInputPort(card: SpatialCard): boolean {
  */
 export function connectCards(source: SpatialCard, target: SpatialCard): ConnectResult {
   if (source.id === target.id) return { ok: false, reason: '不能连接到自己' };
+  if (source.role === 'generation') return { ok: false, reason: '生成卡没有输出端口，请从它的结果卡连线' };
+  if (target.role === 'result') return { ok: false, reason: '结果卡没有输入端口' };
 
   if (source.type === 'text') {
     if (target.type === 'text') return { ok: false, reason: '文本卡片之间暂不支持连线' };
@@ -63,6 +67,7 @@ function attachImageToVideo(image: SpatialCard, video: SpatialCard): ConnectResu
 
   const role: ReferenceItem['role'] =
     mode === 'first_last_frame' ? (refs.length === 0 ? 'first_frame' : 'last_frame') : 'reference_image';
+  if (image.tagIndex === undefined) return { ok: false, reason: '这张图片卡没有 @图 编号，无法引用' };
   const newRef: ReferenceItem = {
     cardId: image.id,
     tagIndex: image.tagIndex,

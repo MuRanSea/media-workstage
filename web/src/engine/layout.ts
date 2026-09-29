@@ -163,3 +163,25 @@ export function autoArrangeGrid<T extends LayoutCard>(
     return card;
   });
 }
+
+/**
+ * Top-left of the first free `size` slot in the column one `gap` right of
+ * `anchor`, scanning down from the anchor's top. Only free space decides the
+ * slot: nothing is moved, and where earlier cards were once placed is irrelevant.
+ */
+export function firstFreeSlotRight(
+  anchor: LayoutCard,
+  size: { width: number; height: number },
+  cards: LayoutCard[],
+  gap = 40
+): Point {
+  const x = anchor.x + anchor.width + gap;
+  let y = anchor.y;
+  // Each blocked try moves below a card, so this ends after at most cards.length steps.
+  for (;;) {
+    const slot: Rect = { x: x - gap, y: y - gap, width: size.width + 2 * gap, height: size.height + 2 * gap };
+    const blockers = cards.filter((c) => isRectIntersecting(slot, { x: c.x, y: c.y, width: c.width, height: c.height ?? 380 }));
+    if (blockers.length === 0) return { x, y };
+    y = Math.max(...blockers.map((c) => c.y + (c.height ?? 380))) + gap;
+  }
+}

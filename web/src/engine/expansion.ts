@@ -21,7 +21,7 @@ export function unpackLayerDecomposition(
   }
 
   const existingIds = new Set(allCards.map((c) => c.id));
-  const maxTagIndex = Math.max(0, ...allCards.map((c) => c.tagIndex));
+  const maxTagIndex = Math.max(0, ...allCards.map((c) => c.tagIndex ?? 0));
 
   const startX = parentCard.x + parentCard.width + gapX;
   const startY = parentCard.y;
@@ -93,7 +93,7 @@ export function unpackSequentialStoryboards(
   }
 
   const existingIds = new Set(allCards.map((c) => c.id));
-  const maxTagIndex = Math.max(0, ...allCards.map((c) => c.tagIndex));
+  const maxTagIndex = Math.max(0, ...allCards.map((c) => c.tagIndex ?? 0));
 
   const startX = parentCard.x + parentCard.width + gapX;
   const startY = parentCard.y;

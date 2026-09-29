@@ -31,12 +31,34 @@ export interface ReferenceItem {
   localPath?: string;
 }
 
+/**
+ * Generation card: holds a prompt, model and parameters and never an output.
+ * Result card: holds exactly one output of a run. Cards without a role are
+ * legacy cards and keep the old write-back behaviour.
+ */
+export type CardRole = 'generation' | 'result';
+
+/** Read-only record of what a result card was generated with. */
+export interface ResultSnapshot {
+  prompt: string;
+  provider?: ProviderId;
+  model: string;
+  params: Record<string, string | number | boolean>;
+  seed?: number;
+}
+
 export interface SpatialCard {
   id: string;
+  role?: CardRole;
+  /** Result cards: the generation card whose run produced this card. */
+  sourceId?: string;
+  /** Result cards: the settings the run was submitted with. */
+  snapshot?: ResultSnapshot;
   taskId?: string;
   type: CardType;
   title: string;
-  tagIndex: number;
+  /** @图N; only image result cards (and legacy cards) carry one. */
+  tagIndex?: number;
   x: number;
   y: number;
   width: number;

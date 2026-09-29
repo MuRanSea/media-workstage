@@ -35,12 +35,13 @@ interface SpatialCanvasProps {
 
 interface Ray {
   id: string;
-  kind: 'reference' | 'prompt';
+  kind: 'reference' | 'prompt' | 'source';
   pathData: string;
   midX: number;
   midY: number;
-  label: string;
-  onRemove: () => void;
+  /** Label pill with a disconnect button; source lines (generation → result) have none. */
+  label?: string;
+  onRemove?: () => void;
 }
 
 /** In-progress connection drag: from a card's output port to the cursor (world coords). */
@@ -143,7 +144,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   }, [transform, onViewportChange]);
 
   const selectedCards = useMemo(() => cards.filter((c) => selectedCardIds.has(c.id)), [cards, selectedCardIds]);
-  const availableImageCards = useMemo(() => cards.filter((c) => c.type === 'image'), [cards]);
+  // Generation cards hold no image to reference.
+  const availableImageCards = useMemo(() => cards.filter((c) => c.type === 'image' && c.role !== 'generation'), [cards]);
 
   const toWorld = useCallback(
     (clientX: number, clientY: number) => {
@@ -256,7 +258,10 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   const cardMenuItems = useCallback(
     (card: SpatialCard): MenuEntry[] => [
-      { label: '生成', icon: <Sparkles className="w-3.5 h-3.5" />, onSelect: () => onTriggerGenerate(card.id) },
+      // Result cards are finished outputs: only their generation card runs again.
+      ...(card.role === 'result'
+        ? []
+        : [{ label: '生成', icon: <Sparkles className="w-3.5 h-3.5" />, onSelect: () => onTriggerGenerate(card.id) }]),
       { label: '复制一份', icon: <Copy className="w-3.5 h-3.5" />, hint: 'Ctrl+D', onSelect: () => duplicate([card]) },
       'separator',
       { label: '删除', icon: <Trash2 className="w-3.5 h-3.5" />, hint: 'Delete', danger: true, onSelect: () => deleteCards([card.id]) },
@@ -401,6 +406,20 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           onRemove: () => handleUpdateCard(card.id, removeReferencePatch(card, src.id)),
         });
       });
+
+      // Derived from the result card's source field; it cannot be dragged out or cut.
+      const generation = card.role === 'result' && card.sourceId ? byId.get(card.sourceId) : undefined;
+      if (generation) {
+        const srcX = generation.x + generation.width;
+        const srcY = generation.y + PORT_Y;
+        rays.push({
+          id: `source:${generation.id}->${card.id}`,
+          kind: 'source',
+          pathData: bezier(srcX, srcY, tgtX, tgtY),
+          midX: (srcX + tgtX) / 2,
+          midY: (srcY + tgtY) / 2,
+        });
+      }
 
       const textSrc = card.promptSourceId ? byId.get(card.promptSourceId) : undefined;
       if (textSrc) {
@@ -561,6 +580,9 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
             <g transform="translate(25000, 25000)">
               {connectionRays.map((ray) => {
                 const isPrompt = ray.kind === 'prompt';
+                if (ray.kind === 'source') {
+                  return <path key={ray.id} d={ray.pathData} fill="none" stroke="#94a3b8" strokeOpacity={0.5} strokeWidth="2" />;
+                }
                 return (
                   <g key={ray.id}>
                     <path d={ray.pathData} fill="none" stroke={isPrompt ? '#34d399' : '#f472b6'} strokeOpacity={0.7} strokeWidth="2" />

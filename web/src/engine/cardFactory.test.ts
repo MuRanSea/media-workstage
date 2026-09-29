@@ -1,17 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import { createCard, duplicateCards, nextTagIndex, placeCard } from './cardFactory.ts';
 import { mergeTaskState } from './useHistory.ts';
+import { addPendingResult } from './resultCards.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 
 describe('createCard', () => {
   it('centres the card on the point with an empty prompt and the next tag', () => {
-    const existing = [createCard('image', { x: 0, y: 0 }, [])];
+    const existing = [createCard('video', { x: 0, y: 0 }, [])];
     const card = createCard('video', { x: 1000, y: 500 }, existing);
     expect(card.x).toBe(1000 - 230);
     expect(card.y).toBe(500 - 120);
     expect(card.prompt).toBe('');
     expect(card.tagIndex).toBe(2);
     expect(card.title).toBe('视频 2');
+  });
+
+  it('numbers image generation cards by their own count, without a tag', () => {
+    const existing = [createCard('video', { x: 0, y: 0 }, []), createCard('image', { x: 0, y: 0 }, [])];
+    const card = createCard('image', { x: 0, y: 0 }, existing);
+    expect(card.tagIndex).toBeUndefined();
+    expect(card.title).toBe('图片 2');
   });
 
   it('cascades when a card already sits at the spot', () => {
@@ -58,6 +66,16 @@ describe('duplicateCards', () => {
     expect(cv.prompt).toBe('以 @图1 为首帧');
   });
 
+  it('copies finished result cards without their task, and skips running ones', () => {
+    const done: SpatialCard = { ...img, id: 'r1', role: 'result', sourceId: 'gone', taskId: 't1', status: 'succeeded' };
+    const running: SpatialCard = { ...done, id: 'r2', taskId: 't2', status: 'running' };
+    const copies = duplicateCards([done, running], { x: 0, y: 0 }, [done, running]);
+    expect(copies).toHaveLength(1);
+    expect(copies[0]).toMatchObject({ role: 'result', resultUrl: '/assets/x.png' });
+    expect(copies[0].taskId).toBeUndefined();
+    expect(copies[0].sourceId).toBeUndefined();
+  });
+
   it('can drop task results', () => {
     const [ci] = duplicateCards([img], { x: 0, y: 0 }, [img], false);
     expect(ci.status).toBe('idle');
@@ -73,6 +91,22 @@ describe('mergeTaskState', () => {
     expect(restored.prompt).toBe('old');
     expect(restored.status).toBe('succeeded');
     expect(restored.resultUrl).toBe('/assets/r.png');
+  });
+
+  it('keeps result cards that tasks added after the snapshot', () => {
+    const g = { ...createCard('image', { x: 0, y: 0 }, []), id: 'g' };
+    const now = addPendingResult([{ ...g, prompt: 'new' }], g, {
+      id: 'task-1', provider: 'ark', provider_task_id: '', model: 'm', task_type: 'image_generation', task_mode: 'single',
+      prompt: '', params_json: '', status: 'queued', progress: 0, created_at: '', updated_at: '',
+    });
+    const restored = mergeTaskState([{ ...g, prompt: 'old' }], now, true);
+    expect(restored.map((c) => c.id)).toEqual(['g', 'result-task-1']);
+    expect(restored[0].prompt).toBe('old');
+    // A pasted copy of a result is a user edit, so undo removes it.
+    const pasted = { ...now[1], id: 'copy' };
+    expect(mergeTaskState([g], [g, pasted], true).map((c) => c.id)).toEqual(['g']);
+    // Redoing a delete of a result card removes it again.
+    expect(mergeTaskState([g], now).map((c) => c.id)).toEqual(['g']);
   });
 
   it('restores deleted cards as they were', () => {

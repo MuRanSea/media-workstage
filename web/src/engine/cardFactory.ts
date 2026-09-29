@@ -1,5 +1,6 @@
 import type { CardType, SpatialCard } from '../types/canvas.ts';
 import type { Point } from './matrix.ts';
+import { isTerminalStatus } from './taskSync.ts';
 
 const CARD_WIDTH: Record<CardType, number> = { image: 340, video: 460, text: 340 };
 const CASCADE = 32;
@@ -8,7 +9,7 @@ const TITLES: Record<CardType, string> = { image: '图片', video: '视频', tex
 
 /** Next free @图N: one past the highest tag, so deleted cards never cause duplicates. */
 export function nextTagIndex(cards: SpatialCard[]): number {
-  return cards.reduce((max, c) => Math.max(max, c.tagIndex), 0) + 1;
+  return cards.reduce((max, c) => Math.max(max, c.tagIndex ?? 0), 0) + 1;
 }
 
 let idCounter = 0;
@@ -28,15 +29,22 @@ export function placeCard(at: Point, width: number, cards: SpatialCard[]): Point
   return { x, y };
 }
 
-/** A new card of `type` centred on world point `at`. */
+/**
+ * A new card of `type` centred on world point `at`. Image cards are generation
+ * cards, whose @图N tags go to their result cards instead; video and text
+ * cards still use the legacy model and carry a tag.
+ */
 export function createCard(type: CardType, at: Point, cards: SpatialCard[]): SpatialCard {
-  const tagIndex = nextTagIndex(cards);
   const width = CARD_WIDTH[type];
+  const tag = nextTagIndex(cards);
+  const identity =
+    type === 'image'
+      ? { role: 'generation' as const, title: `${TITLES[type]} ${cards.filter((c) => c.type === 'image' && c.role === 'generation').length + 1}` }
+      : { tagIndex: tag, title: `${TITLES[type]} ${tag}` };
   const common = {
     id: newCardId(),
     type,
-    title: `${TITLES[type]} ${tagIndex}`,
-    tagIndex,
+    ...identity,
     ...placeCard(at, width, cards),
     width,
     prompt: '',
@@ -90,6 +98,8 @@ const RESULT_FIELDS = ['taskId', 'status', 'progress', 'errorMessage', 'resultUr
  * when both ends are copied, and remapped to the copies.
  */
 export function duplicateCards(source: SpatialCard[], at: Point, existing: SpatialCard[], keepResults = true): SpatialCard[] {
+  // A running result card cannot be copied: the copy would never get the task's updates.
+  source = source.filter((c) => !(c.role === 'result' && !isTerminalStatus(c.status)));
   if (source.length === 0) return [];
   const minX = Math.min(...source.map((c) => c.x));
   const minY = Math.min(...source.map((c) => c.y));
@@ -98,15 +108,16 @@ export function duplicateCards(source: SpatialCard[], at: Point, existing: Spati
   const tagMap = new Map<number, number>();
   for (const c of source) {
     idMap.set(c.id, newCardId());
-    tagMap.set(c.tagIndex, tag++);
+    if (c.tagIndex !== undefined) tagMap.set(c.tagIndex, tag++);
   }
 
   return source.map((c) => {
+    const newTag = c.tagIndex !== undefined ? tagMap.get(c.tagIndex) : undefined;
     const copy: SpatialCard = {
       ...c,
       id: idMap.get(c.id)!,
-      tagIndex: tagMap.get(c.tagIndex)!,
-      title: copyTitle(c, tagMap.get(c.tagIndex)!),
+      tagIndex: newTag,
+      title: newTag !== undefined ? copyTitle(c, newTag) : `${c.title} 副本`,
       x: Math.round(at.x + (c.x - minX)),
       y: Math.round(at.y + (c.y - minY)),
     };
@@ -119,6 +130,9 @@ export function duplicateCards(source: SpatialCard[], at: Point, existing: Spati
       ?.filter((r) => idMap.has(r.cardId))
       .map((r) => ({ ...r, cardId: idMap.get(r.cardId)!, tagIndex: tagMap.get(r.tagIndex) ?? r.tagIndex }));
     copy.promptSourceId = c.promptSourceId && idMap.has(c.promptSourceId) ? idMap.get(c.promptSourceId) : undefined;
+    copy.sourceId = c.sourceId && idMap.has(c.sourceId) ? idMap.get(c.sourceId) : undefined;
+    // Task updates go to the original result card only.
+    if (c.role === 'result') delete copy.taskId;
     // Rewrite @图N in the prompt for references that were remapped.
     if (c.references?.length) {
       copy.prompt = c.prompt.replace(/@图(\d+)/g, (m, n) => {

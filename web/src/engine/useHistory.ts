@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import type { SpatialCard } from '../types/canvas.ts';
+import { isTaskResult } from './resultCards.ts';
 
 const LIMIT = 50;
 
@@ -8,10 +9,14 @@ const TASK_FIELDS = ['taskId', 'status', 'progress', 'errorMessage', 'resultUrl'
 
 /**
  * A restored snapshot with each surviving card's task state taken from `current`,
- * so undoing an edit never rolls back a generation that finished meanwhile.
+ * so undoing an edit never rolls back a generation that finished meanwhile. With
+ * `keepTaskResults` (undo), result cards tasks added since the snapshot are kept;
+ * redo leaves it off so redoing a delete removes the card again.
  */
-export function mergeTaskState(restored: SpatialCard[], current: SpatialCard[]): SpatialCard[] {
+export function mergeTaskState(restored: SpatialCard[], current: SpatialCard[], keepTaskResults = false): SpatialCard[] {
   const byId = new Map(current.map((c) => [c.id, c]));
+  const restoredIds = new Set(restored.map((c) => c.id));
+  const added = keepTaskResults ? current.filter((c) => isTaskResult(c) && !restoredIds.has(c.id)) : [];
   return restored.map((card) => {
     const live = byId.get(card.id);
     if (!live) return card;
@@ -20,7 +25,7 @@ export function mergeTaskState(restored: SpatialCard[], current: SpatialCard[]):
       (merged as unknown as Record<string, unknown>)[f] = live[f];
     }
     return merged;
-  });
+  }).concat(added);
 }
 
 /**
@@ -45,7 +50,7 @@ export function useHistory() {
     if (!prev) return null;
     future.current.push(current);
     setVersion((v) => v + 1);
-    return mergeTaskState(prev, current);
+    return mergeTaskState(prev, current, true);
   }, []);
 
   const redo = useCallback((current: SpatialCard[]): SpatialCard[] | null => {

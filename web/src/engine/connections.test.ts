@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { connectCards, effectivePrompt, withEffectivePrompt } from './connections.ts';
+import { connectCards, effectivePrompt, hasInputPort, hasOutputPort, withEffectivePrompt } from './connections.ts';
 import { buildProviderGroups } from './channelModels.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 import type { ProviderConfigItem } from '../services/api.ts';
@@ -65,6 +65,37 @@ describe('connectCards', () => {
       [video(), img, '没有输出端口'],
       [img, full, '最多 1 张'],
       [text, { ...img, promptSourceId: 't1' }, '已经连接'],
+    ] as const) {
+      const res = connectCards(src, tgt);
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toContain(reason);
+    }
+  });
+});
+
+describe('generation and result card ports', () => {
+  const genImg = card({ id: 'g1', type: 'image', role: 'generation', tagIndex: undefined });
+  const resultImg = card({ id: 'r1', type: 'image', role: 'result', sourceId: 'g1', tagIndex: 4, resultUrl: '/assets/r.png' });
+
+  it('gives image result cards an output port and no input port', () => {
+    expect(hasOutputPort(resultImg)).toBe(true);
+    expect(hasInputPort(resultImg)).toBe(false);
+  });
+
+  it('gives image generation cards an input port and no output port', () => {
+    expect(hasOutputPort(genImg)).toBe(false);
+    expect(hasInputPort(genImg)).toBe(true);
+  });
+
+  it('references an image result card from a video card by its tag', () => {
+    const res = connectCards(resultImg, video());
+    expect(res.ok && res.patch.references?.[0]).toMatchObject({ cardId: 'r1', tagIndex: 4 });
+  });
+
+  it('refuses to connect from a generation card or into a result card', () => {
+    for (const [src, tgt, reason] of [
+      [genImg, video(), '没有输出端口'],
+      [text, resultImg, '没有输入端口'],
     ] as const) {
       const res = connectCards(src, tgt);
       expect(res.ok).toBe(false);

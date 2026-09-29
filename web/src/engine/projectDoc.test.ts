@@ -65,6 +65,20 @@ describe('project document normalization', () => {
     ];
     expect(cardsAwaitingTask(cards).map((c) => c.id)).toEqual(['a']);
   });
+
+  it('keeps and resumes unfinished result cards, never their generation card', () => {
+    const cards = normalizeCards([
+      card({ id: 'g', role: 'generation', tagIndex: undefined }),
+      card({ id: 'r1', role: 'result', sourceId: 'g', taskId: 't1', status: 'queued' }),
+      card({ id: 'r2', role: 'result', sourceId: 'g', taskId: 't2', status: 'succeeded' }),
+    ]);
+    expect(cards.map((c) => [c.id, c.status])).toEqual([
+      ['g', 'idle'],
+      ['r1', 'queued'],
+      ['r2', 'succeeded'],
+    ]);
+    expect(cardsAwaitingTask(cards).map((c) => c.id)).toEqual(['r1']);
+  });
 });
 
 describe('applyTaskToCard', () => {

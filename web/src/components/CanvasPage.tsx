@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { type SpatialCard } from '../types/canvas.ts';
 import { SpatialCanvas } from './SpatialCanvas.tsx';
 import { ProjectSwitcher } from './ProjectSwitcher.tsx';
@@ -20,9 +20,15 @@ import { getTextPreset } from '../engine/textPresets.ts';
 import { MISSING_PROVIDER_HINT, isProviderMissing } from '../engine/channelModels.ts';
 import { useChannels } from '../services/channels.ts';
 import { applyTaskToCard } from '../engine/taskSync.ts';
+import { addPendingResult, applyTaskToCards, type HeightOf } from '../engine/resultCards.ts';
+import type { BackendTaskResponse } from '../services/api.ts';
 import { cardsAwaitingTask, normalizeCards, normalizeViewport } from '../engine/projectDoc.ts';
 import { setActiveProjectId } from '../engine/assetPaths.ts';
 import { useAutosave } from '../engine/useAutosave.ts';
+
+/** A card's rendered height (unaffected by canvas zoom), when it is on screen. */
+const measuredHeight: HeightOf = (card) =>
+  document.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(card.id)}"]`)?.offsetHeight;
 
 /** Loads a project, then mounts its canvas. */
 export function CanvasPage({ projectId }: { projectId: string }) {
@@ -78,9 +84,12 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     document.title = `${name} · Media Workstage`;
   }, [name]);
 
-  const updateTaskCards = useCallback((task: Parameters<typeof applyTaskToCard>[1]) => {
-    setCards((prev) => prev.map((c) => (c.taskId === task.id || c.id === task.id ? applyTaskToCard(c, task) : c)));
+  const updateTaskCards = useCallback((task: BackendTaskResponse) => {
+    setCards((prev) => applyTaskToCards(prev, task));
   }, []);
+
+  // Generation cards whose submit request is in flight: a double click must not submit twice.
+  const submittingRef = useRef(new Set<string>());
 
   // Tasks that finished while the project was closed never reached us over SSE.
   useEffect(() => {
@@ -143,8 +152,13 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       toast(MISSING_PROVIDER_HINT, { tone: 'error' });
       return;
     }
+    if (targetCard.role === 'result') return;
     if (targetCard.type === 'text') {
       await handleGenerateText(targetCard);
+      return;
+    }
+    if (targetCard.role === 'generation') {
+      await submitGeneration(targetCard);
       return;
     }
 
@@ -201,6 +215,35 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
             : c
         )
       );
+    }
+  };
+
+  /**
+   * Runs a generation card once. The card keeps no task state: once the backend
+   * accepts the task a result card appears next to it and takes all updates.
+   * Errors before that point stay on the generation card.
+   */
+  const submitGeneration = async (card: SpatialCard) => {
+    if (submittingRef.current.has(card.id)) return;
+    submittingRef.current.add(card.id);
+    const setError = (errorMessage: string | undefined) =>
+      setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, errorMessage } : c)));
+    setError(undefined);
+    try {
+      // A connected text card supplies the prompt.
+      const submitted = withEffectivePrompt(card, cards);
+      const accepted = await apiCreateTask({ ...compileCardImagePayload(submitted), project_id: projectId });
+      setCards((prev) => addPendingResult(prev, submitted, accepted, measuredHeight));
+
+      // The task may have moved on before its result card existed.
+      const latest =
+        getBufferedTaskEvent(accepted.id)?.task ??
+        (accepted.status === 'queued' ? await apiGetTask(accepted.id).catch(() => undefined) : undefined);
+      if (latest) updateTaskCards(latest);
+    } catch (err) {
+      setError((err as Error).message || '提交任务失败');
+    } finally {
+      submittingRef.current.delete(card.id);
     }
   };
 

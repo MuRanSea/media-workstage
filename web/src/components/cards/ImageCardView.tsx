@@ -62,6 +62,9 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
   const missing = isProviderMissing(channels, card.provider);
   const canGenerate = isModelReady('image', provider, card.model);
   const isGenerating = card.status === 'running' || card.status === 'queued';
+  // Generation cards only configure runs; each run's output lands on its own result card.
+  const isGeneration = card.role === 'generation';
+  const isResult = card.role === 'result';
 
   const layerAssets = (card.outputAssets ?? []).filter((a) => a.kind === 'image_layer');
   const frameAssets = (card.outputAssets ?? []).filter((a) => a.kind === 'image_frame');
@@ -88,7 +91,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
       menuItems={menuItems}
       ports={
         <>
-          <InputPort />
+          {!isResult && <InputPort />}
           {onStartConnect && <OutputPort color="pink" onStart={onStartConnect} />}
         </>
       }
@@ -116,7 +119,9 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-gradient-to-br from-pink-950/30 via-slate-900 to-slate-950 text-center">
             <ImageIcon className="w-6 h-6 text-pink-400/60" />
-            <span className="text-[11px] text-slate-500">生成结果会显示在这里</span>
+            <span className="text-[11px] text-slate-500">
+              {isGeneration ? '每次生成的结果会出现在右侧' : isResult ? '等待生成结果' : '生成结果会显示在这里'}
+            </span>
           </div>
         )}
         <StatusChip status={card.status} />
@@ -153,29 +158,35 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         </Button>
       )}
 
-      {linkedPrompt ? (
-        <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
+      {isResult ? (
+        card.errorMessage && <ErrorBox message={card.errorMessage} />
       ) : (
-        <AutoTextarea
-          accent="pink"
-          value={card.prompt}
-          onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
-          placeholder="描述画面：主体、场景、风格、光线…"
-        />
+        <>
+          {linkedPrompt ? (
+            <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
+          ) : (
+            <AutoTextarea
+              accent="pink"
+              value={card.prompt}
+              onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
+              placeholder="描述画面：主体、场景、风格、光线…"
+            />
+          )}
+
+          {card.errorMessage && <ErrorBox message={card.errorMessage} />}
+
+          <Button
+            variant="primary"
+            accent="pink"
+            block
+            disabled={isGenerating || !canGenerate}
+            onClick={() => onTriggerGenerate(card.id)}
+            icon={!isGenerating && canGenerate ? <Sparkles className="w-3.5 h-3.5" /> : undefined}
+          >
+            {isGenerating ? '生成中…' : missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个服务商还不支持生图' : isGeneration ? '生成' : card.resultUrl ? '重新生成' : '生成图片'}
+          </Button>
+        </>
       )}
-
-      {card.errorMessage && <ErrorBox message={card.errorMessage} />}
-
-      <Button
-        variant="primary"
-        accent="pink"
-        block
-        disabled={isGenerating || !canGenerate}
-        onClick={() => onTriggerGenerate(card.id)}
-        icon={!isGenerating && canGenerate ? <Sparkles className="w-3.5 h-3.5" /> : undefined}
-      >
-        {isGenerating ? '生成中…' : missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个服务商还不支持生图' : card.resultUrl ? '重新生成' : '生成图片'}
-      </Button>
     </CardShell>
   );
 };

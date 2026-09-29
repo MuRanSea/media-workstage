@@ -111,8 +111,9 @@ export const CardShell: React.FC<CardShellProps> = ({
   );
 };
 
-/** The @图N tag other cards use to reference this one. */
-export const TagBadge: React.FC<{ tagIndex: number; accent: Accent }> = ({ tagIndex, accent }) => (
+/** The @图N tag other cards use to reference this one; nothing for untagged cards. */
+export const TagBadge: React.FC<{ tagIndex?: number; accent: Accent }> = ({ tagIndex, accent }) =>
+  tagIndex === undefined ? null : (
   <span
     title={`在视频提示词里用 @图${tagIndex} 引用这张卡片`}
     className={`flex-shrink-0 font-mono text-[11px] px-1.5 py-px rounded-md border ${ACCENT[accent].soft}`}
