@@ -83,15 +83,12 @@ function copyTitle(card: SpatialCard, newTag: number): string {
   return auto.test(card.title) ? `${TITLES[card.type]} ${newTag}` : `${card.title} 副本`;
 }
 
-/** Task results are not copied: a duplicate starts idle with the same settings. */
-const RESULT_FIELDS = ['taskId', 'status', 'progress', 'errorMessage', 'resultUrl', 'outputAssets'] as const;
-
 /**
  * Copies of `source` cards placed with their top-left group corner at `at`.
  * Ids and @图N tags are new; links (references, prompt source) are kept only
  * when both ends are copied, and remapped to the copies.
  */
-export function duplicateCards(source: SpatialCard[], at: Point, existing: SpatialCard[], keepResults = true): SpatialCard[] {
+export function duplicateCards(source: SpatialCard[], at: Point, existing: SpatialCard[]): SpatialCard[] {
   // A running result card cannot be copied: the copy would never get the task's updates.
   source = source.filter((c) => !(c.role === 'result' && (c.status === 'queued' || c.status === 'running')));
   if (source.length === 0) return [];
@@ -115,11 +112,6 @@ export function duplicateCards(source: SpatialCard[], at: Point, existing: Spati
       x: Math.round(at.x + (c.x - minX)),
       y: Math.round(at.y + (c.y - minY)),
     };
-    if (!keepResults) {
-      for (const f of RESULT_FIELDS) delete copy[f];
-      copy.status = 'idle';
-      copy.progress = 0;
-    }
     copy.references = c.references
       ?.filter((r) => idMap.has(r.cardId))
       .map((r) => ({ ...r, cardId: idMap.get(r.cardId)!, tagIndex: tagMap.get(r.tagIndex) ?? r.tagIndex }));

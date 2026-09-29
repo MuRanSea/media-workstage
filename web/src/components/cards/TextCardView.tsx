@@ -21,8 +21,7 @@ interface TextCardViewProps extends CardViewProps {
 /**
  * LLM card: turns a rough idea into a prompt that can feed image and video cards.
  * A generation card holds the idea, preset and model; each run adds a text result
- * card whose text can be edited. Cards without a role are legacy cards that keep
- * their output on themselves.
+ * card whose text can be edited.
  */
 export const TextCardView: React.FC<TextCardViewProps> = ({
   card,
@@ -41,8 +40,6 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
   const channels = useChannels();
   const providerGroups = useMemo(() => buildProviderGroups(channels, 'text'), [channels]);
   const preset = getTextPreset(card.textPreset);
-  const isGenerating = card.status === 'running' || card.status === 'queued';
-  const isGeneration = card.role === 'generation';
   const isResult = card.role === 'result';
 
   // New cards start on the first bound chat model once channel config has loaded.
@@ -94,10 +91,10 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
       </span>
     ) : null;
 
-  const outputEditor = (hint: string) => (
+  const outputEditor = (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-[11px] text-slate-500">
-        <span>{hint}</span>
+        <span>生成的文本（可修改，不影响生成卡）</span>
         <button
           type="button"
           onClick={copyOutput}
@@ -120,34 +117,7 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
     </div>
   );
 
-  if (isGeneration) {
-    return (
-      <CardShell {...shellProps} badges={<RunsBadge count={runsInProgress} accent="emerald" />}>
-        <SummaryRow model={preset.label} spec={modelLabel} />
-        {noModelsHint}
-        <AutoTextarea
-          accent="emerald"
-          value={card.prompt}
-          onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
-          placeholder={preset.placeholder}
-        />
-        {card.errorMessage && <ErrorBox message={card.errorMessage} />}
-        {/* Runs may overlap: each one adds its own result card. */}
-        <Button
-          variant="primary"
-          accent="emerald"
-          block
-          disabled={missing || !card.model || !card.prompt.trim()}
-          onClick={() => onTriggerGenerate(card.id)}
-          icon={missing ? undefined : <Sparkles className="w-3.5 h-3.5" />}
-        >
-          {missing ? MISSING_PROVIDER_HINT : '生成'}
-        </Button>
-      </CardShell>
-    );
-  }
-
-  if (isResult) {
+  if (card.role === 'result') {
     const snapshotPreset = getTextPreset(card.snapshot?.params.textPreset as TextPreset | undefined);
     return (
       <CardShell
@@ -159,41 +129,32 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
           model={snapshotPreset.label}
           spec={findModelOption(providerGroups, card.snapshot?.provider ?? provider, card.snapshot?.model ?? card.model)?.label ?? card.snapshot?.model ?? card.model}
         />
-        {outputEditor('生成的文本（可修改，不影响生成卡）')}
+        {outputEditor}
       </CardShell>
     );
   }
 
   return (
-    <CardShell
-      {...shellProps}
-      badges={linkedBadge}
-      ports={onStartConnect && <OutputPort color="emerald" onStart={onStartConnect} />}
-    >
+    <CardShell {...shellProps} badges={<RunsBadge count={runsInProgress} accent="emerald" />}>
       <SummaryRow model={preset.label} spec={modelLabel} />
-
       {noModelsHint}
-
       <AutoTextarea
         accent="emerald"
         value={card.prompt}
         onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
         placeholder={preset.placeholder}
       />
-
-      {outputEditor(linkedCount > 0 ? '输出（已连到其他卡片，可直接修改）' : '输出（可修改，拖右侧圆点连到图片或视频卡片）')}
-
       {card.errorMessage && <ErrorBox message={card.errorMessage} />}
-
+      {/* Runs may overlap: each one adds its own result card. */}
       <Button
         variant="primary"
         accent="emerald"
         block
-        disabled={isGenerating || missing || !card.model || !card.prompt.trim()}
+        disabled={missing || !card.model || !card.prompt.trim()}
         onClick={() => onTriggerGenerate(card.id)}
-        icon={isGenerating ? undefined : <Sparkles className="w-3.5 h-3.5" />}
+        icon={missing ? undefined : <Sparkles className="w-3.5 h-3.5" />}
       >
-        {isGenerating ? '生成中…' : missing ? MISSING_PROVIDER_HINT : preset.id === 'free' ? '生成回答' : `生成${preset.label}`}
+        {missing ? MISSING_PROVIDER_HINT : '生成'}
       </Button>
     </CardShell>
   );

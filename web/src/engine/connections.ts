@@ -6,16 +6,17 @@ export type ConnectResult =
   | { ok: true; patch: Partial<SpatialCard> }
   | { ok: false; reason: string };
 
-/** Which cards expose an output port (can be dragged from): never generation cards, which hold no output. */
+/**
+ * Which cards expose an output port (can be dragged from): image and text result
+ * cards. Generation cards hold no output; nothing downstream takes video yet.
+ */
 export function hasOutputPort(card: SpatialCard): boolean {
-  if (card.role === 'generation') return false;
-  return card.type === 'image' || card.type === 'text';
+  return card.role === 'result' && (card.type === 'image' || card.type === 'text');
 }
 
-/** Which cards expose an input port (can be dropped on): never result cards, which are finished. */
+/** Which cards expose an input port (can be dropped on): image and video generation cards. Results are finished. */
 export function hasInputPort(card: SpatialCard): boolean {
-  if (card.role === 'result') return false;
-  return card.type === 'image' || card.type === 'video';
+  return card.role === 'generation' && (card.type === 'image' || card.type === 'video');
 }
 
 /**

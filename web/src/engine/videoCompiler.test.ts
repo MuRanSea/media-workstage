@@ -10,9 +10,10 @@ import { createCard } from './cardFactory.ts';
 import { connectCards } from './connections.ts';
 
 describe('Video Task Payload Compiler & Asset Resolution', () => {
-  it('ignores the address saved on the reference and reads the image card itself', () => {
+  it('reads the image from the card the reference points at', () => {
     const imgCard: SpatialCard = {
       id: 'c-1',
+      role: 'result',
       type: 'image',
       title: 'Character',
       tagIndex: 1,
@@ -31,8 +32,6 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
         tagIndex: 1,
         role: 'reference_image',
         label: 'Character',
-        url: '/assets/images/task-1/base.png',
-        localPath: 'images/task-1/base.png',
       },
       [imgCard]
     );
@@ -43,6 +42,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
   it('prioritizes localPath alone when source card has both local_path and remote_url', () => {
     const imgCard: SpatialCard = {
       id: 'c-img-7',
+      role: 'result',
       type: 'image',
       title: '机甲少女设定',
       tagIndex: 7,
@@ -77,7 +77,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
     expect(resolved.url).toBeUndefined();
   });
 
-  it('rejects a reference whose image card is no longer on the canvas, even with a saved address', () => {
+  it('rejects a reference whose image card is no longer on the canvas', () => {
     expect(() =>
       resolveReferenceAsset(
         {
@@ -85,7 +85,6 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
           tagIndex: 2,
           role: 'reference_image',
           label: 'Deleted',
-          url: 'https://cdn.example.com/character.png',
         },
         []
       )
@@ -95,6 +94,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
   it('rejects ungenerated reference image cards with a clear descriptive error', () => {
     const ungeneratedCard: SpatialCard = {
       id: 'c-img-8',
+      role: 'result',
       type: 'image',
       title: '未生成的草图',
       tagIndex: 8,
@@ -118,6 +118,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
   it('renumbers arbitrary global tags (@图7, @图42) into sequential cloud tags (图1, 图2)', () => {
     const card7: SpatialCard = {
       id: 'c-7',
+      role: 'result',
       type: 'image',
       title: '机甲少女',
       tagIndex: 7,
@@ -133,6 +134,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
 
     const card42: SpatialCard = {
       id: 'c-42',
+      role: 'result',
       type: 'image',
       title: '雨夜街道',
       tagIndex: 42,
@@ -148,6 +150,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
 
     const videoCard: SpatialCard = {
       id: 'v-1',
+      role: 'generation',
       type: 'video',
       title: '电影镜头',
       tagIndex: 3,
@@ -190,6 +193,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
   it('forces ratio to adaptive in first_last_frame mode and assigns roles', () => {
     const card1: SpatialCard = {
       id: 'c-1',
+      role: 'result',
       type: 'image',
       title: 'Day',
       tagIndex: 1,
@@ -205,6 +209,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
 
     const card2: SpatialCard = {
       id: 'c-2',
+      role: 'result',
       type: 'image',
       title: 'Night',
       tagIndex: 2,
@@ -220,6 +225,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
 
     const videoCard: SpatialCard = {
       id: 'v-fl',
+      role: 'generation',
       type: 'video',
       title: 'Morph',
       tagIndex: 3,
@@ -249,6 +255,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
   it('detects MiniMax provider and sets prompt_optimizer parameter', () => {
     const card1: SpatialCard = {
       id: 'c-1',
+      role: 'result',
       type: 'image',
       title: 'Sunset',
       tagIndex: 1,
@@ -264,6 +271,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
 
     const videoCard: SpatialCard = {
       id: 'v-mm',
+      role: 'generation',
       type: 'video',
       title: 'MiniMax Video',
       tagIndex: 2,
@@ -292,6 +300,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
   it('strictly enforces maxRefs: 1 on video-01 model, rejecting 2 references', () => {
     const c1: SpatialCard = {
       id: 'c1',
+      role: 'result',
       type: 'image',
       title: 'Img1',
       tagIndex: 1,
@@ -306,6 +315,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
     };
     const c2: SpatialCard = {
       id: 'c2',
+      role: 'result',
       type: 'image',
       title: 'Img2',
       tagIndex: 2,
@@ -321,6 +331,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
 
     const video01Card: SpatialCard = {
       id: 'v-01',
+      role: 'generation',
       type: 'video',
       title: 'Video01 Test',
       tagIndex: 3,
@@ -346,6 +357,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
   it('preserves seed: 0 correctly without converting to -1', () => {
     const card: SpatialCard = {
       id: 'v-seed',
+      role: 'generation',
       type: 'video',
       title: 'Seed 0 Test',
       tagIndex: 1,
@@ -367,6 +379,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
   it('strips dangling @图N mentions in text_to_video mode', () => {
     const card: SpatialCard = {
       id: 'v-t2v',
+      role: 'generation',
       type: 'video',
       title: 'T2V Mentions Test',
       tagIndex: 1,
@@ -394,6 +407,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
 describe('Video provider selection', () => {
   const base = {
     id: 'v1',
+    role: 'generation',
     type: 'video',
     title: 't',
     tagIndex: 1,
@@ -424,6 +438,7 @@ describe('Video provider selection', () => {
 describe('APIMart Kling video compilation', () => {
   const imageCard = {
     id: 'img1',
+    role: 'result',
     type: 'image',
     title: 'ref',
     tagIndex: 1,
@@ -450,6 +465,7 @@ describe('APIMart Kling video compilation', () => {
   const klingCard = (patch: Partial<SpatialCard>) =>
     ({
       id: 'v1',
+      role: 'generation',
       type: 'video',
       title: 't',
       tagIndex: 2,

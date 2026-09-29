@@ -1,7 +1,7 @@
 import type { SpatialCard } from '../types/canvas.ts';
 import type { ProjectViewport } from '../services/projects.ts';
 import { isTerminalStatus } from './taskSync.ts';
-import { migrateLegacyCards } from './migration.ts';
+import { migrateLegacyCards, type SavedCard } from './migration.ts';
 
 export const DEFAULT_VIEWPORT: ProjectViewport = { zoom: 0.85, panX: 60, panY: 40 };
 
@@ -35,8 +35,8 @@ export function normalizeCards(raw: unknown): SpatialCard[] {
   if (!Array.isArray(raw)) return [];
   const cards = raw
     .filter(
-      (c): c is SpatialCard =>
-        !!c && typeof c === 'object' && typeof (c as SpatialCard).id === 'string' && typeof (c as SpatialCard).type === 'string'
+      (c): c is SavedCard =>
+        !!c && typeof c === 'object' && typeof (c as SavedCard).id === 'string' && typeof (c as SavedCard).type === 'string'
     )
     .map((c) => {
       let card = c;

@@ -15,6 +15,7 @@ import { protocolOf } from './providers.ts';
 
 const base = (patch: Partial<SpatialCard>): SpatialCard => ({
   id: 'c',
+  role: 'generation',
   type: 'video',
   title: 't',
   tagIndex: 1,

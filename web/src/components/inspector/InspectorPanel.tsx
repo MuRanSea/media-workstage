@@ -79,7 +79,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               <div className="text-xs font-semibold text-slate-100 truncate">{single.title}</div>
               <div className="text-[11px] text-slate-500">
                 {meta!.label}
-                {single.role && ` · ${ROLE_LABEL[single.role]}`}
+                {` · ${ROLE_LABEL[single.role]}`}
               </div>
             </div>
           </>

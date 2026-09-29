@@ -19,7 +19,6 @@ import { withEffectivePrompt } from '../engine/connections.ts';
 import { getTextPreset } from '../engine/textPresets.ts';
 import { MISSING_PROVIDER_HINT, isProviderMissing } from '../engine/channelModels.ts';
 import { useChannels } from '../services/channels.ts';
-import { applyTaskToCard } from '../engine/taskSync.ts';
 import { addPendingResult, applyTaskToCards, settleTextRun, type HeightOf, type TextRunOutcome } from '../engine/resultCards.ts';
 import type { BackendTaskResponse } from '../services/api.ts';
 import { cardsAwaitingTask, normalizeCards, normalizeViewport, restoredAwaitingTask } from '../engine/projectDoc.ts';
@@ -177,101 +176,16 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     }
   };
 
-  /** Legacy text cards (no role) write their output back onto themselves. */
-  const handleGenerateText = async (card: SpatialCard) => {
-    const update = (patch: Partial<SpatialCard>) =>
-      setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, ...patch } : c)));
-
-    if (!card.provider || !card.model) {
-      update({ status: 'failed', errorMessage: '请先选择服务商和模型' });
-      return;
-    }
-    update({ status: 'running', errorMessage: undefined });
-    try {
-      const { text } = await apiGenerateText({
-        provider: card.provider,
-        model: card.model,
-        system: getTextPreset(card.textPreset).system,
-        prompt: card.prompt,
-      });
-      update({ status: 'succeeded', textOutput: text });
-    } catch (err) {
-      update({ status: 'failed', errorMessage: (err as Error).message || '文本生成失败' });
-    }
-  };
-
   const handleTriggerGenerate = async (cardId: string) => {
     const targetCard = cards.find((c) => c.id === cardId);
     // Result cards are finished outputs: only their generation card runs again.
-    if (!targetCard || targetCard.role === 'result') return;
+    if (!targetCard || targetCard.role !== 'generation') return;
     // Also reached from the context menu, which does not know the provider is gone.
     if (isProviderMissing(providers, targetCard.provider)) {
       toast(MISSING_PROVIDER_HINT, { tone: 'error' });
       return;
     }
-    if (targetCard.type === 'text') {
-      await (targetCard.role === 'generation' ? runTextGeneration(targetCard) : handleGenerateText(targetCard));
-      return;
-    }
-    if (targetCard.role === 'generation') {
-      await submitGeneration(targetCard);
-      return;
-    }
-
-    // Set card status to queued
-    setCards((prev) =>
-      prev.map((c) =>
-        c.id === cardId ? { ...c, status: 'queued', progress: 5, errorMessage: undefined } : c
-      )
-    );
-    try {
-      // A connected text card supplies the prompt.
-      const effectiveCard = withEffectivePrompt(targetCard, cards);
-      const payload =
-        effectiveCard.type === 'image'
-          ? compileCardImagePayload(effectiveCard)
-          : compileCardVideoPayload(effectiveCard, cards);
-
-      const backendTask = await apiCreateTask({ ...payload, project_id: projectId });
-      const taskId = backendTask.id;
-
-      // Reconcile: Check event buffer or fast fetch if poller completed immediately
-      const buffered = getBufferedTaskEvent(taskId);
-      let latestTask = backendTask;
-
-      if (buffered && buffered.task) {
-        latestTask = buffered.task;
-      } else if (backendTask.status === 'queued') {
-        try {
-          const fresh = await apiGetTask(taskId);
-          if (fresh && fresh.status !== 'queued') {
-            latestTask = fresh;
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      setCards((prev) =>
-        prev.map((c) =>
-          c.id === cardId
-            ? applyTaskToCard({ ...c, progress: Math.max(c.progress, 10) }, latestTask)
-            : c
-        )
-      );
-    } catch (err) {
-      setCards((prev) =>
-        prev.map((c) =>
-          c.id === cardId
-            ? {
-                ...c,
-                status: 'failed',
-                errorMessage: (err as Error).message || '提交任务失败',
-              }
-            : c
-        )
-      );
-    }
+    await (targetCard.type === 'text' ? runTextGeneration(targetCard) : submitGeneration(targetCard));
   };
 
   /**

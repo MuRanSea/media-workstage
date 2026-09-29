@@ -214,12 +214,6 @@ describe('applyTaskToCards', () => {
     const cards = applyTaskToCards(done, task({ status: 'running', progress: 30 }));
     expect(results(cards)[0]).toMatchObject({ status: 'succeeded', progress: 100 });
   });
-
-  it('still updates legacy cards (no role) the old way', () => {
-    const legacy: SpatialCard = { ...gen({ id: 'old' }), role: undefined, tagIndex: 1, taskId: 'task-9', status: 'running' };
-    const cards = applyTaskToCards([legacy], task({ id: 'task-9', status: 'failed', error_code: 'X' }));
-    expect(cards[0]).toMatchObject({ status: 'failed', errorMessage: 'X' });
-  });
 });
 
 describe('runsInProgress', () => {
@@ -309,7 +303,7 @@ describe('video result cards', () => {
     const g = videoGen({
       mode: 'first_last_frame',
       prompt: '从 @图3 开始',
-      references: [{ cardId: 'img-r', tagIndex: 3, role: 'first_frame', label: '街景 #1', url: '/assets/images/x.png' }],
+      references: [{ cardId: 'img-r', tagIndex: 3, role: 'first_frame', label: '街景 #1' }],
     });
     const cards = addPendingResult([img, g], g, task());
     const r = cards.find((c) => c.id === 'result-task-1')!;

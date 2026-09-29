@@ -27,16 +27,12 @@ export interface ReferenceItem {
   tagIndex: number;
   role: 'reference_image' | 'first_frame' | 'last_frame';
   label: string;
-  /** @deprecated Address snapshot taken when linking; no longer read, the image comes from the card itself. */
-  url?: string;
-  /** @deprecated Never read; see `url`. */
-  localPath?: string;
 }
 
 /**
  * Generation card: holds a prompt, model and parameters and never an output.
- * Result card: holds exactly one output of a run. Cards without a role are
- * legacy cards and keep the old write-back behaviour.
+ * Result card: holds exactly one output of a run. Cards saved before roles
+ * existed are migrated when a project opens (engine/migration.ts).
  */
 export type CardRole = 'generation' | 'result';
 
@@ -53,7 +49,7 @@ export interface ResultSnapshot {
 
 export interface SpatialCard {
   id: string;
-  role?: CardRole;
+  role: CardRole;
   /** Result cards: the generation card whose run produced this card. */
   sourceId?: string;
   /** Result cards: the settings the run was submitted with. */
@@ -61,7 +57,7 @@ export interface SpatialCard {
   taskId?: string;
   type: CardType;
   title: string;
-  /** @图N; only image result cards (and legacy cards) carry one. */
+  /** @图N; only image result cards carry one. */
   tagIndex?: number;
   x: number;
   y: number;

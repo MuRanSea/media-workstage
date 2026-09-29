@@ -1,4 +1,4 @@
-import type { ReferenceItem, SpatialCard, TaskAssetDto } from '../types/canvas.ts';
+import type { CardRole, ReferenceItem, SpatialCard, TaskAssetDto } from '../types/canvas.ts';
 import { estimateCardHeight, extraAssetLabel, orderedAssets, placeInAssetGrid, snapshotOf } from './resultCards.ts';
 import { firstFreeSlotRight } from './layout.ts';
 import { assetStoredPath } from './assetPaths.ts';
@@ -22,6 +22,12 @@ import { assetStoredPath } from './assetPaths.ts';
  * through untouched.
  */
 
+/** A reference as older versions saved it, with the image address it had when linked. */
+type SavedReference = ReferenceItem & { url?: string; localPath?: string };
+
+/** A card as project.json holds it: without a role when saved before roles existed. */
+export type SavedCard = Omit<SpatialCard, 'role' | 'references'> & { role?: CardRole; references?: SavedReference[] };
+
 /** Space between a migrated result card and its neighbours, as for new results. */
 const GAP = 40;
 
@@ -33,16 +39,16 @@ const RUN_FIELDS = ['taskId', 'resultUrl', 'outputAssets', 'errorMessage', 'text
 
 const FAILED = new Set<SpatialCard['status']>(['failed', 'cancelled', 'expired']);
 
-const isLegacy = (card: SpatialCard) => !card.role && MIGRATABLE.has(card.type);
-const isInProgress = (card: SpatialCard) => !!card.taskId && (card.status === 'queued' || card.status === 'running');
-const hasOutput = (card: SpatialCard) => !!card.resultUrl || !!card.outputAssets?.length;
+const isLegacy = (card: SavedCard) => !card.role && MIGRATABLE.has(card.type);
+const isInProgress = (card: SavedCard) => !!card.taskId && (card.status === 'queued' || card.status === 'running');
+const hasOutput = (card: SavedCard) => !!card.resultUrl || !!card.outputAssets?.length;
 
 /** Made by an old unpack button: a result of its own, no task, and a `layer-` / `frame-` id. */
-const isUnpacked = (card: SpatialCard) =>
+const isUnpacked = (card: SavedCard) =>
   isLegacy(card) && card.type === 'image' && !card.taskId && hasOutput(card) && /^(layer|frame)-/.test(card.id);
 
 /** The id the old unpack buttons gave the card for `asset`, the `index`-th of its kind on `parent`. */
-const unpackedIdFor = (parent: SpatialCard, asset: TaskAssetDto, index: number) =>
+const unpackedIdFor = (parent: SavedCard, asset: TaskAssetDto, index: number) =>
   `${asset.kind === 'image_layer' ? 'layer' : 'frame'}-${asset.id || index}-${parent.id}`;
 
 export const migratedOutputId = (legacyId: string, asset?: TaskAssetDto, first = true) =>
@@ -60,8 +66,14 @@ interface Split {
   shown?: string;
 }
 
-export function migrateLegacyCards(cards: SpatialCard[]): SpatialCard[] {
-  if (!cards.some(isLegacy)) return cards;
+/**
+ * `saved` with every legacy card migrated. Cards of a type this version does not
+ * know pass through as saved, so saving the project never loses them.
+ */
+export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
+  // Legacy cards read as cards with a role still missing; only fields they share with new cards are used.
+  const cards = saved as SpatialCard[];
+  if (!saved.some(isLegacy)) return cards;
 
   let lastTag = cards.reduce((max, c) => Math.max(max, c.tagIndex ?? 0), 0);
   const claimedTasks = new Set(cards.filter((c) => c.role === 'result' && c.taskId).map((c) => c.taskId!));
@@ -168,8 +180,9 @@ export function migrateLegacyCards(cards: SpatialCard[]): SpatialCard[] {
     });
 
   // Legacy cards become generation or result cards in place; nothing already on the canvas moves.
-  const inPlace = cards.map((card) => {
-    if (!isLegacy(card)) return card;
+  const inPlace = saved.map((savedCard): SpatialCard => {
+    const card = savedCard as SpatialCard;
+    if (!isLegacy(savedCard)) return card;
     if (unpacked.has(card.id)) {
       const from = unpackedFrom.get(card.id);
       const r: SpatialCard = { ...card, role: 'result', snapshot: snapshotOf(card), status: 'succeeded', progress: 100 };
@@ -182,10 +195,10 @@ export function migrateLegacyCards(cards: SpatialCard[]): SpatialCard[] {
     }
     const g: SpatialCard = { ...card, role: 'generation', status: 'idle', progress: 0 };
     for (const f of RUN_FIELDS) delete g[f];
-    if (card.references) {
-      const refs = retargetRefs(card.references).map(({ url: _u, localPath: _l, ...ref }) => ref);
+    if (savedCard.references) {
+      const refs = retargetRefs(savedCard.references).map(({ url: _u, localPath: _l, ...ref }) => ref);
       // A link now pointing at a card with another @图N follows it in the prompt.
-      card.references.forEach((old) => {
+      savedCard.references.forEach((old) => {
         const now = refs.find((r) => r.cardId === retarget(old.cardId));
         if (now && now.tagIndex !== old.tagIndex) g.prompt = g.prompt.replace(new RegExp(`@图${old.tagIndex}\\b`, 'g'), `@图${now.tagIndex}`);
       });

@@ -5,7 +5,7 @@ import type { SpatialCard } from '../types/canvas.ts';
 import type { ProviderConfigItem } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
 
-const card = (p: Partial<SpatialCard> & Pick<SpatialCard, 'id' | 'type'>): SpatialCard => ({
+const card = (p: Partial<SpatialCard> & Pick<SpatialCard, 'id' | 'type' | 'role'>): SpatialCard => ({
   title: p.id,
   tagIndex: 1,
   x: 0,
@@ -18,14 +18,14 @@ const card = (p: Partial<SpatialCard> & Pick<SpatialCard, 'id' | 'type'>): Spati
   ...p,
 });
 
-const text = card({ id: 't1', type: 'text', title: '提示词助手', textOutput: '雨夜霓虹街道，电影感' });
-const img = card({ id: 'i1', type: 'image', tagIndex: 3, title: '街景', provider: 'ark', model: 'doubao-seedream-5-0-pro-260628' });
+const text = card({ id: 't1', type: 'text', role: 'result', title: '提示词助手', textOutput: '雨夜霓虹街道，电影感' });
+const img = card({ id: 'i1', type: 'image', role: 'result', tagIndex: 3, title: '街景', provider: 'ark', model: 'doubao-seedream-5-0-pro-260628' });
 const video = (patch: Partial<SpatialCard> = {}) =>
-  card({ id: 'v1', type: 'video', provider: 'ark', model: 'doubao-seedance-2-5-260628', prompt: '镜头推进', mode: 'all_modal', ...patch });
+  card({ id: 'v1', type: 'video', role: 'generation', provider: 'ark', model: 'doubao-seedance-2-5-260628', prompt: '镜头推进', mode: 'all_modal', ...patch });
 
 describe('connectCards', () => {
   it('links a text card as the prompt source of image and video cards', () => {
-    expect(connectCards(text, img)).toEqual({ ok: true, patch: { promptSourceId: 't1' } });
+    expect(connectCards(text, { ...img, role: 'generation' })).toEqual({ ok: true, patch: { promptSourceId: 't1' } });
     expect(connectCards(text, video())).toEqual({ ok: true, patch: { promptSourceId: 't1' } });
   });
 
@@ -58,13 +58,13 @@ describe('connectCards', () => {
       references: [{ cardId: 'x', tagIndex: 9, role: 'first_frame', label: 'x' }],
     });
     for (const [src, tgt, reason] of [
-      [img, { ...img, id: 'i2' }, '图片卡片之间'],
-      [text, { ...text, id: 't2' }, '文本卡片之间'],
+      [img, { ...img, id: 'i2', role: 'generation' }, '图片卡片之间'],
+      [text, { ...text, id: 't2', role: 'generation' }, '文本卡片之间'],
       [img, img, '不能连接到自己'],
       [img, text, '没有输入端口'],
       [video(), img, '没有输出端口'],
       [img, full, '最多 1 张'],
-      [text, { ...img, promptSourceId: 't1' }, '已经连接'],
+      [text, { ...img, role: 'generation', promptSourceId: 't1' }, '已经连接'],
     ] as const) {
       const res = connectCards(src, tgt);
       expect(res.ok).toBe(false);
@@ -230,7 +230,7 @@ describe('removeCards', () => {
         { cardId: 'ri2', tagIndex: 6, role: 'reference_image', label: 'b' },
       ],
     });
-    const untouched = card({ id: 'x', type: 'image' });
+    const untouched = card({ id: 'x', type: 'image', role: 'generation' });
 
     const next = removeCards([imgResult, textResult, other, linked, untouched], ['ri', 'rt']);
 

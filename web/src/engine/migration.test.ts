@@ -4,10 +4,11 @@ import { applyTaskToCards, resultCardsOf, estimateCardHeight } from './resultCar
 import { cardsAwaitingTask } from './projectDoc.ts';
 import { isRectIntersecting } from './layout.ts';
 import type { SpatialCard, TaskAssetDto } from '../types/canvas.ts';
+import type { SavedCard } from './migration.ts';
 import type { BackendTaskResponse } from '../services/api.ts';
 
 /** A card as older versions saved it: no role, results written back onto it. */
-const legacy = (patch: Partial<SpatialCard>): SpatialCard => ({
+const legacy = (patch: Partial<SavedCard>): SavedCard => ({
   id: 'img',
   type: 'image',
   title: '图片 1',
@@ -38,7 +39,7 @@ const asset = (taskId: string, patch: Partial<TaskAssetDto> = {}): TaskAssetDto 
 });
 
 /** A legacy image card that finished task `taskId`. */
-const doneImage = (patch: Partial<SpatialCard> = {}): SpatialCard => {
+const doneImage = (patch: Partial<SavedCard> = {}): SavedCard => {
   const taskId = patch.taskId ?? 'task-img';
   return legacy({
     taskId,
@@ -50,7 +51,7 @@ const doneImage = (patch: Partial<SpatialCard> = {}): SpatialCard => {
   });
 };
 
-const doneVideo = (patch: Partial<SpatialCard> = {}): SpatialCard =>
+const doneVideo = (patch: Partial<SavedCard> = {}): SavedCard =>
   legacy({
     id: 'vid',
     type: 'video',
@@ -235,7 +236,7 @@ describe('migrateLegacyCards: a card with a task in progress', () => {
 });
 
 describe('migrateLegacyCards: text cards', () => {
-  const text = (patch: Partial<SpatialCard> = {}): SpatialCard =>
+  const text = (patch: Partial<SavedCard> = {}): SavedCard =>
     legacy({
       id: 'txt',
       type: 'text',
@@ -354,7 +355,7 @@ const layerAsset = (n: number, z: number) =>
   });
 
 /** An old layer decomposition card: base plus layers, saved in backend order. */
-const layered = (patch: Partial<SpatialCard> = {}) =>
+const layered = (patch: Partial<SavedCard> = {}) =>
   doneImage({
     id: 'P',
     taskId: layerTask,
@@ -369,7 +370,7 @@ const frameTask = 'task-frames';
 const frameAsset = (n: number) =>
   asset(frameTask, { id: `f${n}`, asset_index: n, kind: 'image_frame', local_path: `images/task-frames/frame_${n}.png` });
 
-const storyboard = (patch: Partial<SpatialCard> = {}) =>
+const storyboard = (patch: Partial<SavedCard> = {}) =>
   doneImage({
     id: 'S',
     taskId: frameTask,
@@ -381,7 +382,7 @@ const storyboard = (patch: Partial<SpatialCard> = {}) =>
   });
 
 /** A card the old "unpack" button made from `parent`'s asset: a result, no task, id prefixed by kind. */
-const unpacked = (kind: 'layer' | 'frame', parentId: string, a: TaskAssetDto, patch: Partial<SpatialCard> = {}) =>
+const unpacked = (kind: 'layer' | 'frame', parentId: string, a: TaskAssetDto, patch: Partial<SavedCard> = {}) =>
   legacy({
     id: `${kind}-${a.id}-${parentId}`,
     title: `旧展开 ${a.id}`,

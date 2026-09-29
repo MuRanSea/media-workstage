@@ -25,7 +25,6 @@ import {
   RunsBadge,
   StatusChip,
   SummaryRow,
-  TagBadge,
 } from './CardShell.tsx';
 import type { CardViewProps } from './cardProps.ts';
 
@@ -74,9 +73,6 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   const isGenerating = card.status === 'running' || card.status === 'queued';
   const videoUrl = assetUrl(card.resultUrl);
   const refs = card.references ?? [];
-  // Generation cards only configure runs; each run's video lands on its own result card.
-  const isGeneration = card.role === 'generation';
-  const isResult = card.role === 'result';
 
   /** Same rules as dragging a line from the image card onto this one. */
   const attach = (image: SpatialCard): boolean => {
@@ -152,7 +148,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       ) : (
         <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-gradient-to-br from-indigo-950/30 via-slate-900 to-slate-950">
           <Film className="w-6 h-6 text-indigo-400/60" />
-          <span className="text-[11px] text-slate-500">{isResult ? '等待生成结果' : '生成的视频会在这里播放'}</span>
+          <span className="text-[11px] text-slate-500">等待生成结果</span>
         </div>
       )}
       <StatusChip status={card.status} />
@@ -266,7 +262,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
     menuItems,
   };
 
-  if (isResult) {
+  if (card.role === 'result') {
     // A finished output: nothing to configure, and nothing downstream takes video yet.
     return (
       <CardShell {...shell}>
@@ -277,42 +273,21 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
     );
   }
 
-  if (isGeneration) {
-    return (
-      <CardShell {...shell} badges={<RunsBadge count={runsInProgress} accent="indigo" />} ports={<InputPort />}>
-        {summary}
-        {referencesAndPrompt}
-        {card.errorMessage && <ErrorBox message={card.errorMessage} />}
-        <Button
-          variant="primary"
-          accent="indigo"
-          block
-          disabled={isSubmitting || missing || !canGenerate}
-          onClick={() => onTriggerGenerate(card.id)}
-          icon={!missing && canGenerate ? <Sparkles className="w-3.5 h-3.5" /> : undefined}
-        >
-          {missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个模型还不支持生成视频' : '生成'}
-        </Button>
-      </CardShell>
-    );
-  }
-
+  // Generation cards only configure runs; each run's video lands on its own result card.
   return (
-    <CardShell {...shell} badges={<TagBadge tagIndex={card.tagIndex} accent="indigo" />} ports={<InputPort />}>
-      {player}
+    <CardShell {...shell} badges={<RunsBadge count={runsInProgress} accent="indigo" />} ports={<InputPort />}>
       {summary}
       {referencesAndPrompt}
       {card.errorMessage && <ErrorBox message={card.errorMessage} />}
-
       <Button
         variant="primary"
         accent="indigo"
         block
-        disabled={isGenerating || !canGenerate}
+        disabled={isSubmitting || missing || !canGenerate}
         onClick={() => onTriggerGenerate(card.id)}
-        icon={!isGenerating && canGenerate ? <Sparkles className="w-3.5 h-3.5" /> : undefined}
+        icon={!missing && canGenerate ? <Sparkles className="w-3.5 h-3.5" /> : undefined}
       >
-        {isGenerating ? '生成中…' : missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个模型还不支持生成视频' : card.resultUrl ? '重新生成' : '生成视频'}
+        {missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个模型还不支持生成视频' : '生成'}
       </Button>
     </CardShell>
   );

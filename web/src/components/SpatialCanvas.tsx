@@ -7,7 +7,6 @@ import { connectCards, hasOutputPort, removeCards } from '../engine/connections.
 import { createCard, duplicateCards } from '../engine/cardFactory.ts';
 import { useHistory } from '../engine/useHistory.ts';
 import { removeReferencePatch } from '../engine/cardParams.ts';
-import { unpackLayerDecomposition, unpackSequentialStoryboards } from '../engine/expansion.ts';
 import { runsInProgress } from '../engine/resultCards.ts';
 import { ImageCardView } from './cards/ImageCardView.tsx';
 import { VideoCardView } from './cards/VideoCardView.tsx';
@@ -155,7 +154,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   const selectedCards = useMemo(() => cards.filter((c) => selectedCardIds.has(c.id)), [cards, selectedCardIds]);
   // Generation cards hold no image to reference.
-  const availableImageCards = useMemo(() => cards.filter((c) => c.type === 'image' && c.role !== 'generation'), [cards]);
+  const availableImageCards = useMemo(() => cards.filter((c) => c.type === 'image' && c.role === 'result'), [cards]);
 
   const toWorld = useCallback(
     (clientX: number, clientY: number) => {
@@ -264,9 +263,9 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   const cardMenuItems = useCallback(
     (card: SpatialCard): MenuEntry[] => [
       // Result cards are finished outputs: only their generation card runs again.
-      ...(card.role === 'result'
-        ? []
-        : [{ label: '生成', icon: <Sparkles className="w-3.5 h-3.5" />, onSelect: () => onTriggerGenerate(card.id) }]),
+      ...(card.role === 'generation'
+        ? [{ label: '生成', icon: <Sparkles className="w-3.5 h-3.5" />, onSelect: () => onTriggerGenerate(card.id) }]
+        : []),
       { label: '复制一份', icon: <Copy className="w-3.5 h-3.5" />, hint: 'Ctrl+D', onSelect: () => duplicate([card]) },
       'separator',
       { label: '删除', icon: <Trash2 className="w-3.5 h-3.5" />, hint: 'Delete', danger: true, onSelect: () => deleteCards([card.id]) },
@@ -651,9 +650,6 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                   <ImageCardView
                     key={card.id}
                     {...common}
-                    // Only legacy cards still unpack; new runs give every asset its own result card.
-                    onUnpackLayers={card.role ? undefined : (c) => editCards((prev) => unpackLayerDecomposition(c, prev))}
-                    onUnpackStoryboards={card.role ? undefined : (c) => editCards((prev) => unpackSequentialStoryboards(c, prev))}
                     linkedPrompt={linkedPromptFor(card)}
                     onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
                     onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}

@@ -7,6 +7,7 @@ import type { BackendTaskResponse } from '../services/api.ts';
 
 const card = (patch: Partial<SpatialCard>): SpatialCard => ({
   id: 'c1',
+  role: 'result',
   type: 'image',
   title: 't',
   tagIndex: 1,
@@ -59,8 +60,8 @@ describe('project document normalization', () => {
 
   it('migrates cards saved before generation and result cards', () => {
     const cards = normalizeCards([
-      card({ id: 'old', taskId: 't1', status: 'succeeded', resultUrl: '/assets/images/t1/base.png' }),
-      card({ id: 'mid-request', status: 'queued', x: 2000 }),
+      { ...card({ id: 'old', taskId: 't1', status: 'succeeded', resultUrl: '/assets/images/t1/base.png' }), role: undefined },
+      { ...card({ id: 'mid-request', status: 'queued', x: 2000 }), role: undefined },
     ]);
     expect(cards.map((c) => [c.id, c.role, c.status])).toEqual([
       ['old', 'generation', 'idle'],

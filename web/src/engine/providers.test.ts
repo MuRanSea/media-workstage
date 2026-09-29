@@ -62,7 +62,7 @@ describe('branching on protocol, not provider ID', () => {
     expect(payload.params).toHaveProperty('size');
 
     const patch = imageModelPatch(
-      { id: 'c', type: 'image', title: '', tagIndex: 1, x: 0, y: 0, width: 300, prompt: '', model: 'm', status: 'idle', progress: 0 },
+      { id: 'c', role: 'generation', type: 'image', title: '', x: 0, y: 0, width: 300, prompt: '', model: 'm', status: 'idle', progress: 0 },
       { provider: 'ark-2', protocol: 'ark', id: 'doubao-seedream-5-0-pro-260628', label: '', ready: true }
     );
     expect(patch).toMatchObject({ provider: 'ark-2', imageTier: '2K' });
@@ -74,7 +74,7 @@ describe('branching on protocol, not provider ID', () => {
     expect(payload).toMatchObject({ provider: relay.id, params: { aspect_ratio: '1:1', resolution: '2K' } });
     expect(
       imageSizeSummary({
-        id: 'c', type: 'image', title: '', tagIndex: 1, x: 0, y: 0, width: 300, prompt: '',
+        id: 'c', role: 'generation', type: 'image', title: '', x: 0, y: 0, width: 300, prompt: '',
         provider: relay.id, model: 'gpt-image-2', status: 'idle', progress: 0, imageRatioPreset: '1:1',
       })
     ).toBe('2K · 1:1');

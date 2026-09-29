@@ -44,13 +44,9 @@ const TEXT_RESULT_BODY = 160;
 export function estimateCardHeight(card: SpatialCard): number {
   const aspect = previewAspect(card) ?? 16 / 9;
   const preview = Math.min((card.width - PADDING) / aspect, PREVIEW_MAX_HEIGHT);
-  if (card.role === 'result') {
-    return card.type === 'text' ? HEADER + PADDING + TEXT_RESULT_BODY : HEADER + PADDING + preview + SUMMARY_ROW;
-  }
   // No preview on generation cards.
   if (card.role === 'generation') return HEADER + PADDING + GENERATION_BODY[card.type];
-  if (card.type === 'text') return 300;
-  return HEADER + PADDING + preview + 200;
+  return card.type === 'text' ? HEADER + PADDING + TEXT_RESULT_BODY : HEADER + PADDING + preview + SUMMARY_ROW;
 }
 
 /** Result cards take their id from the task that produced them. */
@@ -210,7 +206,7 @@ export function settleTextRun(
  * Folds a task snapshot (SSE event or fetch) into the result card running it.
  * Generation cards never take task state; a finished result card takes no
  * further snapshots, so a resent or stale one changes nothing; unmatched tasks
- * change nothing. Cards without a role are legacy cards and are matched the old way.
+ * change nothing.
  */
 export function applyTaskToCards(
   cards: SpatialCard[],
@@ -218,17 +214,8 @@ export function applyTaskToCards(
   heightOf: HeightOf = () => undefined
 ): SpatialCard[] {
   const placeholder = cards.find((c) => c.role === 'result' && c.taskId === task.id && !isExtraResultIdFor(task.id, c.id));
-  if (placeholder) {
-    return isTerminalStatus(placeholder.status) ? cards : settleResult(cards, placeholder.id, task, heightOf);
-  }
-  let changed = false;
-  const next = cards.map((c) => {
-    if (c.role) return c;
-    if (c.taskId !== task.id && c.id !== task.id) return c;
-    changed = true;
-    return applyTaskToCard(c, task);
-  });
-  return changed ? next : cards;
+  if (!placeholder || isTerminalStatus(placeholder.status)) return cards;
+  return settleResult(cards, placeholder.id, task, heightOf);
 }
 
 /** Where each asset kind sorts among a task's outputs, and what its extra cards are called. */

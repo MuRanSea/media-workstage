@@ -97,6 +97,7 @@ describe('Seedream Image Payload Compiler', () => {
   it('compiles directly from a SpatialCard object identically', () => {
     const card: SpatialCard = {
       id: 'c-test',
+      role: 'generation',
       type: 'image',
       title: 'Card Test',
       tagIndex: 1,

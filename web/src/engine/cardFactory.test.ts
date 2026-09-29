@@ -113,12 +113,6 @@ describe('duplicateCards', () => {
     expect(duplicateCards([queued], { x: 0, y: 0 }, [queued])).toEqual([]);
     expect(duplicateCards([{ ...queued, status: 'running' }], { x: 0, y: 0 }, [queued])).toEqual([]);
   });
-
-  it('can drop task results', () => {
-    const [ci] = duplicateCards([img], { x: 0, y: 0 }, [img], false);
-    expect(ci.status).toBe('idle');
-    expect(ci.resultUrl).toBeUndefined();
-  });
 });
 
 describe('mergeTaskState', () => {
