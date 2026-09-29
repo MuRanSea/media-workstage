@@ -23,7 +23,7 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   _Avoid_: 参数卡
 
 - **Result Card (结果卡)**:
-  A card holding exactly one finished output — one image, one video or one text — linked to the Generation Card whose run produced it, and the thing other cards connect to and reuse. It appears the moment a run is submitted and shows the run's progress until the output arrives. A generation that yields several outputs (layers, storyboard frames) yields one Result Card per output.
+  A card holding exactly one finished output — one image, one video or one text — linked to the Generation Card whose run produced it, and the thing other cards connect to and reuse. It appears as soon as the backend accepts the run and shows the run's progress until the output arrives (a text run is synchronous, so its Result Card appears when the text returns). A generation that yields several outputs (layers, storyboard frames) yields one Result Card per output. Only image Result Cards carry an `@图N` tag. Deleting its Generation Card leaves a Result Card standing on its own, without a source.
   _Avoid_: 素材卡, asset card (collides with `TaskAsset`), 输出卡
 
 - **MediaTask (媒体生成任务)**:

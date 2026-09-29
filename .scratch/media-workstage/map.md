@@ -10,6 +10,7 @@
 - **架构原则**：构建清晰的 `ProviderAdapter` 隔离层，统一抽象 Ark 与 MiniMax 的任务提交与轮询协议。
 - **资产传输**：本地图片/音频素材优先利用 Ark/MiniMax 原生 Base64 直传（单张<30MB, body≤64MB），大文件/超长视频走 TOS / 本地静态服务通道。
 - **服务商模型**：服务商是接入协议的实例，内置服务商为预置实例，可新增自定义 OpenAI 兼容服务商（issues 18–20）。详见 [docs/adr/0004-providers-as-protocol-instances.md](../../docs/adr/0004-providers-as-protocol-instances.md)。
+- **卡片模型**：生成结果独立成卡——生成卡只保存提示词、模型和参数，每次运行产出新的结果卡，下游固定引用某一张结果卡；旧工程打开时自动迁移。见 [.scratch/result-cards/spec.md](../result-cards/spec.md) 与 [docs/adr/0005-generation-and-result-cards.md](../../docs/adr/0005-generation-and-result-cards.md)。
 - **关联技能**：`domain-modeling`, `codebase-design`, `prototype`, `research`.
 
 ## Decisions so far
@@ -24,7 +25,7 @@
 - [08-ark-adapter-and-poller](issues/08-ark-adapter-and-poller.md): 完成火山方舟原生 API 适配器（Seedance 2.5/2.0 视频生成与 Seedream 5.0 生图）、Seedance 3 种互斥场景与 Seedream 尺寸校验、Goroutine 任务轮询调度池、17 IPM 预扣与回退风控限流器及资产即刻落盘管道。
 - [09-minimax-adapter-and-sse](issues/09-minimax-adapter-and-sse.md): 完成 MiniMax 海螺视频生成适配器（MiniMax-H3、Video-01）、双重下载流转（`content.url` 优先 + `/files/retrieve` 回退）与精准计费元数据沉淀。
 - [10-spatial-canvas-core](issues/10-spatial-canvas-core.md): 搭建 React 19 + TypeScript + TailwindCSS 现代工程结构，完成空间无限画布原子变换矩阵、光标定点零漂移缩放公式、双指/滚轮非被动漫游、专业快捷键导航、拉框框选、多卡片联动拖拽与自动网格排版。
-- [11-image-card-node](issues/11-image-card-node.md): 完成 Seedream 5.0 生图卡片组件与参数抽屉、单源严格尺寸编译器（档位+比例映射 vs 显式像素）、图层拆分多透明图层解包与连环组图画布一键裂变展开。
+- [11-image-card-node](issues/11-image-card-node.md): 完成 Seedream 5.0 生图卡片组件与参数抽屉、单源严格尺寸编译器（档位+比例映射 vs 显式像素）、图层拆分多透明图层解包与连环组图画布一键裂变展开。（展开动作已由 result-cards 的多产出自动建卡取代，见 ADR 0005。）
 - [12-video-card-and-references](issues/12-video-card-and-references.md): 完成多模态视频生成卡片、全模态/首尾帧/纯文生 3 种互斥模式、Prompt 文本框 `@` 智能补全与快捷胶囊、多图参考池路径排他解析与 `@图N` 重新编号、SVG 渐变流光连线引擎及内嵌 MP4 循环播放器。
 - [13-embedded-packaging-and-e2e](issues/13-embedded-packaging-and-e2e.md): 完成 Go `embed.FS` 单二进制打包、Gin SPA Fallback 路由（解耦 `/static` 与 `/assets` 命名空间）、跨平台自动化构建流水线（`build.ps1`, `Makefile`）、浏览器自动弹出及全流程端到端冒烟验证。
 - [14-project-store-backend](issues/14-project-store-backend.md): 工程以磁盘文件夹持久化（`project.json` + `assets/`），`internal/project.Store` 原子写入与 revision 乐观并发，工程 REST API 与 `.trash` 删除。详见 [docs/adr/0003-project-folders-persistence.md](../../docs/adr/0003-project-folders-persistence.md)。
