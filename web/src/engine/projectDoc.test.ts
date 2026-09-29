@@ -44,8 +44,8 @@ describe('project document normalization', () => {
 
   it('drops non-cards and resets submits that never got a task id', () => {
     const cards = normalizeCards([
-      card({ id: 'a', status: 'queued' }),
-      card({ id: 'b', status: 'running', taskId: 't' }),
+      card({ id: 'a', role: 'generation', status: 'queued' }),
+      card({ id: 'b', role: 'result', status: 'running', taskId: 't' }),
       { nope: true },
       null,
     ]);
@@ -55,6 +55,19 @@ describe('project document normalization', () => {
     ]);
     expect(normalizeCards({})).toEqual([]);
     expect(normalizeCards([card({ prompt: '输入画面主体与氛围描述...' })])[0].prompt).toBe('');
+  });
+
+  it('migrates cards saved before generation and result cards', () => {
+    const cards = normalizeCards([
+      card({ id: 'old', taskId: 't1', status: 'succeeded', resultUrl: '/assets/images/t1/base.png' }),
+      card({ id: 'mid-request', status: 'queued', x: 2000 }),
+    ]);
+    expect(cards.map((c) => [c.id, c.role, c.status])).toEqual([
+      ['old', 'generation', 'idle'],
+      ['mid-request', 'generation', 'idle'],
+      ['old-result', 'result', 'succeeded'],
+    ]);
+    expect(normalizeCards(cards)).toEqual(cards);
   });
 
   it('lists only cards with an unfinished task', () => {

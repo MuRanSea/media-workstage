@@ -1,6 +1,7 @@
 import type { SpatialCard } from '../types/canvas.ts';
 import type { ProjectViewport } from '../services/projects.ts';
 import { isTerminalStatus } from './taskSync.ts';
+import { migrateLegacyCards } from './migration.ts';
 
 export const DEFAULT_VIEWPORT: ProjectViewport = { zoom: 0.85, panX: 60, panY: 40 };
 
@@ -27,11 +28,12 @@ const LEGACY_PLACEHOLDER_PROMPTS = new Set(['输入画面主体与氛围描述..
 /**
  * Cards from project.json. Drops entries that are not cards, resets cards whose
  * submit never returned a task id (the page closed mid-request) to idle since
- * nothing will ever update them, and clears legacy placeholder prompts.
+ * nothing will ever update them, clears legacy placeholder prompts, and
+ * migrates cards saved before generation and result cards (see migration.ts).
  */
 export function normalizeCards(raw: unknown): SpatialCard[] {
   if (!Array.isArray(raw)) return [];
-  return raw
+  const cards = raw
     .filter(
       (c): c is SpatialCard =>
         !!c && typeof c === 'object' && typeof (c as SpatialCard).id === 'string' && typeof (c as SpatialCard).type === 'string'
@@ -42,6 +44,7 @@ export function normalizeCards(raw: unknown): SpatialCard[] {
       if (LEGACY_PLACEHOLDER_PROMPTS.has(card.prompt)) card = { ...card, prompt: '' };
       return card;
     });
+  return migrateLegacyCards(cards);
 }
 
 /** Cards whose task may have finished while the project was closed. */

@@ -240,7 +240,7 @@ const ASSET_KINDS: Record<TaskAssetDto['kind'], { rank: number; label?: string }
   image_frame: { rank: 2, label: '分镜' },
 };
 
-function orderedAssets(assets: TaskAssetDto[]): TaskAssetDto[] {
+export function orderedAssets(assets: TaskAssetDto[]): TaskAssetDto[] {
   const rank = (a: TaskAssetDto) => ASSET_KINDS[a.kind].rank;
   return [...assets].sort(
     (a, b) => rank(a) - rank(b) || (a.kind === 'image_layer' ? a.z_index - b.z_index : 0) || a.asset_index - b.asset_index
