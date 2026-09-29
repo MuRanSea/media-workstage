@@ -10,6 +10,7 @@ import {
 } from '../../engine/channelModels.ts';
 import { requestedAspect, videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
 import { connectCards } from '../../engine/connections.ts';
+import { cardTag, refTag } from '../../engine/refTags.ts';
 import { inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { useChannels } from '../../services/channels.ts';
 import { assetUrl } from '../../engine/assetPaths.ts';
@@ -79,8 +80,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
     return true;
   };
 
-  const insertTag = (tagIndex: number) => {
-    const tag = `@图${tagIndex}`;
+  const insertTag = (tag: string) => {
     const el = promptRef.current;
     if (!el) return onUpdateCard(card.id, { prompt: `${card.prompt} ${tag}`.trim() });
     const { selectionStart: start, selectionEnd: end } = el;
@@ -102,7 +102,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   };
 
   const selectMention = (image: SpatialCard) => {
-    const tagged = `${card.prompt.slice(0, mentionCursor).replace(/@([^\s@]*)$/, `@图${image.tagIndex} `)}${card.prompt.slice(mentionCursor)}`;
+    const tagged = `${card.prompt.slice(0, mentionCursor).replace(/@([^\s@]*)$/, `${cardTag(image)} `)}${card.prompt.slice(mentionCursor)}`;
     const alreadyRef = refs.some((r) => r.cardId === image.id);
     if (alreadyRef || attach(image)) onUpdateCard(card.id, { prompt: tagged });
     setMentionQuery(null);
@@ -113,7 +113,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
     mentionQuery === null
       ? []
       : availableImageCards.filter(
-          (img) => mentionQuery === '' || `图${img.tagIndex}`.includes(mentionQuery) || img.title.toLowerCase().includes(mentionQuery.toLowerCase())
+          (img) => mentionQuery === '' || cardTag(img).slice(1).includes(mentionQuery) || img.title.toLowerCase().includes(mentionQuery.toLowerCase())
         );
 
   return (
@@ -172,16 +172,20 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       {/* Reference chips: click to insert the tag into the prompt */}
       {card.mode !== 'text_to_video' && (
         <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
-          <span className="text-slate-500">参考图</span>
+          <span className="text-slate-500">参考</span>
           {refs.map((ref) => (
             <button
               key={ref.cardId}
               type="button"
-              onClick={() => insertTag(ref.tagIndex)}
-              title={`插入 @图${ref.tagIndex} 到提示词`}
-              className="font-mono px-1.5 py-px rounded-md border bg-pink-500/15 text-pink-300 border-pink-500/30 hover:bg-pink-500/25"
+              onClick={() => insertTag(refTag(ref))}
+              title={`插入 ${refTag(ref)} 到提示词`}
+              className={`font-mono px-1.5 py-px rounded-md border ${
+                availableImageCards.find((c) => c.id === ref.cardId)?.type === 'upload'
+                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/30 hover:bg-amber-500/25'
+                  : 'bg-pink-500/15 text-pink-300 border-pink-500/30 hover:bg-pink-500/25'
+              }`}
             >
-              @图{ref.tagIndex}
+              {refTag(ref)}
             </button>
           ))}
           <button
@@ -202,10 +206,10 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       {pickerAt && (
         <Menu
           at={pickerAt}
-          title={availableImageCards.length ? '选择画布上的图片卡片' : '画布上还没有图片卡片'}
+          title={availableImageCards.length ? '选择画布上的图片或视频素材' : '画布上还没有图片或上传卡片'}
           onClose={() => setPickerAt(null)}
           items={availableImageCards.map((img) => ({
-            label: `@图${img.tagIndex}  ${img.title}`,
+            label: `${cardTag(img)}  ${img.title}`,
             hint: refs.some((r) => r.cardId === img.id) ? '已添加' : undefined,
             disabled: refs.some((r) => r.cardId === img.id),
             onSelect: () => void attach(img),
@@ -223,12 +227,12 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
             value={card.prompt}
             onChange={handlePromptChange}
             onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
-            placeholder={card.mode === 'text_to_video' ? '描述镜头：画面、运镜、节奏…' : '描述镜头，输入 @ 引用参考图…'}
+            placeholder={card.mode === 'text_to_video' ? '描述镜头：画面、运镜、节奏…' : '描述镜头，输入 @ 引用参考素材…'}
           />
           {mentionQuery !== null && (
             <div className="absolute bottom-full left-0 mb-1.5 w-64 bg-canvas-surface border border-slate-700 rounded-xl p-1 shadow-2xl z-40">
               <div className="flex items-center gap-1 px-2 py-1 text-[11px] text-slate-400">
-                <AtSign className="w-3 h-3" /> 引用参考图
+                <AtSign className="w-3 h-3" /> 引用参考素材
               </div>
               {mentions.length > 0 ? (
                 mentions.map((img) => (
@@ -239,12 +243,12 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
                     onClick={() => selectMention(img)}
                     className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-xs hover:bg-slate-800"
                   >
-                    <span className="font-mono text-pink-300">@图{img.tagIndex}</span>
+                    <span className={`font-mono ${img.type === 'upload' ? 'text-amber-300' : 'text-pink-300'}`}>{cardTag(img)}</span>
                     <span className="truncate text-slate-300">{img.title}</span>
                   </button>
                 ))
               ) : (
-                <div className="px-2 py-1.5 text-[11px] text-slate-500">没有匹配的图片卡片</div>
+                <div className="px-2 py-1.5 text-[11px] text-slate-500">没有匹配的素材卡片</div>
               )}
             </div>
           )}

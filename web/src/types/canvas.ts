@@ -1,6 +1,10 @@
 import type { Protocol, ProviderId } from '../services/api.ts';
 
-export type CardType = 'image' | 'video' | 'text';
+export type CardType = 'image' | 'video' | 'text' | 'upload';
+/** What an upload card holds. */
+export type UploadKind = 'image' | 'video';
+/** Review state of an asset uploaded to a provider's asset library. */
+export type AssetStatus = 'Processing' | 'Active' | 'Failed';
 export type TextPreset = 'image_prompt' | 'video_prompt' | 'free';
 
 export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video';
@@ -25,7 +29,7 @@ export interface TaskAssetDto {
 export interface ReferenceItem {
   cardId: string;
   tagIndex: number;
-  role: 'reference_image' | 'first_frame' | 'last_frame';
+  role: 'reference_image' | 'reference_video' | 'first_frame' | 'last_frame';
   label: string;
   url?: string;
   localPath?: string;
@@ -52,6 +56,20 @@ export interface SpatialCard {
 
   /** Image/video cards: a text card whose output replaces this card's prompt. */
   promptSourceId?: string;
+
+  // Upload card fields: the picked file lives in the project (resultUrl); the remote
+  // fields are what a provider's upload API returned for it.
+  mediaKind?: UploadKind;
+  uploadName?: string;
+  /** Provider whose upload API the file goes to. */
+  uploadProvider?: ProviderId;
+  /** Asset library id (referenced as asset://<id> once status is Active). */
+  assetId?: string;
+  assetStatus?: AssetStatus;
+  assetError?: string;
+  /** Download URL from the file upload API, valid until fileExpiresAt (unix seconds). */
+  fileUrl?: string;
+  fileExpiresAt?: number;
 
   // Text card (LLM) fields: prompt is the user's idea, textOutput the model's answer
   textPreset?: TextPreset;

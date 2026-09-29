@@ -10,6 +10,7 @@ import {
   Film,
   Image as ImageIcon,
   LayoutGrid,
+  Upload,
   X,
 } from 'lucide-react';
 import type { SpatialCard } from '../../types/canvas.ts';
@@ -18,6 +19,7 @@ import { ACCENT, ACCENT_BY_CARD_TYPE, Button, IconButton, Section } from '../ui/
 import { ImageInspector } from './ImageInspector.tsx';
 import { VideoInspector } from './VideoInspector.tsx';
 import { TextInspector } from './TextInspector.tsx';
+import { UploadInspector } from './UploadInspector.tsx';
 
 export const INSPECTOR_WIDTH = 320;
 
@@ -25,6 +27,7 @@ const TYPE_META = {
   image: { label: '图片卡片', icon: ImageIcon },
   video: { label: '视频卡片', icon: Film },
   text: { label: '文本卡片', icon: FileText },
+  upload: { label: '上传卡片', icon: Upload },
 } as const;
 
 const ALIGN_ACTIONS: { type: AlignmentType; title: string; icon: React.ReactNode }[] = [
@@ -93,6 +96,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           <VideoInspector card={single} cards={cards} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
         )}
         {single?.type === 'text' && <TextInspector card={single} update={update} />}
+        {single?.type === 'upload' && <UploadInspector card={single} update={update} />}
 
         {!single && (
           <Section title="排列">

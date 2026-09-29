@@ -7,6 +7,7 @@ import {
 } from '../types/canvas.ts';
 import type { ModelOption } from './channelModels.ts';
 import { protocolOf } from './providers.ts';
+import { refTag } from './refTags.ts';
 import { inferVideoProvider } from './videoCompiler.ts';
 
 /**
@@ -81,10 +82,13 @@ export function videoModePatch(
   if (mode === 'text_to_video') {
     references = [];
   } else if (mode === 'first_last_frame') {
-    references = references.slice(0, 2).map((r, i) => ({ ...r, role: i === 0 ? 'first_frame' : 'last_frame' }));
+    references = references
+      .filter((r) => r.role !== 'reference_video')
+      .slice(0, 2)
+      .map((r, i) => ({ ...r, role: i === 0 ? 'first_frame' : 'last_frame' }));
     nextRatio = 'adaptive';
   } else {
-    references = references.map((r) => ({ ...r, role: 'reference_image' }));
+    references = references.map((r) => ({ ...r, role: r.role === 'reference_video' ? r.role : 'reference_image' }));
   }
   return { mode, ratio: nextRatio, references };
 }
@@ -113,7 +117,7 @@ export function videoModelPatch(card: SpatialCard, option: ModelOption): Partial
 /** Removing a reference also removes its @图N tags from the prompt. */
 export function removeReferencePatch(card: SpatialCard, refCardId: string): Partial<SpatialCard> {
   const ref = card.references?.find((r) => r.cardId === refCardId);
-  const prompt = ref ? card.prompt.replace(new RegExp(`@图${ref.tagIndex}\\b`, 'g'), '').replace(/\s{2,}/g, ' ').trim() : card.prompt;
+  const prompt = ref ? card.prompt.replace(new RegExp(`${refTag(ref)}\\b`, 'g'), '').replace(/\s{2,}/g, ' ').trim() : card.prompt;
   return { prompt, references: (card.references ?? []).filter((r) => r.cardId !== refCardId) };
 }
 

@@ -1,16 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, FileText, Film, Image as ImageIcon, Sparkles, Trash2 } from 'lucide-react';
-import type { CardType, SpatialCard } from '../types/canvas.ts';
+import { Copy, FileText, Film, Image as ImageIcon, Sparkles, Trash2, Upload } from 'lucide-react';
+import type { CardType, SpatialCard, UploadKind } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
 import { screenToWorld, type CanvasTransform, type Point } from '../engine/matrix.ts';
 import { connectCards, hasOutputPort } from '../engine/connections.ts';
 import { createCard, duplicateCards } from '../engine/cardFactory.ts';
 import { useHistory } from '../engine/useHistory.ts';
 import { removeReferencePatch } from '../engine/cardParams.ts';
+import { refTag } from '../engine/refTags.ts';
 import { unpackLayerDecomposition, unpackSequentialStoryboards } from '../engine/expansion.ts';
 import { ImageCardView } from './cards/ImageCardView.tsx';
 import { VideoCardView } from './cards/VideoCardView.tsx';
 import { TextCardView } from './cards/TextCardView.tsx';
+import { UploadCardView } from './cards/UploadCardView.tsx';
 import { PORT_Y, type ConnectHint } from './cards/CardPorts.tsx';
 import type { CardViewProps } from './cards/cardProps.ts';
 import { InspectorPanel, INSPECTOR_WIDTH } from './inspector/InspectorPanel.tsx';
@@ -36,6 +38,8 @@ interface SpatialCanvasProps {
 interface Ray {
   id: string;
   kind: 'reference' | 'prompt';
+  /** Colour of the source card: pink image, amber upload, emerald text. */
+  tone: 'pink' | 'amber' | 'emerald';
   pathData: string;
   midX: number;
   midY: number;
@@ -56,6 +60,12 @@ interface ContextMenuState {
   items: MenuEntry[];
   title?: string;
 }
+
+const RAY_COLORS = {
+  pink: { stroke: '#f472b6', pill: 'border-pink-500/60 text-pink-300' },
+  amber: { stroke: '#fbbf24', pill: 'border-amber-500/60 text-amber-300' },
+  emerald: { stroke: '#34d399', pill: 'border-emerald-500/60 text-emerald-300' },
+} as const;
 
 const bezier = (srcX: number, srcY: number, tgtX: number, tgtY: number) => {
   const dx = Math.max(80, Math.abs(tgtX - srcX) * 0.5);
@@ -143,7 +153,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   }, [transform, onViewportChange]);
 
   const selectedCards = useMemo(() => cards.filter((c) => selectedCardIds.has(c.id)), [cards, selectedCardIds]);
-  const availableImageCards = useMemo(() => cards.filter((c) => c.type === 'image'), [cards]);
+  // Cards a video card can take as references: generated images and uploaded images/videos.
+  const availableImageCards = useMemo(() => cards.filter((c) => c.type === 'image' || c.type === 'upload'), [cards]);
 
   const toWorld = useCallback(
     (clientX: number, clientY: number) => {
@@ -185,8 +196,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   );
 
   const addCard = useCallback(
-    (type: CardType, at?: Point) => {
-      const card = createCard(type, at ?? viewportCenter(), cardsRef.current);
+    (type: CardType, at?: Point, mediaKind?: UploadKind) => {
+      const card = createCard(type, at ?? viewportCenter(), cardsRef.current, mediaKind);
       editCards((prev) => [...prev, card]);
       setSelectedCardIds(new Set([card.id]));
     },
@@ -256,7 +267,9 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   const cardMenuItems = useCallback(
     (card: SpatialCard): MenuEntry[] => [
-      { label: '生成', icon: <Sparkles className="w-3.5 h-3.5" />, onSelect: () => onTriggerGenerate(card.id) },
+      ...(card.type === 'upload'
+        ? []
+        : [{ label: '生成', icon: <Sparkles className="w-3.5 h-3.5" />, onSelect: () => onTriggerGenerate(card.id) }]),
       { label: '复制一份', icon: <Copy className="w-3.5 h-3.5" />, hint: 'Ctrl+D', onSelect: () => duplicate([card]) },
       'separator',
       { label: '删除', icon: <Trash2 className="w-3.5 h-3.5" />, hint: 'Delete', danger: true, onSelect: () => deleteCards([card.id]) },
@@ -270,7 +283,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       setContextMenu({
         at: { x: clientX, y: clientY },
         title: '在这里添加',
-        items: ADD_CARD_ITEMS((type) => addCard(type, world)).concat(
+        items: ADD_CARD_ITEMS((type, kind) => addCard(type, world, kind)).concat(
           clipboardRef.current.length
             ? ['separator', { label: `粘贴 ${clipboardRef.current.length} 张卡片`, hint: 'Ctrl+V', onSelect: () => duplicate(clipboardRef.current, world) }]
             : []
@@ -394,10 +407,11 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         rays.push({
           id: `ref:${src.id}->${card.id}`,
           kind: 'reference',
+          tone: src.type === 'upload' ? 'amber' : 'pink',
           pathData: bezier(srcX, srcY, tgtX, tgtY),
           midX: (srcX + tgtX) / 2,
           midY: (srcY + tgtY) / 2,
-          label: `@图${ref.tagIndex}`,
+          label: refTag(ref),
           onRemove: () => handleUpdateCard(card.id, removeReferencePatch(card, src.id)),
         });
       });
@@ -409,6 +423,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         rays.push({
           id: `prompt:${textSrc.id}->${card.id}`,
           kind: 'prompt',
+          tone: 'emerald',
           pathData: bezier(srcX, srcY, tgtX, tgtY),
           midX: (srcX + tgtX) / 2,
           midY: (srcY + tgtY) / 2,
@@ -463,7 +478,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-canvas-bg text-slate-100 select-none">
-      <CanvasHeader onAdd={(type) => addCard(type)} onOpenSettings={() => setIsSettingsOpen(true)} projectSlot={headerSlot} />
+      <CanvasHeader onAdd={(type, kind) => addCard(type, undefined, kind)} onOpenSettings={() => setIsSettingsOpen(true)} projectSlot={headerSlot} />
 
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
       <ShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
@@ -499,25 +514,27 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         linkedPromptFor={linkedPromptFor}
       />
 
-      {/* Empty canvas: offer the three card types right away */}
+      {/* Empty canvas: offer the card types right away */}
       {cards.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
           <div className="pointer-events-auto w-[min(92vw,440px)] p-6 rounded-2xl bg-canvas-surface/90 border border-slate-800 text-center shadow-2xl shadow-black/40">
             <h2 className="text-sm font-semibold text-slate-100">从一张卡片开始</h2>
             <p className="mt-1 text-xs text-slate-500">每张卡片完成一步生成，卡片之间可以连线传递提示词和参考图。</p>
-            <div className="mt-5 grid grid-cols-3 gap-2">
+            <div className="mt-5 grid grid-cols-6 gap-2">
               {(
                 [
-                  ['text', '文本', '写提示词', <FileText key="t" className="w-5 h-5 text-emerald-400" />],
-                  ['image', '图片', '生成图片', <ImageIcon key="i" className="w-5 h-5 text-pink-400" />],
-                  ['video', '视频', '生成视频', <Film key="v" className="w-5 h-5 text-indigo-400" />],
+                  ['text', undefined, '文本', '写提示词', <FileText key="t" className="w-5 h-5 text-emerald-400" />],
+                  ['image', undefined, '图片', '生成图片', <ImageIcon key="i" className="w-5 h-5 text-pink-400" />],
+                  ['video', undefined, '视频', '生成视频', <Film key="v" className="w-5 h-5 text-indigo-400" />],
+                  ['upload', 'image', '上传图片', '本地图片', <Upload key="ui" className="w-5 h-5 text-amber-400" />],
+                  ['upload', 'video', '上传视频', '本地视频', <Upload key="uv" className="w-5 h-5 text-amber-400" />],
                 ] as const
-              ).map(([type, label, hint, icon]) => (
+              ).map(([type, kind, label, hint, icon], i) => (
                 <button
-                  key={type}
+                  key={`${type}-${kind ?? ''}`}
                   type="button"
-                  onClick={() => addCard(type)}
-                  className="flex flex-col items-center gap-1.5 py-4 rounded-xl border border-slate-800 bg-canvas-bg hover:border-slate-600 hover:bg-slate-900 transition"
+                  onClick={() => addCard(type, undefined, kind)}
+                  className={`${i < 3 ? 'col-span-2' : 'col-span-3'} flex flex-col items-center gap-1.5 py-4 rounded-xl border border-slate-800 bg-canvas-bg hover:border-slate-600 hover:bg-slate-900 transition`}
                 >
                   {icon}
                   <span className="text-xs font-semibold text-slate-200">{label}</span>
@@ -560,16 +577,14 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           <svg className="absolute top-0 left-0 w-[50000px] h-[50000px] pointer-events-none overflow-visible -translate-x-[25000px] -translate-y-[25000px]">
             <g transform="translate(25000, 25000)">
               {connectionRays.map((ray) => {
-                const isPrompt = ray.kind === 'prompt';
+                const color = RAY_COLORS[ray.tone];
                 return (
                   <g key={ray.id}>
-                    <path d={ray.pathData} fill="none" stroke={isPrompt ? '#34d399' : '#f472b6'} strokeOpacity={0.7} strokeWidth="2" />
+                    <path d={ray.pathData} fill="none" stroke={color.stroke} strokeOpacity={0.7} strokeWidth="2" />
                     {/* Label pill at curve center; its × disconnects */}
                     <foreignObject x={ray.midX - 36} y={ray.midY - 12} width={72} height={24}>
                       <div
-                        className={`pointer-events-auto flex items-center justify-center gap-1 w-full h-full bg-canvas-surface border rounded-full text-[11px] font-mono ${
-                          isPrompt ? 'border-emerald-500/60 text-emerald-300' : 'border-pink-500/60 text-pink-300'
-                        }`}
+                        className={`pointer-events-auto flex items-center justify-center gap-1 w-full h-full bg-canvas-surface border rounded-full text-[11px] font-mono ${color.pill}`}
                       >
                         <span>{ray.label}</span>
                         <button
@@ -589,7 +604,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
               {/* Line following the cursor while connecting */}
               {dragPath && (
-                <path d={dragPath} fill="none" stroke={dragSource?.type === 'text' ? '#34d399' : '#f472b6'} strokeWidth="2" strokeDasharray="6 4" />
+                <path d={dragPath} fill="none" stroke={RAY_COLORS[dragSource?.type === 'text' ? 'emerald' : dragSource?.type === 'upload' ? 'amber' : 'pink'].stroke} strokeWidth="2" strokeDasharray="6 4" />
               )}
             </g>
           </svg>
@@ -617,6 +632,9 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                     onStartConnect={(e) => startConnect(card, e)}
                   />
                 );
+              }
+              if (card.type === 'upload') {
+                return <UploadCardView key={card.id} {...common} onStartConnect={(e) => startConnect(card, e)} />;
               }
               if (card.type === 'image') {
                 return (

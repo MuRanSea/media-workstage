@@ -54,6 +54,9 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   What an MJ Proxy Provider binds as its models: `MID_JOURNEY` or `NIJI_JOURNEY`, sent as the request's `botType`. Relays like new-api list billing model names (`mj_imagine`) instead; those send no `botType`, leaving the proxy's default.
   _Avoid_: MJ model version (`--v` / `--niji` stay prompt parameters)
 
+- **Upload Card (上传卡片)**:
+  A canvas card holding a user-picked image or video (`type: 'upload'`, `mediaKind`). The file is saved into the project (`assets/uploads/`) and can be sent to a Provider's platform for a **Platform Asset ID** (素材库 `asset://<id>`, usable once review turns `Active`) and/or a **File URL** (7-day download link). Wired to a video card it becomes a reference: images as `reference_image` (`@图N`), videos as `reference_video` (`@视频N`, Ark only, multi-reference mode). A video reference must be uploaded first; images fall back to the saved file.
+
 - **LocalAssetStore (本地资产库)**:
   The local filesystem repository responsible for caching uploaded reference assets, downloading finished generation outputs, and serving them via local HTTP endpoints.
 

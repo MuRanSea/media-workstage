@@ -13,6 +13,11 @@ export function setActiveProjectId(id: string | null): void {
   activeProjectId = id;
 }
 
+/** The project whose asset route `assetUrl` currently resolves against. */
+export function getActiveProjectId(): string | null {
+  return activeProjectId;
+}
+
 /** The stored path for a task asset: `/assets/<local_path>`, or its remote URL. */
 export function assetStoredPath(asset: TaskAssetDto | undefined): string | undefined {
   if (!asset) return undefined;

@@ -1,6 +1,9 @@
 import { resolveVideoModelDef, type SpatialCard, type ReferenceItem, type VideoTaskMode } from '../types/canvas.ts';
 import type { CreateTaskPayload } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
+import { refNoun } from './refTags.ts';
+import { uploadReference } from './uploadRefs.ts';
+import type { Protocol } from '../services/api.ts';
 
 export interface VideoCompilationInput {
   card: SpatialCard;
@@ -24,8 +27,13 @@ function isRemoteOrDataURI(str: string): boolean {
  */
 export function resolveReferenceAsset(
   ref: ReferenceItem,
-  allCards: SpatialCard[] = []
+  allCards: SpatialCard[] = [],
+  protocol: Protocol = 'ark'
 ): { url?: string; localPath?: string; remoteUrl?: string } {
+  // An upload card is the source of truth for its own file: uploaded id/URL, else the saved image.
+  const uploadCard = allCards.find((c) => c.id === ref.cardId && c.type === 'upload');
+  if (uploadCard) return uploadReference(uploadCard, protocol);
+
   // 1. If ref has explicit localPath
   if (ref.localPath) {
     if (isRemoteOrDataURI(ref.localPath)) {
@@ -109,7 +117,7 @@ export function compileVideoTaskPayload(
   }
   if (mode === 'text_to_video') {
     references = [];
-    compiledPrompt = compiledPrompt.replace(/@?图\d+\s*/g, '').trim();
+    compiledPrompt = compiledPrompt.replace(/@?(图|视频)\d+\s*/g, '').trim();
   } else if (mode === 'first_last_frame') {
     if (references.length === 0) {
       throw new Error('first_last_frame mode requires at least 1 reference image');
@@ -133,7 +141,7 @@ export function compileVideoTaskPayload(
     }
     references = references.map((ref) => ({
       ...ref,
-      role: 'reference_image',
+      role: ref.role === 'reference_video' ? 'reference_video' : 'reference_image',
     }));
   }
 
@@ -148,9 +156,12 @@ export function compileVideoTaskPayload(
     remote_url?: string;
   }> = [];
 
-  references.forEach((ref, idx) => {
-    const cloudIndex = idx + 1;
-    const resolved = resolveReferenceAsset(ref, allCards);
+  // Images and videos are numbered separately: 图1, 图2, … and 视频1, …
+  const counters = { 图: 0, 视频: 0 };
+  references.forEach((ref) => {
+    const noun = refNoun(ref.role);
+    const cloudIndex = ++counters[noun];
+    const resolved = resolveReferenceAsset(ref, allCards, protocol);
 
     compiledReferenceAssets.push({
       card_id: ref.cardId,
@@ -162,11 +173,11 @@ export function compileVideoTaskPayload(
       remote_url: resolved.remoteUrl,
     });
 
-    const tagRegex = new RegExp(`@?图${ref.tagIndex}\\b`, 'g');
-    compiledPrompt = compiledPrompt.replace(tagRegex, `图${cloudIndex}`);
+    const tagRegex = new RegExp(`@?${noun}${ref.tagIndex}\\b`, 'g');
+    compiledPrompt = compiledPrompt.replace(tagRegex, `${noun}${cloudIndex}`);
   });
 
-  compiledPrompt = compiledPrompt.replace(/@图(\d+)/g, '图$1').trim();
+  compiledPrompt = compiledPrompt.replace(/@(图|视频)(\d+)/g, '$1$2').trim();
 
   const params: Record<string, unknown> = {
     resolution: card.resolution ?? (isMiniMax ? '1080P' : '720p'),

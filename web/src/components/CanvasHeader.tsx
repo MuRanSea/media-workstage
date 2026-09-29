@@ -1,20 +1,23 @@
 import React from 'react';
-import { FileText, Film, Image as ImageIcon, Plus, Settings, Sparkles } from 'lucide-react';
-import type { CardType } from '../types/canvas.ts';
+import { FileText, Film, Image as ImageIcon, Plus, Settings, Sparkles, Upload } from 'lucide-react';
+import type { CardType, UploadKind } from '../types/canvas.ts';
 import { navigate } from '../services/router.ts';
 import { IconButton, MenuButton, type MenuEntry } from './ui/index.ts';
 
 interface CanvasHeaderProps {
-  onAdd: (type: CardType) => void;
+  onAdd: (type: CardType, mediaKind?: UploadKind) => void;
   onOpenSettings: () => void;
   /** Project name, save status and switcher. */
   projectSlot?: React.ReactNode;
 }
 
-export const ADD_CARD_ITEMS = (onAdd: (type: CardType) => void): MenuEntry[] => [
+export const ADD_CARD_ITEMS = (onAdd: (type: CardType, mediaKind?: UploadKind) => void): MenuEntry[] => [
   { label: '文本卡片', hint: '让模型写提示词', icon: <FileText className="w-4 h-4 text-emerald-400" />, onSelect: () => onAdd('text') },
   { label: '图片卡片', hint: '文字生成图片', icon: <ImageIcon className="w-4 h-4 text-pink-400" />, onSelect: () => onAdd('image') },
   { label: '视频卡片', hint: '文字或图片生成视频', icon: <Film className="w-4 h-4 text-indigo-400" />, onSelect: () => onAdd('video') },
+  'separator',
+  { label: '上传图片', hint: '本地图片，可传素材库', icon: <Upload className="w-4 h-4 text-amber-400" />, onSelect: () => onAdd('upload', 'image') },
+  { label: '上传视频', hint: '本地视频，得到素材 ID / 链接', icon: <Upload className="w-4 h-4 text-amber-400" />, onSelect: () => onAdd('upload', 'video') },
 ];
 
 export const CanvasHeader: React.FC<CanvasHeaderProps> = ({ onAdd, onOpenSettings, projectSlot }) => (
