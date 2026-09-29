@@ -18,6 +18,7 @@ import { ACCENT, ACCENT_BY_CARD_TYPE, Button, IconButton, Section } from '../ui/
 import { ImageInspector } from './ImageInspector.tsx';
 import { VideoInspector } from './VideoInspector.tsx';
 import { TextInspector } from './TextInspector.tsx';
+import { ResultSnapshotView } from './ResultSnapshotView.tsx';
 
 export const INSPECTOR_WIDTH = 320;
 
@@ -26,6 +27,8 @@ const TYPE_META = {
   video: { label: '视频卡片', icon: Film },
   text: { label: '文本卡片', icon: FileText },
 } as const;
+
+const ROLE_LABEL = { generation: '生成卡', result: '结果卡' } as const;
 
 const ALIGN_ACTIONS: { type: AlignmentType; title: string; icon: React.ReactNode }[] = [
   { type: 'left', title: '左对齐', icon: <AlignLeft className="w-4 h-4" /> },
@@ -74,7 +77,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             <Icon className={`w-4 h-4 ${ACCENT[ACCENT_BY_CARD_TYPE[single.type]].text}`} />
             <div className="flex-1 min-w-0">
               <div className="text-xs font-semibold text-slate-100 truncate">{single.title}</div>
-              <div className="text-[11px] text-slate-500">{meta!.label}</div>
+              <div className="text-[11px] text-slate-500">
+                {meta!.label}
+                {single.role && ` · ${ROLE_LABEL[single.role]}`}
+              </div>
             </div>
           </>
         ) : (
@@ -86,13 +92,20 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       </header>
 
       <div className="flex-1 overflow-y-auto px-4">
-        {single?.type === 'image' && (
-          <ImageInspector card={single} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
+        {single?.role === 'result' ? (
+          // Result cards show what they were generated with; nothing to edit.
+          <ResultSnapshotView card={single} />
+        ) : (
+          <>
+            {single?.type === 'image' && (
+              <ImageInspector card={single} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
+            )}
+            {single?.type === 'video' && (
+              <VideoInspector card={single} cards={cards} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
+            )}
+            {single?.type === 'text' && <TextInspector card={single} update={update} />}
+          </>
         )}
-        {single?.type === 'video' && (
-          <VideoInspector card={single} cards={cards} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
-        )}
-        {single?.type === 'text' && <TextInspector card={single} update={update} />}
 
         {!single && (
           <Section title="排列">

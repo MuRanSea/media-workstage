@@ -89,7 +89,14 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   }, []);
 
   // Generation cards whose submit request is in flight: a double click must not submit twice.
+  // The ref guards synchronously; the state disables the button.
   const submittingRef = useRef(new Set<string>());
+  const [submittingIds, setSubmittingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const setSubmitting = (cardId: string, on: boolean) => {
+    if (on) submittingRef.current.add(cardId);
+    else submittingRef.current.delete(cardId);
+    setSubmittingIds(new Set(submittingRef.current));
+  };
 
   // Tasks that finished while the project was closed never reached us over SSE.
   useEffect(() => {
@@ -146,13 +153,13 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
 
   const handleTriggerGenerate = async (cardId: string) => {
     const targetCard = cards.find((c) => c.id === cardId);
-    if (!targetCard) return;
+    // Result cards are finished outputs: only their generation card runs again.
+    if (!targetCard || targetCard.role === 'result') return;
     // Also reached from the context menu, which does not know the provider is gone.
     if (isProviderMissing(providers, targetCard.provider)) {
       toast(MISSING_PROVIDER_HINT, { tone: 'error' });
       return;
     }
-    if (targetCard.role === 'result') return;
     if (targetCard.type === 'text') {
       await handleGenerateText(targetCard);
       return;
@@ -225,15 +232,19 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
    */
   const submitGeneration = async (card: SpatialCard) => {
     if (submittingRef.current.has(card.id)) return;
-    submittingRef.current.add(card.id);
+    setSubmitting(card.id, true);
     const setError = (errorMessage: string | undefined) =>
       setCards((prev) => prev.map((c) => (c.id === card.id ? { ...c, errorMessage } : c)));
-    setError(undefined);
     try {
       // A connected text card supplies the prompt.
       const submitted = withEffectivePrompt(card, cards);
+      if (!submitted.prompt.trim()) throw new Error('请先填写提示词');
       const accepted = await apiCreateTask({ ...compileCardImagePayload(submitted), project_id: projectId });
-      setCards((prev) => addPendingResult(prev, submitted, accepted, measuredHeight));
+      setCards((prev) =>
+        addPendingResult(prev, submitted, accepted, measuredHeight).map((c) =>
+          c.id === card.id && c.errorMessage ? { ...c, errorMessage: undefined } : c
+        )
+      );
 
       // The task may have moved on before its result card existed.
       const latest =
@@ -243,7 +254,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     } catch (err) {
       setError((err as Error).message || '提交任务失败');
     } finally {
-      submittingRef.current.delete(card.id);
+      setSubmitting(card.id, false);
     }
   };
 
@@ -252,6 +263,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       cards={cards}
       setCards={setCards}
       onTriggerGenerate={handleTriggerGenerate}
+      submittingIds={submittingIds}
       initialViewport={initialViewport}
       onViewportChange={onViewportChange}
       headerSlot={

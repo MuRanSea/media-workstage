@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addPendingResult, applyTaskToCards, resultCardsOf } from './resultCards.ts';
+import { addPendingResult, applyTaskToCards, estimateCardHeight, runsInProgress, resultCardsOf } from './resultCards.ts';
 import { createCard } from './cardFactory.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 import type { BackendTaskResponse } from '../services/api.ts';
@@ -90,6 +90,28 @@ describe('addPendingResult', () => {
     const g = gen();
     const cards = addPendingResult([g], g, task()).map((c) => (c.id === 'g1' ? { ...c, prompt: '改过了' } : c));
     expect(results(cards)[0].snapshot?.prompt).toBe('雨夜霓虹街道');
+  });
+
+  it('keeps the snapshot params and seed when the generation card is re-tuned afterwards', () => {
+    const g = gen({ imageRatioPreset: '9:16', seedImage: 42 });
+    const cards = addPendingResult([g], g, task()).map((c) =>
+      c.id === 'g1' ? { ...c, imageRatioPreset: '1:1' as const, seedImage: 7, model: 'other', provider: 'x' } : c
+    );
+    expect(results(cards)[0].snapshot).toMatchObject({
+      prompt: '雨夜霓虹街道',
+      provider: 'ark',
+      model: g.model,
+      params: { imageRatioPreset: '9:16' },
+      seed: 42,
+    });
+  });
+
+  it('gives each run the snapshot it was submitted with', () => {
+    const g = gen();
+    let cards = addPendingResult([g], g, task({ id: 'task-1' }));
+    const edited = { ...cards[0], prompt: '晴天海边' };
+    cards = addPendingResult([edited, ...cards.slice(1)], edited, task({ id: 'task-2' }));
+    expect(results(cards).map((c) => c.snapshot?.prompt)).toEqual(['雨夜霓虹街道', '晴天海边']);
   });
 
   it('reconciles with a task that already finished before the placeholder existed', () => {
@@ -202,5 +224,36 @@ describe('applyTaskToCards', () => {
     const legacy: SpatialCard = { ...gen({ id: 'old' }), role: undefined, tagIndex: 1, taskId: 'task-9', status: 'running' };
     const cards = applyTaskToCards([legacy], task({ id: 'task-9', status: 'failed', error_code: 'X' }));
     expect(cards[0]).toMatchObject({ status: 'failed', errorMessage: 'X' });
+  });
+});
+
+describe('runsInProgress', () => {
+  it('counts the queued and running result cards pointing at a generation card', () => {
+    const g = gen();
+    let cards = addPendingResult([g], g, task({ id: 'task-1' }));
+    cards = addPendingResult(cards, g, task({ id: 'task-2' }));
+    cards = addPendingResult(cards, g, task({ id: 'task-3' }));
+    expect(runsInProgress(cards, 'g1')).toBe(3);
+
+    cards = applyTaskToCards(cards, task({ id: 'task-1', status: 'running', progress: 20 }));
+    cards = applyTaskToCards(cards, task({ id: 'task-2', status: 'succeeded', assets: [base('task-2', 'b.png')] }));
+    cards = applyTaskToCards(cards, task({ id: 'task-3', status: 'failed', error_message: 'x' }));
+    expect(runsInProgress(cards, 'g1')).toBe(1);
+  });
+
+  it('is zero with nothing running, and ignores other generation cards', () => {
+    const g = gen();
+    const other = gen({ id: 'g2', x: 3000 });
+    const cards = addPendingResult([g, other], other, task({ id: 'task-9' }));
+    expect(runsInProgress(cards, 'g1')).toBe(0);
+    expect(runsInProgress(cards, 'g2')).toBe(1);
+  });
+});
+
+describe('estimateCardHeight', () => {
+  it('gives generation cards no preview area', () => {
+    const g = gen({ imageRatioPreset: '9:16' });
+    expect(estimateCardHeight(g)).toBeLessThan(estimateCardHeight({ ...g, role: 'result' }));
+    expect(estimateCardHeight(g)).toBe(estimateCardHeight({ ...g, imageRatioPreset: '16:9' }));
   });
 });

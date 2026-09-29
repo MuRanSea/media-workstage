@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Image as ImageIcon, Layers, LayoutGrid, Maximize2, Sparkles } from 'lucide-react';
+import { Image as ImageIcon, Layers, LayoutGrid, Loader2, Maximize2, Sparkles } from 'lucide-react';
 import { IMAGE_MODELS } from '../../types/canvas.ts';
 import {
   MISSING_PROVIDER_HINT,
@@ -33,6 +33,10 @@ interface ImageCardViewProps extends CardViewProps {
   linkedPrompt?: { title: string; text: string };
   onUnlinkPrompt?: () => void;
   onStartConnect?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  /** Generation cards: the submit request is in flight. */
+  isSubmitting?: boolean;
+  /** Generation cards: result cards still queued or running. */
+  runsInProgress?: number;
 }
 
 export const ImageCardView: React.FC<ImageCardViewProps> = ({
@@ -50,6 +54,8 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
   linkedPrompt,
   onUnlinkPrompt,
   onStartConnect,
+  isSubmitting = false,
+  runsInProgress = 0,
 }) => {
   const [selectedLayerIndex, setSelectedLayerIndex] = useState<number | null>(null);
   const [loadedAspect, setLoadedAspect] = useState<number>();
@@ -76,6 +82,49 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         ? assetStoredPath(baseAsset)
         : card.resultUrl;
   const displayUrl = assetUrl(displayPath);
+
+  const promptInput = linkedPrompt ? (
+    <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
+  ) : (
+    <AutoTextarea
+      accent="pink"
+      value={card.prompt}
+      onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
+      placeholder="描述画面：主体、场景、风格、光线…"
+    />
+  );
+
+  if (isGeneration) {
+    return (
+      <CardShell
+        card={card}
+        accent="pink"
+        icon={<ImageIcon className="w-4 h-4" />}
+        isSelected={isSelected}
+        connectHint={connectHint}
+        onSelect={onSelect}
+        onStartDrag={onStartDrag}
+        onRename={(title) => onUpdateCard(card.id, { title })}
+        badges={runsInProgress > 0 && <RunsBadge count={runsInProgress} />}
+        menuItems={menuItems}
+        ports={<InputPort />}
+      >
+        <SummaryRow model={modelLabel} spec={imageSizeSummary(card)} />
+        {promptInput}
+        {card.errorMessage && <ErrorBox message={card.errorMessage} />}
+        <Button
+          variant="primary"
+          accent="pink"
+          block
+          disabled={isSubmitting || missing || !canGenerate}
+          onClick={() => onTriggerGenerate(card.id)}
+          icon={!missing && canGenerate ? <Sparkles className="w-3.5 h-3.5" /> : undefined}
+        >
+          {missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个服务商还不支持生图' : '生成'}
+        </Button>
+      </CardShell>
+    );
+  }
 
   return (
     <CardShell
@@ -120,7 +169,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
           <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-gradient-to-br from-pink-950/30 via-slate-900 to-slate-950 text-center">
             <ImageIcon className="w-6 h-6 text-pink-400/60" />
             <span className="text-[11px] text-slate-500">
-              {isGeneration ? '每次生成的结果会出现在右侧' : isResult ? '等待生成结果' : '生成结果会显示在这里'}
+              {isResult ? '等待生成结果' : '生成结果会显示在这里'}
             </span>
           </div>
         )}
@@ -162,16 +211,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         card.errorMessage && <ErrorBox message={card.errorMessage} />
       ) : (
         <>
-          {linkedPrompt ? (
-            <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
-          ) : (
-            <AutoTextarea
-              accent="pink"
-              value={card.prompt}
-              onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
-              placeholder="描述画面：主体、场景、风格、光线…"
-            />
-          )}
+          {promptInput}
 
           {card.errorMessage && <ErrorBox message={card.errorMessage} />}
 
@@ -183,10 +223,21 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
             onClick={() => onTriggerGenerate(card.id)}
             icon={!isGenerating && canGenerate ? <Sparkles className="w-3.5 h-3.5" /> : undefined}
           >
-            {isGenerating ? '生成中…' : missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个服务商还不支持生图' : isGeneration ? '生成' : card.resultUrl ? '重新生成' : '生成图片'}
+            {isGenerating ? '生成中…' : missing ? MISSING_PROVIDER_HINT : !canGenerate ? '这个服务商还不支持生图' : card.resultUrl ? '重新生成' : '生成图片'}
           </Button>
         </>
       )}
     </CardShell>
   );
 };
+
+/** "N 个生成中" on a generation card while its runs are queued or running. */
+const RunsBadge: React.FC<{ count: number }> = ({ count }) => (
+  <span
+    title="这张卡片还有生成任务在进行"
+    className="flex-shrink-0 flex items-center gap-1 text-[11px] px-1.5 py-px rounded-md border border-pink-500/30 bg-pink-500/10 text-pink-200"
+  >
+    <Loader2 className="w-3 h-3 animate-spin" />
+    {count} 个生成中
+  </span>
+);

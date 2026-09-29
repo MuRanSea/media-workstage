@@ -8,6 +8,7 @@ import { createCard, duplicateCards } from '../engine/cardFactory.ts';
 import { useHistory } from '../engine/useHistory.ts';
 import { removeReferencePatch } from '../engine/cardParams.ts';
 import { unpackLayerDecomposition, unpackSequentialStoryboards } from '../engine/expansion.ts';
+import { runsInProgress } from '../engine/resultCards.ts';
 import { ImageCardView } from './cards/ImageCardView.tsx';
 import { VideoCardView } from './cards/VideoCardView.tsx';
 import { TextCardView } from './cards/TextCardView.tsx';
@@ -25,6 +26,8 @@ interface SpatialCanvasProps {
   cards: SpatialCard[];
   setCards: React.Dispatch<React.SetStateAction<SpatialCard[]>>;
   onTriggerGenerate: (cardId: string) => void;
+  /** Generation cards whose submit request is in flight. */
+  submittingIds?: ReadonlySet<string>;
   /** Viewport to open with (a saved project's). */
   initialViewport?: CanvasTransform;
   /** Called whenever the viewport pans or zooms. */
@@ -76,6 +79,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   cards,
   setCards,
   onTriggerGenerate,
+  submittingIds,
   initialViewport,
   onViewportChange,
   headerSlot,
@@ -650,6 +654,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                     linkedPrompt={linkedPromptFor(card)}
                     onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
                     onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
+                    isSubmitting={!!submittingIds?.has(card.id)}
+                    runsInProgress={card.role === 'generation' ? runsInProgress(cards, card.id) : 0}
                   />
                 );
               }

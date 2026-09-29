@@ -30,6 +30,8 @@ export function estimateCardHeight(card: SpatialCard): number {
   const aspect = requestedAspect(card) ?? 16 / 9;
   const preview = Math.min((card.width - PADDING) / aspect, PREVIEW_MAX_HEIGHT);
   if (card.role === 'result') return HEADER + PADDING + preview;
+  // Prompt, summary row and the Generate button; no preview.
+  if (card.role === 'generation') return HEADER + PADDING + 150;
   if (card.type === 'text') return 300;
   return HEADER + PADDING + preview + 200;
 }
@@ -46,6 +48,11 @@ export function resultCardsOf(cards: SpatialCard[], generationId: string): Spati
   return cards.filter((c) => c.role === 'result' && c.sourceId === generationId);
 }
 
+/** Runs of a generation card still in progress: its queued or running result cards. */
+export function runsInProgress(cards: SpatialCard[], generationId: string): number {
+  return resultCardsOf(cards, generationId).filter((c) => c.status === 'queued' || c.status === 'running').length;
+}
+
 /** What `submitted` (the card as sent, prompt already resolved) was generated with. */
 export function snapshotOf(submitted: SpatialCard): ResultSnapshot {
   const params: ResultSnapshot['params'] = {};
@@ -58,6 +65,7 @@ export function snapshotOf(submitted: SpatialCard): ResultSnapshot {
     provider: submitted.provider,
     model: submitted.model,
     params,
+    seed: submitted.seedImage,
   };
 }
 
