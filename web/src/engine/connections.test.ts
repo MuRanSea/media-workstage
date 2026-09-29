@@ -62,7 +62,7 @@ describe('connectCards', () => {
       [text, { ...text, id: 't2' }, '文本卡片之间'],
       [img, img, '不能连接到自己'],
       [img, text, '没有输入端口'],
-      [video(), img, '没有输出端口'],
+      [video(), img, '视频只能连到视频卡片'],
       [img, full, '最多 1 张'],
       [text, { ...img, promptSourceId: 't1' }, '已经连接'],
     ] as const) {
@@ -147,5 +147,38 @@ describe('reference images for Midjourney', () => {
 
     const derived = mj({ derivedFrom: { cardId: 'g', taskId: 't', actionId: 'a', label: 'U1', operation: 'action' } });
     expect(connectCards(done, derived).ok).toBe(false);
+  });
+});
+
+describe('reference videos', () => {
+  const clip = card({ id: 'v0', type: 'video', tagIndex: 4, title: '上一段镜头', provider: 'ark', model: 'doubao-seedance-2-5-260628' });
+
+  it('adds a video as a reference video of a Seedance card and tags the prompt', () => {
+    const res = connectCards(clip, video({ mode: 'text_to_video' }));
+    expect(res).toEqual({
+      ok: true,
+      patch: {
+        mode: 'all_modal',
+        prompt: '镜头推进 @视频4',
+        videoReferences: [{ cardId: 'v0', tagIndex: 4, role: 'reference_video', label: '上一段镜头' }],
+      },
+    });
+  });
+
+  it('refuses other targets, other protocols, first/last frame, duplicates and the model limit', () => {
+    const connected = { cardId: 'v0', tagIndex: 4, role: 'reference_video' as const, label: 'x' };
+    const three = [1, 2, 3].map((n) => ({ ...connected, cardId: `v${n + 10}` }));
+    for (const [tgt, reason] of [
+      [img, '视频只能连到视频卡片'],
+      [video({ provider: 'minimax', model: 'MiniMax-H3' }), '只有火山方舟'],
+      [video({ mode: 'first_last_frame' }), '多图参考'],
+      [video({ videoReferences: [connected] }), '已经连接'],
+      [video({ model: 'doubao-seedance-2-0-260128', videoReferences: three }), '最多 3 个参考视频'],
+      [clip, '不能连接到自己'],
+    ] as const) {
+      const res = connectCards(clip, tgt);
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toContain(reason);
+    }
   });
 });

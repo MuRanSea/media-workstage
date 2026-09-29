@@ -121,15 +121,27 @@ export function duplicateCards(source: SpatialCard[], at: Point, existing: Spati
       .map((r) =>
         idMap.has(r.cardId) ? { ...r, cardId: idMap.get(r.cardId)!, tagIndex: tagMap.get(r.tagIndex) ?? r.tagIndex } : r
       );
+    if (c.videoReferences) {
+      const videoReferences = c.videoReferences
+        .filter((r) => idMap.has(r.cardId))
+        .map((r) => ({ ...r, cardId: idMap.get(r.cardId)!, tagIndex: tagMap.get(r.tagIndex) ?? r.tagIndex }));
+      copy.videoReferences = videoReferences.length ? videoReferences : undefined;
+    }
     if (c.derivedFrom && idMap.has(c.derivedFrom.cardId)) {
       copy.derivedFrom = { ...c.derivedFrom, cardId: idMap.get(c.derivedFrom.cardId)! };
     }
     copy.promptSourceId = c.promptSourceId && idMap.has(c.promptSourceId) ? idMap.get(c.promptSourceId) : undefined;
-    // Rewrite @图N in the prompt for references that were remapped.
+    // Rewrite @图N / @视频N in the prompt for references that were remapped.
     if (c.references?.length) {
-      copy.prompt = c.prompt.replace(/@图(\d+)/g, (m, n) => {
+      copy.prompt = copy.prompt.replace(/@图(\d+)/g, (m, n) => {
         const ref = c.references!.find((r) => r.tagIndex === Number(n));
         return ref && idMap.has(ref.cardId) ? `@图${tagMap.get(ref.tagIndex)}` : m;
+      });
+    }
+    if (c.videoReferences?.length) {
+      copy.prompt = copy.prompt.replace(/@视频(\d+)/g, (m, n) => {
+        const ref = c.videoReferences!.find((r) => r.tagIndex === Number(n));
+        return ref && idMap.has(ref.cardId) ? `@视频${tagMap.get(ref.tagIndex)}` : m;
       });
     }
     return copy;
@@ -145,9 +157,13 @@ export function removeCards(cards: SpatialCard[], gone: ReadonlySet<string>): Sp
     .filter((c) => !gone.has(c.id))
     .map((c) => {
       const references = isDescribeCard(c) ? c.references : c.references?.filter((r) => !gone.has(r.cardId));
+      const kept = c.videoReferences?.filter((r) => !gone.has(r.cardId));
+      const videoReferences = kept?.length ? kept : undefined;
       const promptSourceId = c.promptSourceId && gone.has(c.promptSourceId) ? undefined : c.promptSourceId;
-      return references?.length !== c.references?.length || promptSourceId !== c.promptSourceId
-        ? { ...c, references, promptSourceId }
+      return references?.length !== c.references?.length ||
+        videoReferences?.length !== c.videoReferences?.length ||
+        promptSourceId !== c.promptSourceId
+        ? { ...c, references, videoReferences, promptSourceId }
         : c;
     });
 }

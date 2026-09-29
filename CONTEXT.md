@@ -61,6 +61,13 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   A card created by running an operation on another card's result — a `Result action` (an image card) or Midjourney Describe (a text card). It records its source card and source task (`derivedFrom`), is linked to the source by a labelled line, and keeps the source's provider and settings.
   _Avoid_: child card, copy (a copy is "复制一份" and runs the same settings from scratch)
 
+- **Reference video (参考视频)**:
+  Another video card's result, connected by a line to a Seedance video card (Ark protocol, `all_modal`) and tagged `@视频N` in its prompt (compiled to `视频1`, `视频2`, …). Seedance takes reference videos only as public URLs, so it is sent by the provider's result URL, which Ark keeps valid for 24 hours; after that the task is refused rather than sent. Shares the model's video limit with asset-library videos.
+
+- **Asset library reference (素材库参考)**:
+  A video card's reference to an item in the Ark asset library (素材库 & 虚拟人像库), entered by its asset ID and sent to Seedance as `asset://<ASSET_ID>` in the image, video or audio slot. Ark protocol and `all_modal` only. The prompt names it by modality and position (`视频1`, `音频1`, `图片N` after the connected image cards), never by the ID; asset images share the image limit with connected image cards.
+  _Avoid_: asset (alone — collides with `TaskAsset` and `LocalAssetStore`)
+
 - **LocalAssetStore (本地资产库)**:
   The local filesystem repository responsible for caching uploaded reference assets, downloading finished generation outputs, and serving them via local HTTP endpoints.
 

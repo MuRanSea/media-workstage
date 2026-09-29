@@ -1,6 +1,7 @@
 import { resolveVideoModelDef, type ReferenceItem, type SpatialCard } from '../types/canvas.ts';
 import { inferVideoProvider } from './videoCompiler.ts';
 import { protocolOf } from './providers.ts';
+import { kindLimit, referenceCount } from './cardParams.ts';
 
 export type ConnectResult =
   | { ok: true; patch: Partial<SpatialCard> }
@@ -8,7 +9,7 @@ export type ConnectResult =
 
 /** Which card types expose an output port (can be dragged from). */
 export function hasOutputPort(card: SpatialCard): boolean {
-  return card.type === 'image' || card.type === 'text';
+  return card.type === 'image' || card.type === 'text' || card.type === 'video';
 }
 
 /** Which card types expose an input port (can be dropped on). */
@@ -22,6 +23,7 @@ export function hasInputPort(card: SpatialCard): boolean {
  *   text  → image/video : the text card's output becomes the target's prompt
  *   image → video       : the image becomes a reference (as "+ 引入" does)
  *   image → Midjourney image : the image becomes a reference image (垫图)
+ *   video → Seedance video   : the video becomes a reference video
  */
 export function connectCards(source: SpatialCard, target: SpatialCard): ConnectResult {
   if (source.id === target.id) return { ok: false, reason: '不能连接到自己' };
@@ -43,7 +45,32 @@ export function connectCards(source: SpatialCard, target: SpatialCard): ConnectR
     return attachImageToVideo(source, target);
   }
 
-  return { ok: false, reason: '视频卡片没有输出端口' };
+  if (target.type !== 'video') return { ok: false, reason: '视频只能连到视频卡片，作为参考视频' };
+  return attachVideoToVideo(source, target);
+}
+
+/**
+ * A generated video as a reference video of a Seedance card, tagged @视频N in the prompt.
+ * Reference videos only go with 多图参考; a text-only card switches to it.
+ */
+function attachVideoToVideo(source: SpatialCard, video: SpatialCard): ConnectResult {
+  const provider = video.provider ?? inferVideoProvider(video.model);
+  if (protocolOf(provider) !== 'ark') return { ok: false, reason: '只有火山方舟的 Seedance 模型支持参考视频' };
+  const refs = video.videoReferences ?? [];
+  if (refs.some((r) => r.cardId === source.id)) return { ok: false, reason: '已经连接过了' };
+  const mode = video.mode ?? 'all_modal';
+  if (mode === 'first_last_frame') return { ok: false, reason: '参考视频需要「多图参考」模式，请先切换模式' };
+
+  const def = resolveVideoModelDef(protocolOf(provider), video.model);
+  const limit = kindLimit(def, 'video');
+  if (referenceCount(video, 'video') >= limit) {
+    return { ok: false, reason: `${def.name} 最多 ${limit} 个参考视频（含素材库视频）` };
+  }
+
+  const newRef: ReferenceItem = { cardId: source.id, tagIndex: source.tagIndex, role: 'reference_video', label: source.title.slice(0, 10) };
+  const tag = `@视频${source.tagIndex}`;
+  const prompt = video.prompt.includes(tag) ? video.prompt : `${video.prompt} ${tag}`.trim();
+  return { ok: true, patch: { mode: 'all_modal', prompt, videoReferences: [...refs, newRef] } };
 }
 
 /** Midjourney's reference-image limit (midjourney-proxy base64Array); Blend needs at least 2. */
@@ -81,7 +108,9 @@ function attachImageToVideo(image: SpatialCard, video: SpatialCard): ConnectResu
   }
 
   const limit = mode === 'first_last_frame' ? Math.min(2, def.maxRefs) : def.maxRefs;
-  if (refs.length >= limit) {
+  // Asset-library images share the image limit (first/last frame takes connected cards only).
+  const assetImages = mode === 'all_modal' ? (video.assetRefs ?? []).filter((a) => a.kind === 'image').length : 0;
+  if (refs.length + assetImages >= limit) {
     return { ok: false, reason: `${def.name} 在当前模式下最多 ${limit} 张参考图` };
   }
 

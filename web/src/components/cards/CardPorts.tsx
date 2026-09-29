@@ -25,7 +25,7 @@ export const InputPort: React.FC = () => (
 
 /** Right-edge dot: drag from here onto another card to connect. */
 export const OutputPort: React.FC<{
-  color: 'pink' | 'emerald';
+  color: 'pink' | 'emerald' | 'indigo';
   onStart: (e: React.MouseEvent<HTMLDivElement>) => void;
 }> = ({ color, onStart }) => (
   <div
@@ -38,7 +38,11 @@ export const OutputPort: React.FC<{
     }}
     style={{ top: PORT_Y - 8 }}
     className={`absolute -right-[9px] w-4 h-4 rounded-full border-2 bg-[#12141e] cursor-crosshair shadow-lg transition hover:scale-125 ${
-      color === 'pink' ? 'border-pink-400 shadow-pink-500/40' : 'border-emerald-400 shadow-emerald-500/40'
+      color === 'pink'
+        ? 'border-pink-400 shadow-pink-500/40'
+        : color === 'indigo'
+        ? 'border-indigo-400 shadow-indigo-500/40'
+        : 'border-emerald-400 shadow-emerald-500/40'
     }`}
   />
 );

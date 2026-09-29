@@ -8,14 +8,14 @@ import {
   isModelReady,
   isProviderMissing,
 } from '../../engine/channelModels.ts';
-import { requestedAspect, videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
+import { assetPromptName, requestedAspect, videoImageCount, videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
 import { connectCards } from '../../engine/connections.ts';
 import { inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { useChannels } from '../../services/channels.ts';
 import { assetUrl } from '../../engine/assetPaths.ts';
 import { Button } from '../ui/Button.tsx';
 import { Menu } from '../ui/Menu.tsx';
-import { InputPort, LinkedPromptBox } from './CardPorts.tsx';
+import { InputPort, LinkedPromptBox, OutputPort } from './CardPorts.tsx';
 import {
   AutoTextarea,
   CardShell,
@@ -32,6 +32,8 @@ interface VideoCardViewProps extends CardViewProps {
   availableImageCards: SpatialCard[];
   linkedPrompt?: { title: string; text: string };
   onUnlinkPrompt?: () => void;
+  /** Starts dragging a line from this card's result, to use it as another card's reference video. */
+  onStartConnect?: (e: React.MouseEvent<HTMLDivElement>) => void;
   /** Explains why an image could not be attached. */
   onNotice: (message: string) => void;
 }
@@ -49,6 +51,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   availableImageCards,
   linkedPrompt,
   onUnlinkPrompt,
+  onStartConnect,
   onNotice,
 }) => {
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
@@ -79,8 +82,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
     return true;
   };
 
-  const insertTag = (tagIndex: number) => {
-    const tag = `@图${tagIndex}`;
+  const insertTag = (tag: string) => {
     const el = promptRef.current;
     if (!el) return onUpdateCard(card.id, { prompt: `${card.prompt} ${tag}`.trim() });
     const { selectionStart: start, selectionEnd: end } = el;
@@ -128,7 +130,12 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       onRename={(title) => onUpdateCard(card.id, { title })}
       badges={<TagBadge tagIndex={card.tagIndex} accent="indigo" />}
       menuItems={menuItems}
-      ports={<InputPort />}
+      ports={
+        <>
+          <InputPort />
+          {onStartConnect && <OutputPort color="indigo" onStart={onStartConnect} />}
+        </>
+      }
     >
       {/* Preview / player */}
       <MediaFrame aspect={(videoUrl && loadedAspect) || requestedAspect(card)}>
@@ -177,13 +184,40 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
             <button
               key={ref.cardId}
               type="button"
-              onClick={() => insertTag(ref.tagIndex)}
+              onClick={() => insertTag(`@图${ref.tagIndex}`)}
               title={`插入 @图${ref.tagIndex} 到提示词`}
               className="font-mono px-1.5 py-px rounded-md border bg-pink-500/15 text-pink-300 border-pink-500/30 hover:bg-pink-500/25"
             >
               @图{ref.tagIndex}
             </button>
           ))}
+          {card.mode !== 'first_last_frame' &&
+            card.videoReferences?.map((ref) => (
+              <button
+                key={ref.cardId}
+                type="button"
+                onClick={() => insertTag(`@视频${ref.tagIndex}`)}
+                title={`插入 @视频${ref.tagIndex} 到提示词`}
+                className="font-mono px-1.5 py-px rounded-md border bg-indigo-500/15 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/25"
+              >
+                @视频{ref.tagIndex}
+              </button>
+            ))}
+          {card.mode !== 'first_last_frame' &&
+            card.assetRefs?.map((asset) => {
+              const name = assetPromptName(card, asset);
+              return (
+                <button
+                  key={asset.assetId}
+                  type="button"
+                  onClick={() => insertTag(name)}
+                  title={`素材库 ${asset.assetId}：插入「${name}」到提示词`}
+                  className="font-mono px-1.5 py-px rounded-md border bg-violet-500/15 text-violet-300 border-violet-500/30 hover:bg-violet-500/25"
+                >
+                  {name}
+                </button>
+              );
+            })}
           <button
             type="button"
             onClick={(e) => {
@@ -195,7 +229,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
             <Plus className="w-3 h-3" /> 添加
           </button>
           <span className="ml-auto text-slate-600 font-mono">
-            {refs.length}/{card.mode === 'first_last_frame' ? Math.min(2, def.maxRefs) : def.maxRefs}
+            {card.mode === 'first_last_frame' ? `${refs.length}/${Math.min(2, def.maxRefs)}` : `${videoImageCount(card)}/${def.maxRefs}`}
           </span>
         </div>
       )}

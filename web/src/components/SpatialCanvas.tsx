@@ -8,7 +8,7 @@ import { findDescribeProvider, spawnActionCard, spawnDescribeCard } from '../eng
 import { useChannels } from '../services/channels.ts';
 import { createCard, duplicateCards, removeCards } from '../engine/cardFactory.ts';
 import { useHistory } from '../engine/useHistory.ts';
-import { removeReferencePatch } from '../engine/cardParams.ts';
+import { removeReferencePatch, removeVideoReferencePatch } from '../engine/cardParams.ts';
 import { unpackLayerDecomposition, unpackSequentialStoryboards } from '../engine/expansion.ts';
 import { ImageCardView } from './cards/ImageCardView.tsx';
 import { VideoCardView } from './cards/VideoCardView.tsx';
@@ -38,7 +38,7 @@ interface SpatialCanvasProps {
 
 interface Ray {
   id: string;
-  kind: 'reference' | 'prompt' | 'derived';
+  kind: 'reference' | 'video' | 'prompt' | 'derived';
   pathData: string;
   midX: number;
   midY: number;
@@ -63,6 +63,7 @@ interface ContextMenuState {
 
 const RAY_STYLE: Record<Ray['kind'], { stroke: string; dash?: string; pill: string }> = {
   reference: { stroke: '#f472b6', pill: 'border-pink-500/60 text-pink-300' },
+  video: { stroke: '#818cf8', pill: 'border-indigo-500/60 text-indigo-300' },
   prompt: { stroke: '#34d399', pill: 'border-emerald-500/60 text-emerald-300' },
   derived: { stroke: '#a78bfa', dash: '5 4', pill: 'border-violet-500/60 text-violet-300' },
 };
@@ -460,6 +461,22 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         });
       });
 
+      card.videoReferences?.forEach((ref) => {
+        const src = byId.get(ref.cardId);
+        if (!src) return;
+        const srcX = src.x + src.width;
+        const srcY = src.y + PORT_Y;
+        rays.push({
+          id: `video:${src.id}->${card.id}`,
+          kind: 'video',
+          pathData: bezier(srcX, srcY, tgtX, tgtY),
+          midX: (srcX + tgtX) / 2,
+          midY: (srcY + tgtY) / 2,
+          label: `@视频${ref.tagIndex}`,
+          onRemove: () => handleUpdateCard(card.id, removeVideoReferencePatch(card, src.id)),
+        });
+      });
+
       const origin = card.derivedFrom ? byId.get(card.derivedFrom.cardId) : undefined;
       if (origin) {
         const srcX = origin.x + origin.width;
@@ -713,6 +730,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                   availableImageCards={availableImageCards}
                   linkedPrompt={linkedPromptFor(card)}
                   onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
+                  onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
                   onNotice={showNotice}
                 />
               );

@@ -171,6 +171,83 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
     expect(payload.reference_assets?.[1].url).toBeUndefined();
   });
 
+  it('sends asset library references as asset:// after the connected image cards', () => {
+    const image: SpatialCard = {
+      id: 'c-5', type: 'image', title: '场景', tagIndex: 5, x: 0, y: 0, width: 340, prompt: '场景',
+      model: 'doubao-seedream-5-0-pro-260628', status: 'succeeded', progress: 100, resultUrl: 'https://example.com/scene.png',
+    };
+    const videoCard: SpatialCard = {
+      id: 'v-2', type: 'video', title: '镜头', tagIndex: 6, x: 0, y: 0, width: 460,
+      model: 'doubao-seedance-2-5-260628', provider: 'ark', prompt: '视频1中的人物走进 @图5，图片2是她的外观',
+      status: 'idle', progress: 0, mode: 'all_modal',
+      references: [{ cardId: 'c-5', tagIndex: 5, role: 'reference_image', label: '场景' }],
+      assetRefs: [
+        { assetId: 'asset-20260401123823-7k2p9', kind: 'video' },
+        { assetId: 'asset-20260401123823-6d4x2', kind: 'image' },
+      ],
+    };
+
+    const payload = compileCardVideoPayload(videoCard, [image]);
+
+    expect(payload.prompt).toBe('视频1中的人物走进 图1，图片2是她的外观');
+    expect(payload.reference_assets?.map((r) => [r.role, r.tag_index, r.url])).toEqual([
+      ['reference_image', 1, 'https://example.com/scene.png'],
+      ['reference_video', 1, 'asset://asset-20260401123823-7k2p9'],
+      ['reference_image', 2, 'asset://asset-20260401123823-6d4x2'],
+    ]);
+  });
+
+  it('ignores asset references outside 多图参考 and rejects them past the model limit', () => {
+    const videoCard: SpatialCard = {
+      id: 'v-3', type: 'video', title: '镜头', tagIndex: 7, x: 0, y: 0, width: 460,
+      model: 'doubao-seedance-2-0-260128', provider: 'ark', prompt: '镜头', status: 'idle', progress: 0,
+      mode: 'text_to_video',
+      assetRefs: Array.from({ length: 4 }, (_, i) => ({ assetId: `asset-${i}`, kind: 'video' as const })),
+    };
+    expect(compileCardVideoPayload(videoCard).reference_assets).toEqual([]);
+    expect(() => compileCardVideoPayload({ ...videoCard, mode: 'all_modal' })).toThrowError(/at most 3 reference videos/);
+  });
+
+  it('sends a connected video as a reference video with its provider URL, renumbering @视频N', () => {
+    const clip: SpatialCard = {
+      id: 'c-9', type: 'video', title: '上一段', tagIndex: 9, x: 0, y: 0, width: 460, prompt: '上一段',
+      model: 'doubao-seedance-2-5-260628', provider: 'ark', status: 'succeeded', progress: 100,
+      outputAssets: [{ id: 'a', task_id: 't', asset_index: 0, kind: 'video', z_index: 0,
+        local_path: 'videos/t/output.mp4', remote_url: 'https://tos.example.com/out.mp4?X-Tos-Expires=86400' }],
+    };
+    const next: SpatialCard = {
+      id: 'v-4', type: 'video', title: '下一段', tagIndex: 10, x: 0, y: 0, width: 460,
+      model: 'doubao-seedance-2-5-260628', provider: 'ark', prompt: '延续 @视频9 的动作，视频2 作为运镜参考',
+      status: 'idle', progress: 0, mode: 'all_modal',
+      videoReferences: [{ cardId: 'c-9', tagIndex: 9, role: 'reference_video', label: '上一段' }],
+      assetRefs: [{ assetId: 'asset-cam', kind: 'video' }],
+    };
+
+    const payload = compileCardVideoPayload(next, [clip]);
+
+    expect(payload.prompt).toBe('延续 视频1 的动作，视频2 作为运镜参考');
+    expect(payload.reference_assets).toEqual([
+      {
+        card_id: 'c-9', tag_index: 1, role: 'reference_video', label: '上一段', url: undefined,
+        local_path: 'assets/videos/t/output.mp4', remote_url: 'https://tos.example.com/out.mp4?X-Tos-Expires=86400',
+      },
+      { card_id: '', tag_index: 2, role: 'reference_video', label: 'asset-cam', url: 'asset://asset-cam' },
+    ]);
+  });
+
+  it('refuses a reference video card that has not generated yet', () => {
+    const clip: SpatialCard = {
+      id: 'c-9', type: 'video', title: '上一段', tagIndex: 9, x: 0, y: 0, width: 460, prompt: '上一段',
+      model: 'doubao-seedance-2-5-260628', provider: 'ark', status: 'idle', progress: 0,
+    };
+    const next: SpatialCard = {
+      id: 'v-4', type: 'video', title: '下一段', tagIndex: 10, x: 0, y: 0, width: 460,
+      model: 'doubao-seedance-2-5-260628', provider: 'ark', prompt: '延续 @视频9', status: 'idle', progress: 0,
+      mode: 'all_modal', videoReferences: [{ cardId: 'c-9', tagIndex: 9, role: 'reference_video', label: '上一段' }],
+    };
+    expect(() => compileCardVideoPayload(next, [clip])).toThrowError(/还没有生成视频/);
+  });
+
   it('forces ratio to adaptive in first_last_frame mode and assigns roles', () => {
     const card1: SpatialCard = {
       id: 'c-1',

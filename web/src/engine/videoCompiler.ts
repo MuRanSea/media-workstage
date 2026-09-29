@@ -78,6 +78,26 @@ export function resolveReferenceAsset(
   );
 }
 
+/**
+ * The file of a referenced video card's result. Seedance only takes reference videos as
+ * public URLs, so the provider's result URL rides along; the backend checks it has not expired.
+ */
+export function resolveReferenceVideo(
+  ref: ReferenceItem,
+  allCards: SpatialCard[] = []
+): { url?: string; localPath?: string; remoteUrl?: string } {
+  const srcCard = allCards.find((c) => c.id === ref.cardId);
+  if (!srcCard) {
+    throw new Error(`参考视频 @视频${ref.tagIndex} 对应的卡片已不在画布上`);
+  }
+  const asset = srcCard.outputAssets?.find((a) => a.kind === 'video');
+  const remote = asset?.remote_url && /^https?:\/\//.test(asset.remote_url) ? asset.remote_url : undefined;
+  if (asset?.local_path) return { localPath: normalizeLocalPath(asset.local_path), remoteUrl: remote };
+  if (remote) return { url: remote };
+  if (srcCard.resultUrl && /^https?:\/\//.test(srcCard.resultUrl)) return { url: srcCard.resultUrl };
+  throw new Error(`参考视频 @视频${ref.tagIndex}「${srcCard.title}」还没有生成视频，请先生成`);
+}
+
 /** Provider for video cards saved before cards carried one: MiniMax models by name, else Ark. */
 export function inferVideoProvider(modelId: string): 'ark' | 'minimax' {
   return modelId.includes('MiniMax') || modelId.includes('video-01') ? 'minimax' : 'ark';
@@ -109,7 +129,7 @@ export function compileVideoTaskPayload(
   }
   if (mode === 'text_to_video') {
     references = [];
-    compiledPrompt = compiledPrompt.replace(/@?图\d+\s*/g, '').trim();
+    compiledPrompt = compiledPrompt.replace(/@?图\d+\s*/g, '').replace(/@视频\d+\s*/g, '').trim();
   } else if (mode === 'first_last_frame') {
     if (references.length === 0) {
       throw new Error('first_last_frame mode requires at least 1 reference image');
@@ -126,9 +146,10 @@ export function compileVideoTaskPayload(
     }));
   } else if (mode === 'all_modal') {
     const maxRefs = modelDef.maxRefs;
-    if (references.length > maxRefs) {
+    const images = references.length + (card.assetRefs ?? []).filter((a) => a.kind === 'image').length;
+    if (images > maxRefs) {
       throw new Error(
-        `Model ${card.model} supports at most ${maxRefs} reference assets, got ${references.length}`
+        `Model ${card.model} supports at most ${maxRefs} reference assets, got ${images}`
       );
     }
     references = references.map((ref) => ({
@@ -166,7 +187,46 @@ export function compileVideoTaskPayload(
     compiledPrompt = compiledPrompt.replace(tagRegex, `图${cloudIndex}`);
   });
 
-  compiledPrompt = compiledPrompt.replace(/@图(\d+)/g, '图$1').trim();
+  // 3. Reference videos from connected video cards (Ark only): @视频N → 视频1, 视频2, ...
+  const videoReferences = mode === 'all_modal' ? card.videoReferences ?? [] : [];
+  videoReferences.forEach((ref, idx) => {
+    const resolved = resolveReferenceVideo(ref, allCards);
+    compiledReferenceAssets.push({
+      card_id: ref.cardId,
+      tag_index: idx + 1,
+      role: 'reference_video',
+      label: ref.label,
+      url: resolved.url,
+      local_path: resolved.localPath,
+      remote_url: resolved.remoteUrl,
+    });
+    compiledPrompt = compiledPrompt.replace(new RegExp(`@视频${ref.tagIndex}\\b`, 'g'), `视频${idx + 1}`);
+  });
+
+  compiledPrompt = compiledPrompt.replace(/@图(\d+)/g, '图$1').replace(/@视频(\d+)/g, '视频$1').trim();
+
+  // 4. Asset-library references (Ark only), after the connected cards so 图片N / 视频N keep counting on.
+  const assetRefs = mode === 'all_modal' ? card.assetRefs ?? [] : [];
+  if ((assetRefs.length > 0 || videoReferences.length > 0) && protocol !== 'ark') {
+    throw new Error('参考视频和素材库参考只支持火山方舟的 Seedance 模型');
+  }
+  for (const kind of ['video', 'audio'] as const) {
+    const count = assetRefs.filter((a) => a.kind === kind).length + (kind === 'video' ? videoReferences.length : 0);
+    const max = (kind === 'video' ? modelDef.maxVideoRefs : modelDef.maxAudioRefs) ?? 0;
+    if (count > max) {
+      throw new Error(`Model ${card.model} supports at most ${max} reference ${kind}s, got ${count}`);
+    }
+  }
+  const kindCounts = { image: references.length, video: videoReferences.length, audio: 0 };
+  for (const asset of assetRefs) {
+    compiledReferenceAssets.push({
+      card_id: '',
+      tag_index: ++kindCounts[asset.kind],
+      role: `reference_${asset.kind}`,
+      label: asset.assetId,
+      url: `asset://${asset.assetId}`,
+    });
+  }
 
   const params: Record<string, unknown> = {
     resolution: card.resolution ?? (isMiniMax ? '1080P' : '720p'),

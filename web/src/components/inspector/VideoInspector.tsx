@@ -2,11 +2,23 @@ import React, { useMemo } from 'react';
 import type { SpatialCard, VideoTaskMode } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
-import { VIDEO_MODE_LABELS, removeReferencePatch, videoModePatch, videoModelDef, videoModelPatch } from '../../engine/cardParams.ts';
+import {
+  VIDEO_MODE_LABELS,
+  kindLimit,
+  referenceCount,
+  removeReferencePatch,
+  removeVideoReferencePatch,
+  supportsAssetRefs,
+  videoImageCount,
+  videoModePatch,
+  videoModelDef,
+  videoModelPatch,
+} from '../../engine/cardParams.ts';
 import { compileCardVideoPayload, inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from '../cards/ProviderModelPicker.tsx';
 import { Field, Section, Segmented, Toggle, inputClass } from '../ui/index.ts';
+import { AssetRefList } from './AssetRefList.tsx';
 import { DevJson } from './DevJson.tsx';
 import { ReferenceList } from './ReferenceList.tsx';
 
@@ -78,13 +90,39 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
       </Section>
 
       {mode !== 'text_to_video' && (
-        <Section title={`参考图 ${refs.length}/${maxRefs}`}>
+        <Section title={`参考图 ${mode === 'all_modal' ? videoImageCount(card) : refs.length}/${maxRefs}`}>
           <ReferenceList
             refs={refs}
             cards={cards}
             onRemove={(id) => update(removeReferencePatch(card, id))}
             emptyHint="从图片卡片右侧的圆点拖线到这张卡片，或在卡片上点「添加」。"
           />
+        </Section>
+      )}
+
+      {supportsAssetRefs(card) && (
+        <Section title={`参考视频 ${referenceCount(card, 'video')}/${kindLimit(def, 'video')}`}>
+          {mode === 'first_last_frame' ? (
+            <p className="text-[11px] leading-relaxed text-slate-500">参考视频需要「多图参考」模式。</p>
+          ) : (
+            <ReferenceList
+              refs={card.videoReferences ?? []}
+              cards={cards}
+              tagPrefix="视频"
+              onRemove={(id) => update(removeVideoReferencePatch(card, id))}
+              emptyHint="从已生成的视频卡片右侧的圆点拖线到这张卡片，提示词里用 @视频N 引用。参考视频要用方舟生成结果的链接，24 小时内有效。"
+            />
+          )}
+        </Section>
+      )}
+
+      {supportsAssetRefs(card) && (
+        <Section title="素材库">
+          {mode === 'first_last_frame' ? (
+            <p className="text-[11px] leading-relaxed text-slate-500">素材库参考需要「多图参考」模式。</p>
+          ) : (
+            <AssetRefList card={card} update={update} />
+          )}
         </Section>
       )}
 

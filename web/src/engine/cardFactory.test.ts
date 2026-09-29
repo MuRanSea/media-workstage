@@ -153,3 +153,27 @@ describe('mergeTaskState', () => {
     expect(mergeTaskState(before, [])).toEqual(before);
   });
 });
+
+describe('reference video links', () => {
+  const clip: SpatialCard = { ...createCard('video', { x: 0, y: 0 }, []), id: 'clip', tagIndex: 1 };
+  const next: SpatialCard = {
+    ...createCard('video', { x: 400, y: 0 }, [clip]),
+    id: 'next',
+    tagIndex: 2,
+    prompt: '延续 @视频1 的动作',
+    videoReferences: [{ cardId: 'clip', tagIndex: 1, role: 'reference_video', label: 'clip' }],
+  };
+
+  it('remaps a copied pair and drops the link when the source is not copied', () => {
+    const [cc, cn] = duplicateCards([clip, next], { x: 0, y: 500 }, [clip, next]);
+    expect(cn.videoReferences).toEqual([{ cardId: cc.id, tagIndex: cc.tagIndex, role: 'reference_video', label: 'clip' }]);
+    expect(cn.prompt).toBe(`延续 @视频${cc.tagIndex} 的动作`);
+    const [alone] = duplicateCards([next], { x: 0, y: 500 }, [clip, next]);
+    expect(alone.videoReferences).toBeUndefined();
+  });
+
+  it('drops the link when the source video card is removed', () => {
+    const [left] = removeCards([clip, next], new Set(['clip']));
+    expect(left.videoReferences).toBeUndefined();
+  });
+});

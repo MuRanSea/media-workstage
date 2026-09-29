@@ -54,10 +54,19 @@ export function isDescribeCard(card: SpatialCard): boolean {
 export interface ReferenceItem {
   cardId: string;
   tagIndex: number;
-  role: 'reference_image' | 'first_frame' | 'last_frame';
+  role: 'reference_image' | 'first_frame' | 'last_frame' | 'reference_video';
   label: string;
   url?: string;
   localPath?: string;
+}
+
+/** What an asset-library item is; decides its content slot and the name the prompt uses for it. */
+export type AssetKind = 'video' | 'image' | 'audio';
+
+/** A reference taken from the Ark asset library (素材库 & 虚拟人像库), sent to Seedance as asset://<assetId>. */
+export interface AssetRef {
+  assetId: string;
+  kind: AssetKind;
 }
 
 export interface SpatialCard {
@@ -104,6 +113,10 @@ export interface SpatialCard {
   promptOptimizer?: boolean;
   seed?: number;
   references?: ReferenceItem[];
+  /** Seedance through the Ark protocol, 多图参考 mode: other video cards whose results are reference videos (@视频N). */
+  videoReferences?: ReferenceItem[];
+  /** Seedance through the Ark protocol, 多图参考 mode: references from the Ark asset library. */
+  assetRefs?: AssetRef[];
 
   // Image parameters for non-Seedream channels (ratio reuses imageRatioPreset)
   imageResolution?: '1K' | '2K' | '4K';
@@ -136,6 +149,9 @@ export interface VideoModelDef {
   supportsAudio: boolean;
   supportsMov: boolean;
   maxRefs: number;
+  /** Reference videos / audios the model takes in 多图参考 mode (Ark asset library); none when omitted. */
+  maxVideoRefs?: number;
+  maxAudioRefs?: number;
   /** Task modes the model accepts; all three when omitted. */
   modes?: VideoTaskMode[];
 }
@@ -165,7 +181,9 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'],
     supportsAudio: true,
     supportsMov: true,
-    maxRefs: 30
+    maxRefs: 30,
+    maxVideoRefs: 10,
+    maxAudioRefs: 10
   },
   {
     id: 'doubao-seedance-2-0-260128',
@@ -177,7 +195,9 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'],
     supportsAudio: true,
     supportsMov: false,
-    maxRefs: 9
+    maxRefs: 9,
+    maxVideoRefs: 3,
+    maxAudioRefs: 3
   },
   {
     id: 'MiniMax-H3',

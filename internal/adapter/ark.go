@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -182,6 +183,9 @@ func (a *ArkAdapter) validateVideoTask(task *model.MediaTask, params *ParsedPara
 	hasLastFrame := false
 
 	for _, ref := range params.ReferenceAssets {
+		if err := validateAssetID(ref.URL); err != nil {
+			return err
+		}
 		switch ref.Role {
 		case "first_frame":
 			hasFirstFrame = true
@@ -288,6 +292,22 @@ func (a *ArkAdapter) validateVideoTask(task *model.MediaTask, params *ParsedPara
 		}
 	}
 
+	return nil
+}
+
+// arkAssetScheme prefixes a reference taken from the Ark asset library (素材库 & 虚拟人像库):
+// Seedance accepts asset://<ASSET_ID> wherever it accepts an image, video or audio URL.
+const arkAssetScheme = "asset://"
+
+// validateAssetID rejects asset:// references without a usable ID; other URLs pass.
+func validateAssetID(url string) error {
+	if !strings.HasPrefix(url, arkAssetScheme) {
+		return nil
+	}
+	id := strings.TrimPrefix(url, arkAssetScheme)
+	if id == "" || strings.ContainsAny(id, " \t\r\n/") {
+		return fmt.Errorf("invalid asset library reference %q, expected asset://<ASSET_ID>", url)
+	}
 	return nil
 }
 
@@ -424,6 +444,49 @@ func resolveAssetURL(ref model.ReferenceItem) (string, error) {
 	return "", errors.New("reference item has neither URL nor LocalPath")
 }
 
+// resolveVideoURL returns a reference video as Seedance takes it: a public URL or an
+// asset:// ID. Seedance does not take video as Base64, so a generated video is sent by the
+// URL its provider served it at, which must not have expired (Ark's last 24 hours).
+func resolveVideoURL(ref model.ReferenceItem) (string, error) {
+	if ref.URL != "" {
+		return ref.URL, nil
+	}
+	remote := ref.RemoteURL
+	if !strings.HasPrefix(remote, "https://") && !strings.HasPrefix(remote, "http://") {
+		return "", errors.New("参考视频没有公网链接，Seedance 不接受本地视频文件；请改用素材库 ID 引用")
+	}
+	if expiresAt, ok := signedURLExpiry(remote); ok && time.Until(expiresAt) < signedURLMargin {
+		return "", fmt.Errorf("参考视频的临时链接已于 %s 过期（方舟生成结果的链接 24 小时有效），请重新生成来源视频，或上传到素材库后用素材 ID 引用",
+			expiresAt.Local().Format("2006-01-02 15:04"))
+	}
+	return remote, nil
+}
+
+// signedURLMargin leaves the provider time to fetch a signed URL after the task is submitted.
+const signedURLMargin = 5 * time.Minute
+
+// signedURLExpiry reads when a TOS / S3 style presigned URL stops working, from its
+// X-Tos-Date + X-Tos-Expires (or X-Amz-Date + X-Amz-Expires) query parameters.
+func signedURLExpiry(rawURL string) (time.Time, bool) {
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return time.Time{}, false
+	}
+	q := u.Query()
+	for _, prefix := range []string{"X-Tos-", "X-Amz-"} {
+		signedAt, err := time.Parse("20060102T150405Z", q.Get(prefix+"Date"))
+		if err != nil {
+			continue
+		}
+		seconds, err := strconv.Atoi(q.Get(prefix + "Expires"))
+		if err != nil {
+			continue
+		}
+		return signedAt.Add(time.Duration(seconds) * time.Second), true
+	}
+	return time.Time{}, false
+}
+
 // SubmitTask submits a video or image generation task to Ark native API.
 func (a *ArkAdapter) SubmitTask(ctx context.Context, task *model.MediaTask) (string, error) {
 	params, err := a.ValidateTask(task)
@@ -485,7 +548,11 @@ func (a *ArkAdapter) submitVideoTask(ctx context.Context, task *model.MediaTask,
 	}
 
 	for _, ref := range params.ReferenceAssets {
-		url, err := resolveAssetURL(ref)
+		resolve := resolveAssetURL
+		if ref.Role == "reference_video" || ref.Role == "video" {
+			resolve = resolveVideoURL
+		}
+		url, err := resolve(ref)
 		if err != nil {
 			return "", fmt.Errorf("failed to resolve asset URL for %s: %w", ref.Label, err)
 		}
