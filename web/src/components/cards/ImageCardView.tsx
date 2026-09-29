@@ -9,7 +9,7 @@ import {
   isProviderMissing,
 } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
-import { imageSizeSummary, requestedAspect } from '../../engine/cardParams.ts';
+import { imageSizeSummary, previewAspect } from '../../engine/cardParams.ts';
 import { useChannels } from '../../services/channels.ts';
 import { assetStoredPath, assetUrl } from '../../engine/assetPaths.ts';
 import { Button } from '../ui/Button.tsx';
@@ -147,7 +147,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
       }
     >
       {/* Preview */}
-      <MediaFrame aspect={(displayUrl && loadedAspect) || requestedAspect(card)}>
+      <MediaFrame aspect={(displayUrl && loadedAspect) || previewAspect(card)}>
         {displayUrl ? (
           <button
             type="button"
@@ -177,7 +177,8 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         <StatusChip status={card.status} />
         {isGenerating && <GeneratingOverlay progress={card.progress} />}
 
-        {layerAssets.length > 0 && (
+        {/* Legacy cards hold every layer; a result card holds one image. */}
+        {!isResult && layerAssets.length > 0 && (
           <div className="absolute bottom-2 left-2 right-10 flex items-center gap-1 bg-black/75 px-1.5 py-1 rounded-lg text-[11px] overflow-x-auto">
             {[null, ...layerAssets.map((_, i) => i)].map((idx) => (
               <button

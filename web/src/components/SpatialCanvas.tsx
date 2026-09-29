@@ -642,8 +642,9 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                   <ImageCardView
                     key={card.id}
                     {...common}
-                    onUnpackLayers={(c) => editCards((prev) => unpackLayerDecomposition(c, prev))}
-                    onUnpackStoryboards={(c) => editCards((prev) => unpackSequentialStoryboards(c, prev))}
+                    // Only legacy cards still unpack; new runs give every asset its own result card.
+                    onUnpackLayers={card.role ? undefined : (c) => editCards((prev) => unpackLayerDecomposition(c, prev))}
+                    onUnpackStoryboards={card.role ? undefined : (c) => editCards((prev) => unpackSequentialStoryboards(c, prev))}
                     linkedPrompt={linkedPromptFor(card)}
                     onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
                     onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}

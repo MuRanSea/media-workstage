@@ -175,8 +175,21 @@ export function firstFreeSlotRight(
   cards: LayoutCard[],
   gap = 40
 ): Point {
-  const x = anchor.x + anchor.width + gap;
-  let y = anchor.y;
+  return firstFreeSlotBelow({ x: anchor.x + anchor.width + gap, y: anchor.y }, size, cards, gap);
+}
+
+/**
+ * Top-left of the first free `size` slot in the column at `start.x`, scanning
+ * down from `start.y`, keeping `gap` clear of every card.
+ */
+export function firstFreeSlotBelow(
+  start: Point,
+  size: { width: number; height: number },
+  cards: LayoutCard[],
+  gap = 40
+): Point {
+  const { x } = start;
+  let { y } = start;
   // Each blocked try moves below a card, so this ends after at most cards.length steps.
   for (;;) {
     const slot: Rect = { x: x - gap, y: y - gap, width: size.width + 2 * gap, height: size.height + 2 * gap };

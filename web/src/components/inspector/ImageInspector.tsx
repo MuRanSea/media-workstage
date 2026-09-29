@@ -98,9 +98,9 @@ export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText
             label="模式"
             hint={
               mode === 'layer_decomp'
-                ? '输出一张底图和最多 16 个透明图层，可以把图层展开成单独的卡片。'
+                ? '输出一张底图和最多 16 个透明图层，每张各成一张结果卡。'
                 : mode === 'sequential'
-                  ? '一次生成最多 15 张连贯的分镜图。'
+                  ? '一次生成最多 15 张连贯的分镜图，每帧各成一张结果卡。'
                   : '生成一张图片。'
             }
           >

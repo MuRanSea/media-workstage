@@ -85,7 +85,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   }, [name]);
 
   const updateTaskCards = useCallback((task: BackendTaskResponse) => {
-    setCards((prev) => applyTaskToCards(prev, task));
+    setCards((prev) => applyTaskToCards(prev, task, measuredHeight));
   }, []);
 
   // Generation cards whose submit request is in flight: a double click must not submit twice.

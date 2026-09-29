@@ -63,6 +63,25 @@ export function requestedAspect(card: SpatialCard): number | undefined {
   return parseAspect(card.imageRatioPreset ?? '16:9');
 }
 
+/** Width ÷ height of a layer's bounding box (`{"absolute":[left, top, right, bottom]}`); layer images are cropped to it. */
+function boundingBoxAspect(json: string | undefined): number | undefined {
+  if (!json) return undefined;
+  try {
+    const [left, top, right, bottom] = (JSON.parse(json) as { absolute?: number[] }).absolute ?? [];
+    const [w, h] = [right - left, bottom - top];
+    return w > 0 && h > 0 ? w / h : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The shape a card's preview takes before its image has loaded: a layer result's own box, else what was asked for. */
+export function previewAspect(card: SpatialCard): number | undefined {
+  const assets = card.outputAssets;
+  const own = card.role === 'result' && assets?.length === 1 ? boundingBoxAspect(assets[0].bounding_box_json) : undefined;
+  return own ?? requestedAspect(card);
+}
+
 // --- Video ---------------------------------------------------------------------
 
 export function videoModelDef(card: SpatialCard): VideoModelDef {

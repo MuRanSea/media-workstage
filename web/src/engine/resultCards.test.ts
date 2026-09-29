@@ -458,3 +458,156 @@ describe('text result cards', () => {
     expect(cards[0]).toMatchObject({ role: 'result', sourceId: 't1', x: g.x + g.width + 40 });
   });
 });
+
+describe('multi-output tasks', () => {
+  type Asset = NonNullable<BackendTaskResponse['assets']>[number];
+  const asset = (taskId: string, i: number, kind: Asset['kind'], patch: Partial<Asset> = {}): Asset => ({
+    id: `${taskId}-a${i}`,
+    task_id: taskId,
+    asset_index: i,
+    kind,
+    z_index: 0,
+    local_path: `images/${taskId}/${kind}_${i}.png`,
+    ...patch,
+  });
+  // Seedream returns the base first; shuffle so the order has to come from z_index.
+  const layered = (taskId: string, layers: number) => [
+    ...Array.from({ length: layers }, (_, k) =>
+      asset(taskId, layers - k, 'image_layer', {
+        z_index: layers - k,
+        bounding_box_json: JSON.stringify({ absolute: [0, 0, 1200 + 200 * (k % 3), 800] }),
+      })
+    ),
+    asset(taskId, 0, 'image_base'),
+  ];
+  const frames = (taskId: string, n: number) =>
+    Array.from({ length: n }, (_, k) => asset(taskId, n - 1 - k, 'image_frame', { z_index: 0 }));
+
+  const pendingLayered = () => {
+    const g = gen({ imageMode: 'layer_decomp', imageRatioPreset: '1:1' });
+    return addPendingResult([g], g, task());
+  };
+  const overlaps = (cards: SpatialCard[]) => {
+    const rect = (c: SpatialCard) => ({ x: c.x, y: c.y, w: c.width, h: estimateCardHeight(c) });
+    for (let i = 0; i < cards.length; i++) {
+      for (let j = i + 1; j < cards.length; j++) {
+        const a = rect(cards[i]);
+        const b = rect(cards[j]);
+        if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) return [cards[i].id, cards[j].id];
+      }
+    }
+    return null;
+  };
+
+  it('turns a layer decomposition into one result card for the base and one per layer', () => {
+    const cards = applyTaskToCards(pendingLayered(), task({ status: 'succeeded', assets: layered('task-1', 16) }));
+    const rs = results(cards);
+
+    expect(rs).toHaveLength(17);
+    // The placeholder becomes the base image's card.
+    expect(rs[0]).toMatchObject({ id: 'result-task-1', status: 'succeeded', resultUrl: '/assets/images/task-1/image_base_0.png' });
+    expect(rs.every((c) => c.outputAssets?.length === 1)).toBe(true);
+    expect(rs.map((c) => c.outputAssets![0].kind)).toEqual(['image_base', ...Array(16).fill('image_layer')]);
+    expect(rs.slice(1).map((c) => c.outputAssets![0].z_index)).toEqual(Array.from({ length: 16 }, (_, k) => k + 1));
+    expect(rs.slice(1).map((c) => c.resultUrl)).toEqual(
+      Array.from({ length: 16 }, (_, k) => `/assets/images/task-1/image_layer_${k + 1}.png`)
+    );
+  });
+
+  it('turns a sequential storyboard into one result card per frame, in frame order', () => {
+    const g = gen({ imageMode: 'sequential' });
+    const cards = applyTaskToCards(addPendingResult([g], g, task()), task({ status: 'succeeded', assets: frames('task-1', 15) }));
+    const rs = results(cards);
+    expect(rs).toHaveLength(15);
+    expect(rs.map((c) => c.outputAssets![0].asset_index)).toEqual(Array.from({ length: 15 }, (_, k) => k));
+    expect(rs[0].id).toBe('result-task-1');
+  });
+
+  it('keeps a Midjourney 2×2 grid as a single result card', () => {
+    const g = gen({ provider: 'mj' });
+    const cards = applyTaskToCards(
+      addPendingResult([g], g, task()),
+      task({ status: 'succeeded', assets: [asset('task-1', 0, 'image_base')] })
+    );
+    expect(results(cards)).toHaveLength(1);
+  });
+
+  it('keeps a video with its returned last frame as one video result card', () => {
+    const g: SpatialCard = { ...createCard('video', { x: 0, y: 0 }, []), id: 'v1' };
+    const cards = applyTaskToCards(
+      addPendingResult([g], g, task({ task_type: 'video_generation' })),
+      task({ status: 'succeeded', assets: [asset('task-1', 0, 'video'), asset('task-1', 1, 'image_frame')] })
+    );
+    expect(results(cards)).toHaveLength(1);
+    expect(results(cards)[0].outputAssets?.map((a) => a.kind)).toEqual(['video']);
+  });
+
+  it('gives every extra card the task, source, snapshot and a consecutive tag', () => {
+    const pending = pendingLayered();
+    const cards = applyTaskToCards(pending, task({ status: 'succeeded', assets: layered('task-1', 3) }));
+    const rs = results(cards);
+    const first = rs[0];
+
+    expect(rs.map((c) => c.tagIndex)).toEqual([1, 2, 3, 4]);
+    for (const r of rs.slice(1)) {
+      expect(r).toMatchObject({ role: 'result', type: 'image', taskId: 'task-1', sourceId: 'g1', status: 'succeeded' });
+      expect(r.snapshot).toEqual(first.snapshot);
+      expect(r.title.startsWith(first.title)).toBe(true);
+      expect(isTaskResult(r)).toBe(true);
+    }
+    expect(new Set(rs.map((c) => c.id)).size).toBe(4);
+    expect(rs.slice(1).every((c) => c.id.includes('task-1'))).toBe(true);
+    expect(runsInProgress(cards, 'g1')).toBe(0);
+  });
+
+  it('is idempotent when the same terminal state arrives twice', () => {
+    const done = task({ status: 'succeeded', assets: layered('task-1', 16) });
+    const once = applyTaskToCards(pendingLayered(), done);
+    expect(applyTaskToCards(once, done)).toEqual(once);
+  });
+
+  it('gives the same cards whether the task finished before or after the placeholder existed', () => {
+    const g = gen({ imageMode: 'layer_decomp', imageRatioPreset: '1:1' });
+    const done = task({ status: 'succeeded', assets: layered('task-1', 5) });
+    const early = addPendingResult([g], g, done);
+    const late = applyTaskToCards(addPendingResult([g], g, task()), done);
+    expect(early).toEqual(late);
+    // …and a catch-up fetch after that changes nothing.
+    expect(applyTaskToCards(early, done)).toEqual(early);
+  });
+
+  it('does not bring back an extra card the user deleted when the state is resent', () => {
+    const done = task({ status: 'succeeded', assets: layered('task-1', 3) });
+    const once = applyTaskToCards(pendingLayered(), done);
+    const trimmed = once.filter((c) => c.id !== results(once)[2].id);
+    expect(results(applyTaskToCards(trimmed, done))).toHaveLength(3);
+  });
+
+  it('lays the cards out in a grid from the first free slot, without overlaps or moving anything', () => {
+    const g = gen({ imageMode: 'layer_decomp', imageRatioPreset: '1:1', x: 0, y: 0, width: 340 });
+    // Something already sits where the grid's second row would go.
+    const obstacle: SpatialCard = { ...gen({ id: 'other', role: undefined }), x: 760, y: 500, width: 340 };
+    const pending = addPendingResult([g, obstacle], g, task());
+    const first = results(pending)[0];
+    const cards = applyTaskToCards(pending, task({ status: 'succeeded', assets: layered('task-1', 16) }));
+    const rs = results(cards);
+
+    expect({ x: rs[0].x, y: rs[0].y }).toEqual({ x: first.x, y: first.y });
+    expect(cards.find((c) => c.id === 'other')).toEqual(obstacle);
+    expect(cards.find((c) => c.id === 'g1')).toEqual(g);
+    expect(overlaps(cards)).toBeNull();
+    // A grid: several columns right of the generation card, no card left of the first one.
+    const columns = new Set(rs.map((c) => c.x));
+    expect(columns.size).toBeGreaterThan(1);
+    expect(columns.size).toBeLessThan(17);
+    expect(rs.every((c) => c.x >= first.x && c.y >= first.y)).toBe(true);
+  });
+
+  it('sizes each layer card from its own bounding box', () => {
+    const cards = applyTaskToCards(pendingLayered(), task({ status: 'succeeded', assets: layered('task-1', 3) }));
+    const heights = results(cards).map((c) => estimateCardHeight(c));
+    // 1:1 base; layers 1200/1400/1600 wide by 800 tall.
+    expect(new Set(heights).size).toBe(4);
+    expect(heights[1]).toBeLessThan(heights[0]);
+  });
+});
