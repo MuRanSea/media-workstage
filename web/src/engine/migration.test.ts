@@ -314,6 +314,17 @@ describe('migrateLegacyCards: links', () => {
     expect(byId(cards, 'vid').references?.map((r) => r.cardId)).toEqual(['img-run']);
   });
 
+  it('drops the saved address from references of cards that already have a role', () => {
+    const r: SpatialCard = { ...doneImage({ id: 'r' }), role: 'result' };
+    const g: SavedCard = {
+      ...doneVideo({ references: [{ cardId: 'r', tagIndex: 1, role: 'reference_image', label: 'x', url: '/x.png', localPath: 'x.png' }] }),
+      role: 'generation',
+    };
+    const cards = migrateLegacyCards([r, g]);
+    expect(byId(cards, 'vid').references).toEqual([{ cardId: 'r', tagIndex: 1, role: 'reference_image', label: 'x' }]);
+    expect(migrateLegacyCards(cards)).toBe(cards);
+  });
+
   it('keeps links to cards that already have a role', () => {
     const r: SpatialCard = { ...doneImage({ id: 'r' }), role: 'result' };
     const cards = migrateLegacyCards([r, doneVideo({ references: [{ cardId: 'r', tagIndex: 1, role: 'reference_image', label: 'x' }] })]);
@@ -493,6 +504,11 @@ describe('migrateLegacyCards: cards made by the old unpack buttons', () => {
     expect(video.prompt).toBe('推进 @图30');
     // The storyboard's old @图3 meant frame 1; no other frame takes it over.
     expect(resultCardsOf(cards, 'S').map((r) => r.tagIndex)).toEqual([30, 31, 32]);
+    // The video's result records the same renumbered links and prompt.
+    const [videoResult] = resultCardsOf(cards, 'vid');
+    expect(videoResult.snapshot?.references?.map((r) => [r.cardId, r.tagIndex])).toEqual([[first.id, 30]]);
+    expect(videoResult.snapshot?.prompt).toBe('推进 @图30');
+    expect(videoResult.prompt).toBe('推进 @图30');
   });
 
   it('turns an unpacked card whose parent is gone into a standalone result card', () => {

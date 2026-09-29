@@ -1,6 +1,5 @@
 import type { CardRole, ReferenceItem, SpatialCard, TaskAssetDto } from '../types/canvas.ts';
-import { estimateCardHeight, extraAssetLabel, orderedAssets, placeInAssetGrid, snapshotOf } from './resultCards.ts';
-import { firstFreeSlotRight } from './layout.ts';
+import { extraAssetLabel, orderedAssets, placeInAssetGrid, placeResult, resultDraft, snapshotOf } from './resultCards.ts';
 import { assetStoredPath } from './assetPaths.ts';
 
 /**
@@ -19,7 +18,7 @@ import { assetStoredPath } from './assetPaths.ts';
  *
  * Pure and deterministic: result ids derive from the old card's id, so opening a
  * project twice gives the same cards, and migrated cards (which have a role) pass
- * through untouched.
+ * through untouched apart from dropping saved reference addresses.
  */
 
 /** A reference as older versions saved it, with the image address it had when linked. */
@@ -27,9 +26,6 @@ type SavedReference = ReferenceItem & { url?: string; localPath?: string };
 
 /** A card as project.json holds it: without a role when saved before roles existed. */
 export type SavedCard = Omit<SpatialCard, 'role' | 'references'> & { role?: CardRole; references?: SavedReference[] };
-
-/** Space between a migrated result card and its neighbours, as for new results. */
-const GAP = 40;
 
 /** Card types this migration knows; anything else passes through as saved. */
 const MIGRATABLE = new Set<string>(['image', 'video', 'text']);
@@ -51,10 +47,16 @@ const isUnpacked = (card: SavedCard) =>
 const unpackedIdFor = (parent: SavedCard, asset: TaskAssetDto, index: number) =>
   `${asset.kind === 'image_layer' ? 'layer' : 'frame'}-${asset.id || index}-${parent.id}`;
 
-export const migratedOutputId = (legacyId: string, asset?: TaskAssetDto, first = true) =>
-  first || !asset ? `${legacyId}-result` : `${legacyId}-result-${asset.asset_index}`;
-export const migratedRunId = (legacyId: string) => `${legacyId}-run`;
-export const migratedFailureId = (legacyId: string) => `${legacyId}-failed`;
+/** Result ids derive from the legacy card's id, so migrating twice gives the same cards. */
+const outputId = (legacyId: string) => `${legacyId}-result`;
+const extraOutputId = (legacyId: string, asset: TaskAssetDto) => `${legacyId}-result-${asset.asset_index}`;
+const runId = (legacyId: string) => `${legacyId}-run`;
+const failureId = (legacyId: string) => `${legacyId}-failed`;
+
+const hasSavedAddress = (card: SavedCard) => !!card.references?.some((r) => r.url !== undefined || r.localPath !== undefined);
+
+/** References without the address older versions saved when linking: the image is read from the card. */
+const withoutSavedAddress = (refs: SavedReference[]): ReferenceItem[] => refs.map(({ url: _u, localPath: _l, ...ref }) => ref);
 
 /** What a legacy generation card splits into. */
 interface Split {
@@ -62,8 +64,8 @@ interface Split {
   outputs: SpatialCard[];
   /** Its running task's placeholder, and the result card of the task that failed on it. */
   runs: SpatialCard[];
-  /** The card now holding the image it showed, which old links point at. */
-  shown?: string;
+  /** Where old links to it now point: the card holding the output it showed, else its running task's placeholder. */
+  linkTarget?: string;
 }
 
 /**
@@ -73,7 +75,7 @@ interface Split {
 export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
   // Legacy cards read as cards with a role still missing; only fields they share with new cards are used.
   const cards = saved as SpatialCard[];
-  if (!saved.some(isLegacy)) return cards;
+  if (!saved.some((c) => isLegacy(c) || hasSavedAddress(c))) return cards;
 
   let lastTag = cards.reduce((max, c) => Math.max(max, c.tagIndex ?? 0), 0);
   const claimedTasks = new Set(cards.filter((c) => c.role === 'result' && c.taskId).map((c) => c.taskId!));
@@ -106,13 +108,13 @@ export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
     }
 
     if (assets.length || hasOutput(card)) {
-      const first = resultDraft(card, migratedOutputId(card.id), `${card.title} #1`);
+      const first = doneDraft(card, outputId(card.id), `${card.title} #1`);
       assets.forEach((asset, i) => {
         const id = unpackedIds.get(asset);
         if (id) {
           unpackedFrom.set(id, { parentId: card.id, asset });
           if (i === 0) {
-            split.shown = id;
+            split.linkTarget = id;
             // The old @图N meant this image, which already has its own number.
             tag = undefined;
           }
@@ -120,7 +122,7 @@ export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
         }
         const draft: SpatialCard = {
           ...first,
-          id: migratedOutputId(card.id, asset, i === 0),
+          id: i === 0 ? first.id : extraOutputId(card.id, asset),
           title: i === 0 ? first.title : `${first.title} · ${extraAssetLabel(assets, i)}`,
           tagIndex: nextTag(),
           outputAssets: [asset],
@@ -132,10 +134,10 @@ export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
         split.outputs.push(draft);
       });
       if (!assets.length) split.outputs.push({ ...first, tagIndex: nextTag(), resultUrl: card.resultUrl });
-      split.shown ??= split.outputs[0]?.id;
+      split.linkTarget ??= split.outputs[0]?.id;
     } else if (card.type === 'text' && card.textOutput?.trim()) {
-      split.outputs.push({ ...resultDraft(card, migratedOutputId(card.id), `${card.title} #1`), textOutput: card.textOutput });
-      split.shown = split.outputs[0].id;
+      split.outputs.push({ ...doneDraft(card, outputId(card.id), `${card.title} #1`), textOutput: card.textOutput });
+      split.linkTarget = split.outputs[0].id;
     }
 
     const runTitle = () => `${card.title} #${(split.outputs.length ? 1 : 0) + split.runs.length + 1}`;
@@ -143,18 +145,19 @@ export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
     if (isInProgress(card) && !claimedTasks.has(card.taskId!)) {
       claimedTasks.add(card.taskId!);
       split.runs.push({
-        ...resultDraft(card, migratedRunId(card.id), runTitle()),
+        ...resultDraft(card, runId(card.id), runTitle()),
         taskId: card.taskId,
         status: card.status,
         progress: card.progress,
         tagIndex: nextTag(),
       });
-      split.shown ??= split.runs[0].id;
+      // Its output will arrive on the placeholder, as it would have arrived on the old card.
+      split.linkTarget ??= split.runs[0].id;
     }
     // A failure without a task happened while submitting and leaves nothing behind.
     if (card.taskId && FAILED.has(card.status)) {
       split.runs.push({
-        ...resultDraft(card, migratedFailureId(card.id), runTitle()),
+        ...resultDraft(card, failureId(card.id), runTitle()),
         taskId: card.taskId,
         status: card.status,
         progress: card.progress,
@@ -165,9 +168,9 @@ export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
     splits.set(card.id, split);
   }
 
-  // Where links to a legacy card now point, and the @图N that card carries.
+  // Where links to a legacy card now point, and the @图N each card carries.
   const redirect = new Map<string, string | undefined>();
-  for (const [id, split] of splits) redirect.set(id, split.shown);
+  for (const [id, split] of splits) redirect.set(id, split.linkTarget);
   const tagOf = new Map<string, number | undefined>(cards.map((c) => [c.id, c.tagIndex]));
   for (const split of splits.values()) for (const c of [...split.outputs, ...split.runs]) tagOf.set(c.id, c.tagIndex);
   const present = new Set(cards.map((c) => c.id));
@@ -178,60 +181,60 @@ export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
       const cardId = retarget(r.cardId);
       return cardId ? [{ ...r, cardId, tagIndex: tagOf.get(cardId) ?? r.tagIndex }] : [];
     });
+  /** `prompt` with the @图N of each of `refs` renumbered when it now points at a card with another number. */
+  const retag = (prompt: string, refs: Pick<ReferenceItem, 'cardId' | 'tagIndex'>[]) =>
+    refs.reduce((text, old) => {
+      const target = retarget(old.cardId);
+      const now = target === undefined ? undefined : tagOf.get(target);
+      return now !== undefined && now !== old.tagIndex ? text.replace(new RegExp(`@图${old.tagIndex}\\b`, 'g'), `@图${now}`) : text;
+    }, prompt);
 
   // Legacy cards become generation or result cards in place; nothing already on the canvas moves.
   const inPlace = saved.map((savedCard): SpatialCard => {
     const card = savedCard as SpatialCard;
-    if (!isLegacy(savedCard)) return card;
+    if (!isLegacy(savedCard)) {
+      return hasSavedAddress(savedCard) ? { ...card, references: withoutSavedAddress(savedCard.references!) } : card;
+    }
     if (unpacked.has(card.id)) {
       const from = unpackedFrom.get(card.id);
-      const r: SpatialCard = { ...card, role: 'result', snapshot: snapshotOf(card), status: 'succeeded', progress: 100 };
-      delete r.errorMessage;
+      const result: SpatialCard = { ...card, role: 'result', snapshot: snapshotOf(card), status: 'succeeded', progress: 100 };
+      delete result.errorMessage;
       if (from) {
-        r.sourceId = from.parentId;
-        r.outputAssets = [from.asset];
+        result.sourceId = from.parentId;
+        result.outputAssets = [from.asset];
       }
-      return r;
+      return result;
     }
-    const g: SpatialCard = { ...card, role: 'generation', status: 'idle', progress: 0 };
-    for (const f of RUN_FIELDS) delete g[f];
+    const generation: SpatialCard = { ...card, role: 'generation', status: 'idle', progress: 0 };
+    for (const f of RUN_FIELDS) delete generation[f];
     if (savedCard.references) {
-      const refs = retargetRefs(savedCard.references).map(({ url: _u, localPath: _l, ...ref }) => ref);
+      generation.references = withoutSavedAddress(retargetRefs(savedCard.references));
       // A link now pointing at a card with another @图N follows it in the prompt.
-      savedCard.references.forEach((old) => {
-        const now = refs.find((r) => r.cardId === retarget(old.cardId));
-        if (now && now.tagIndex !== old.tagIndex) g.prompt = g.prompt.replace(new RegExp(`@图${old.tagIndex}\\b`, 'g'), `@图${now.tagIndex}`);
-      });
-      g.references = refs;
+      generation.prompt = retag(card.prompt, savedCard.references);
     }
-    if (card.promptSourceId !== undefined) g.promptSourceId = retarget(card.promptSourceId);
-    return g;
+    if (card.promptSourceId !== undefined) generation.promptSourceId = retarget(card.promptSourceId);
+    return generation;
   });
+
+  // A result's snapshot records the links its run was sent with; they follow the migrated cards too.
+  const withLinks = (card: SpatialCard): SpatialCard => {
+    const snapshot = card.snapshot;
+    if (!snapshot?.references) return card;
+    const prompt = retag(snapshot.prompt, snapshot.references);
+    return { ...card, prompt, snapshot: { ...snapshot, prompt, references: retargetRefs(snapshot.references) } };
+  };
 
   // Result cards take the first free slot right of their generation card; several outputs form a grid.
-  const height = (c: SpatialCard) => estimateCardHeight(c);
-  const firstFreeRight = (anchor: SpatialCard, card: SpatialCard, all: SpatialCard[]) => ({
-    ...card,
-    ...firstFreeSlotRight(
-      { ...anchor, height: height(anchor) },
-      { width: card.width, height: height(card) },
-      all.map((c) => ({ ...c, height: height(c) })),
-      GAP
-    ),
-  });
-  const withLinks = (card: SpatialCard): SpatialCard =>
-    card.snapshot?.references ? { ...card, snapshot: { ...card.snapshot, references: retargetRefs(card.snapshot.references) } } : card;
-
   let next = inPlace;
   for (const [id, split] of splits) {
-    const anchor = next.find((c) => c.id === id)!;
+    const generation = next.find((c) => c.id === id)!;
     let first: SpatialCard | undefined;
     split.outputs.map(withLinks).forEach((card, i) => {
-      const placed = first ? placeInAssetGrid(card, first, i, split.outputs.length, next) : firstFreeRight(anchor, card, next);
+      const placed = first ? placeInAssetGrid(card, first, i, split.outputs.length, next) : placeResult(next, generation, card);
       first ??= placed;
       next = [...next, placed];
     });
-    for (const run of split.runs) next = [...next, firstFreeRight(anchor, withLinks(run), next)];
+    for (const run of split.runs) next = [...next, placeResult(next, generation, withLinks(run))];
   }
   return next;
 }
@@ -244,26 +247,7 @@ function outputAssetsOf(card: SpatialCard): TaskAssetDto[] {
   return card.type === 'video' ? assets.slice(0, 1) : assets;
 }
 
-/** A result card of `card` with its settings snapshot, not yet placed; succeeded unless overridden. */
-function resultDraft(card: SpatialCard, id: string, title: string): SpatialCard {
-  const snapshot = snapshotOf(card);
-  const draft: SpatialCard = {
-    id,
-    role: 'result',
-    sourceId: card.id,
-    snapshot,
-    type: card.type,
-    title,
-    x: 0,
-    y: 0,
-    width: card.width,
-    prompt: snapshot.prompt,
-    provider: card.provider,
-    model: card.model,
-    ...snapshot.params,
-    status: 'succeeded',
-    progress: 100,
-  };
-  if (card.type === 'text') draft.textPreset = card.textPreset;
-  return draft;
+/** A finished result card of `card`'s saved output, not yet placed. */
+function doneDraft(card: SpatialCard, id: string, title: string): SpatialCard {
+  return { ...resultDraft(card, id, title), status: 'succeeded', progress: 100 };
 }

@@ -123,16 +123,28 @@ export function addPendingResult(
 ): SpatialCard[] {
   if (cards.some((c) => c.role === 'result' && c.taskId === task.id)) return cards;
 
-  const snapshot = snapshotOf(submitted);
   const draft: SpatialCard = {
-    id: resultIdFor(task.id),
+    ...resultDraft(submitted, resultIdFor(task.id), `${submitted.title} #${resultCardsOf(cards, submitted.id).length + 1}`),
+    taskId: task.id,
+    tagIndex: submitted.type === 'image' ? nextTagIndex(cards) : undefined,
+  };
+
+  return settleResult([...cards, placeResult(cards, submitted, draft, heightOf)], draft.id, task, heightOf);
+}
+
+/**
+ * A queued result card of a run of `submitted` (the card as sent), recording what
+ * it was sent with; not yet placed. Callers add the task, tag and output.
+ */
+export function resultDraft(submitted: SpatialCard, id: string, title: string): SpatialCard {
+  const snapshot = snapshotOf(submitted);
+  return {
+    id,
     role: 'result',
     sourceId: submitted.id,
     snapshot,
-    taskId: task.id,
     type: submitted.type,
-    title: `${submitted.title} #${resultCardsOf(cards, submitted.id).length + 1}`,
-    tagIndex: submitted.type === 'image' ? nextTagIndex(cards) : undefined,
+    title,
     x: 0,
     y: 0,
     width: submitted.width,
@@ -143,12 +155,15 @@ export function addPendingResult(
     status: 'queued',
     progress: 0,
   };
-
-  return settleResult([...cards, placeResult(cards, submitted, draft, heightOf)], draft.id, task, heightOf);
 }
 
 /** `draft` moved to the first free slot right of the generation card `submitted` came from. */
-function placeResult(cards: SpatialCard[], submitted: SpatialCard, draft: SpatialCard, heightOf: HeightOf): SpatialCard {
+export function placeResult(
+  cards: SpatialCard[],
+  submitted: SpatialCard,
+  draft: SpatialCard,
+  heightOf: HeightOf = () => undefined
+): SpatialCard {
   const height = (c: SpatialCard) => heightOf(c) ?? estimateCardHeight(c);
   // The generation card may have been dragged while the request was in flight.
   const anchor = cards.find((c) => c.id === submitted.id) ?? submitted;
@@ -179,21 +194,8 @@ export function settleTextRun(
     cards.map((c) => (c.id === submitted.id && c.errorMessage !== errorMessage ? { ...c, errorMessage } : c));
   if ('error' in outcome) return setError(outcome.error);
 
-  const snapshot = snapshotOf(submitted);
   const draft: SpatialCard = {
-    id: `${TEXT_RESULT_PREFIX}${newCardId()}`,
-    role: 'result',
-    sourceId: submitted.id,
-    snapshot,
-    type: 'text',
-    title: `${submitted.title} #${resultCardsOf(cards, submitted.id).length + 1}`,
-    x: 0,
-    y: 0,
-    width: submitted.width,
-    prompt: snapshot.prompt,
-    provider: submitted.provider,
-    model: submitted.model,
-    textPreset: submitted.textPreset,
+    ...resultDraft(submitted, `${TEXT_RESULT_PREFIX}${newCardId()}`, `${submitted.title} #${resultCardsOf(cards, submitted.id).length + 1}`),
     textOutput: outcome.text,
     status: 'succeeded',
     progress: 100,
