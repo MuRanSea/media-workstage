@@ -231,7 +231,6 @@ export function applyTaskToCards(
   return changed ? next : cards;
 }
 
-/** Base image first, then layers by `z_index`, then frames by `asset_index`. */
 /** Where each asset kind sorts among a task's outputs, and what its extra cards are called. */
 const ASSET_KINDS: Record<TaskAssetDto['kind'], { rank: number; label?: string }> = {
   video: { rank: 0 },
@@ -240,6 +239,7 @@ const ASSET_KINDS: Record<TaskAssetDto['kind'], { rank: number; label?: string }
   image_frame: { rank: 2, label: '分镜' },
 };
 
+/** Base image first, then layers by `z_index`, then frames by `asset_index`. */
 export function orderedAssets(assets: TaskAssetDto[]): TaskAssetDto[] {
   const rank = (a: TaskAssetDto) => ASSET_KINDS[a.kind].rank;
   return [...assets].sort(
@@ -260,28 +260,47 @@ function settleResult(cards: SpatialCard[], placeholderId: string, task: Backend
   // A video task's extra assets (a returned last frame) belong to the video.
   if (first.type !== 'image' || assets.length < 2) return next;
 
-  const height = (c: SpatialCard) => heightOf(c) ?? estimateCardHeight(c);
-  // Columns grow with the output count: 2 for up to 4 cards, 4 for a 15-frame storyboard, 5 for 17 layers.
-  const columns = Math.ceil(Math.sqrt(assets.length));
   assets.slice(1).forEach((asset, i) => {
-    const kindLabel = ASSET_KINDS[asset.kind].label;
-    const label = kindLabel ? `${kindLabel} ${assets.filter((a) => a.kind === asset.kind).indexOf(asset) + 1}` : `${i + 2}`;
     const card: SpatialCard = {
       ...first,
       id: extraResultIdFor(task.id, asset.asset_index),
-      title: `${first.title} · ${label}`,
+      title: `${first.title} · ${extraAssetLabel(assets, i + 1)}`,
       tagIndex: first.type === 'image' ? nextTagIndex(next) : undefined,
       outputAssets: [asset],
       resultUrl: assetStoredPath(asset),
     };
-    const column = (i + 1) % columns;
-    const slot = firstFreeSlotBelow(
-      { x: first.x + column * (first.width + GAP), y: first.y },
-      { width: card.width, height: height(card) },
-      next.map((c) => ({ ...c, height: height(c) })),
-      GAP
-    );
-    next = [...next, { ...card, ...slot }];
+    next = [...next, placeInAssetGrid(card, first, i + 1, assets.length, next, heightOf)];
   });
   return next;
+}
+
+/** What the card for `ordered[index]` (not the first) is called after the first card's title: "图层 2", "分镜 3". */
+export function extraAssetLabel(ordered: TaskAssetDto[], index: number): string {
+  const asset = ordered[index];
+  const kindLabel = ASSET_KINDS[asset.kind].label;
+  return kindLabel ? `${kindLabel} ${ordered.filter((a) => a.kind === asset.kind).indexOf(asset) + 1}` : `${index + 1}`;
+}
+
+/**
+ * `card`, the one for output `index` of `count`, in the first free slot of its
+ * grid column: the grid starts at `first` (output 0) and nothing is moved.
+ */
+export function placeInAssetGrid(
+  card: SpatialCard,
+  first: SpatialCard,
+  index: number,
+  count: number,
+  cards: SpatialCard[],
+  heightOf: HeightOf = () => undefined
+): SpatialCard {
+  const height = (c: SpatialCard) => heightOf(c) ?? estimateCardHeight(c);
+  // Columns grow with the output count: 2 for up to 4 cards, 4 for a 15-frame storyboard, 5 for 17 layers.
+  const column = index % Math.ceil(Math.sqrt(count));
+  const slot = firstFreeSlotBelow(
+    { x: first.x + column * (first.width + GAP), y: first.y },
+    { width: card.width, height: height(card) },
+    cards.map((c) => ({ ...c, height: height(c) })),
+    GAP
+  );
+  return { ...card, ...slot };
 }

@@ -338,3 +338,221 @@ describe('migrateLegacyCards: repeatability', () => {
     expect(migrateLegacyCards(once)).toEqual(once);
   });
 });
+
+// --- Multi-asset outputs, unpacked cards and failures (ticket 09) ---
+
+const layerTask = 'task-layers';
+const baseAsset = asset(layerTask, { id: 'base', local_path: 'images/task-layers/base.png' });
+const layerAsset = (n: number, z: number) =>
+  asset(layerTask, {
+    id: `layer${n}`,
+    asset_index: n,
+    kind: 'image_layer',
+    z_index: z,
+    local_path: `images/task-layers/layer_${n}.png`,
+    bounding_box_json: '{"absolute":[0,0,100,200]}',
+  });
+
+/** An old layer decomposition card: base plus layers, saved in backend order. */
+const layered = (patch: Partial<SpatialCard> = {}) =>
+  doneImage({
+    id: 'P',
+    taskId: layerTask,
+    imageMode: 'layer_decomp',
+    tagIndex: 2,
+    resultUrl: '/assets/images/task-layers/base.png',
+    outputAssets: [baseAsset, layerAsset(1, 2), layerAsset(2, 1)],
+    ...patch,
+  });
+
+const frameTask = 'task-frames';
+const frameAsset = (n: number) =>
+  asset(frameTask, { id: `f${n}`, asset_index: n, kind: 'image_frame', local_path: `images/task-frames/frame_${n}.png` });
+
+const storyboard = (patch: Partial<SpatialCard> = {}) =>
+  doneImage({
+    id: 'S',
+    taskId: frameTask,
+    imageMode: 'sequential',
+    tagIndex: 3,
+    resultUrl: '/assets/images/task-frames/frame_0.png',
+    outputAssets: [frameAsset(0), frameAsset(1), frameAsset(2)],
+    ...patch,
+  });
+
+/** A card the old "unpack" button made from `parent`'s asset: a result, no task, id prefixed by kind. */
+const unpacked = (kind: 'layer' | 'frame', parentId: string, a: TaskAssetDto, patch: Partial<SpatialCard> = {}) =>
+  legacy({
+    id: `${kind}-${a.id}-${parentId}`,
+    title: `旧展开 ${a.id}`,
+    tagIndex: 20,
+    x: 5000,
+    y: 5000,
+    width: 330,
+    status: 'succeeded',
+    progress: 100,
+    resultUrl: `/assets/${a.local_path}`,
+    ...patch,
+  });
+
+describe('migrateLegacyCards: a card with several outputs', () => {
+  it('gives each asset of a layer decomposition its own result card, base first then layers by z_index', () => {
+    const cards = migrateLegacyCards([layered()]);
+    const rs = resultCardsOf(cards, 'P');
+    expect(rs.map((r) => r.outputAssets?.[0].id)).toEqual(['base', 'layer2', 'layer1']);
+    expect(rs.map((r) => r.id)).toEqual(['P-result', 'P-result-2', 'P-result-1']);
+    expect(rs.map((r) => r.resultUrl)).toEqual([
+      '/assets/images/task-layers/base.png',
+      '/assets/images/task-layers/layer_2.png',
+      '/assets/images/task-layers/layer_1.png',
+    ]);
+    expect(rs.map((r) => r.title)).toEqual(['图片 1 #1', '图片 1 #1 · 图层 1', '图片 1 #1 · 图层 2']);
+    expect(rs.every((r) => r.status === 'succeeded' && r.taskId === layerTask)).toBe(true);
+  });
+
+  it('lets the base keep the old @图N and numbers the rest one past the highest tag', () => {
+    const cards = migrateLegacyCards([layered(), legacy({ id: 'other', tagIndex: 7, x: -3000 })]);
+    expect(resultCardsOf(cards, 'P').map((r) => r.tagIndex)).toEqual([2, 8, 9]);
+  });
+
+  it('gives each storyboard frame its own result card in frame order', () => {
+    const cards = migrateLegacyCards([storyboard({ outputAssets: [frameAsset(2), frameAsset(0), frameAsset(1)] })]);
+    const rs = resultCardsOf(cards, 'S');
+    expect(rs.map((r) => r.outputAssets?.[0].id)).toEqual(['f0', 'f1', 'f2']);
+    expect(rs.map((r) => r.tagIndex)).toEqual([3, 4, 5]);
+  });
+
+  it('lays the cards out in a grid that overlaps nothing and moves nothing', () => {
+    const frames = Array.from({ length: 9 }, (_, i) => frameAsset(i));
+    const input = [storyboard({ outputAssets: frames }), legacy({ id: 'n', x: 400, y: 600, tagIndex: 1 })];
+    const cards = migrateLegacyCards(input);
+    for (const original of input) expect(byId(cards, original.id)).toMatchObject({ x: original.x, y: original.y });
+    const rs = resultCardsOf(cards, 'S');
+    expect(new Set(rs.map((r) => r.x)).size).toBe(3);
+    const rect = (c: SpatialCard) => ({ x: c.x, y: c.y, width: c.width, height: estimateCardHeight(c) });
+    for (const r of rs) {
+      for (const other of cards.filter((c) => c.id !== r.id)) expect(isRectIntersecting(rect(r), rect(other))).toBe(false);
+    }
+  });
+
+  it('points links at the base image', () => {
+    const cards = migrateLegacyCards([
+      layered(),
+      doneVideo({ prompt: '推进 @图2', references: [{ cardId: 'P', tagIndex: 2, role: 'reference_image', label: 'x' }] }),
+    ]);
+    expect(byId(cards, 'vid').references?.map((r) => [r.cardId, r.tagIndex])).toEqual([['P-result', 2]]);
+  });
+});
+
+describe('migrateLegacyCards: cards made by the old unpack buttons', () => {
+  it('turns an unpacked layer into a result card in place, linked to the migrated generation card', () => {
+    const layerCard = unpacked('layer', 'P', layerAsset(1, 2), { tagIndex: 11 });
+    const cards = migrateLegacyCards([layered(), layerCard]);
+    const r = byId(cards, layerCard.id);
+    expect(r).toMatchObject({
+      role: 'result',
+      sourceId: 'P',
+      x: 5000,
+      y: 5000,
+      title: '旧展开 layer1',
+      tagIndex: 11,
+      resultUrl: '/assets/images/task-layers/layer_1.png',
+      status: 'succeeded',
+    });
+    expect(r.taskId).toBeUndefined();
+    expect(r.outputAssets?.map((a) => a.id)).toEqual(['layer1']);
+  });
+
+  it('does not make a second card for an asset that was already unpacked', () => {
+    const cards = migrateLegacyCards([layered(), unpacked('layer', 'P', layerAsset(1, 2)), unpacked('layer', 'P', layerAsset(2, 1))]);
+    const rs = resultCardsOf(cards, 'P');
+    expect(rs).toHaveLength(3);
+    expect(rs.map((r) => r.outputAssets?.[0].id).sort()).toEqual(['base', 'layer1', 'layer2']);
+    expect(cards).toHaveLength(4);
+  });
+
+  it('keeps the card count and content of a fully unpacked storyboard, adding only the generation link', () => {
+    const input = [storyboard(), unpacked('frame', 'S', frameAsset(0)), unpacked('frame', 'S', frameAsset(1)), unpacked('frame', 'S', frameAsset(2))];
+    const cards = migrateLegacyCards(input);
+    expect(cards).toHaveLength(4);
+    for (const card of input.slice(1)) {
+      expect(byId(cards, card.id)).toMatchObject({ role: 'result', sourceId: 'S', resultUrl: card.resultUrl, tagIndex: card.tagIndex });
+    }
+  });
+
+  it('points links to a storyboard at its first frame even when that frame was unpacked', () => {
+    const first = unpacked('frame', 'S', frameAsset(0), { tagIndex: 30 });
+    const cards = migrateLegacyCards([
+      storyboard(),
+      first,
+      doneVideo({ prompt: '推进 @图3', references: [{ cardId: 'S', tagIndex: 3, role: 'reference_image', label: 'x' }] }),
+    ]);
+    const video = byId(cards, 'vid');
+    expect(video.references?.map((r) => [r.cardId, r.tagIndex])).toEqual([[first.id, 30]]);
+    expect(video.prompt).toBe('推进 @图30');
+    // The storyboard's old @图3 meant frame 1; no other frame takes it over.
+    expect(resultCardsOf(cards, 'S').map((r) => r.tagIndex)).toEqual([30, 31, 32]);
+  });
+
+  it('turns an unpacked card whose parent is gone into a standalone result card', () => {
+    const orphan = unpacked('frame', 'deleted', frameAsset(0));
+    const [r] = migrateLegacyCards([orphan]);
+    expect(r).toMatchObject({ id: orphan.id, role: 'result', status: 'succeeded', x: 5000, y: 5000, tagIndex: 20 });
+    expect(r.sourceId).toBeUndefined();
+  });
+
+  it('keeps links to unpacked cards', () => {
+    const layerCard = unpacked('layer', 'P', layerAsset(1, 2));
+    const cards = migrateLegacyCards([
+      layered(),
+      layerCard,
+      doneVideo({ references: [{ cardId: layerCard.id, tagIndex: 20, role: 'reference_image', label: 'x' }] }),
+    ]);
+    expect(byId(cards, 'vid').references?.map((r) => r.cardId)).toEqual([layerCard.id]);
+  });
+
+  it('is repeatable', () => {
+    const project = () => [layered(), unpacked('layer', 'P', layerAsset(1, 2)), storyboard({ x: 0, y: 3000 }), unpacked('frame', 'S', frameAsset(1))];
+    const once = migrateLegacyCards(project());
+    expect(migrateLegacyCards(project())).toEqual(once);
+    expect(migrateLegacyCards(once)).toEqual(once);
+    expect(once.filter((c) => c.id.startsWith('layer-'))).toHaveLength(1);
+    expect(once.filter((c) => c.id.startsWith('frame-'))).toHaveLength(1);
+  });
+});
+
+describe('migrateLegacyCards: failed cards', () => {
+  it('turns a task that failed into a failed result card that keeps the error', () => {
+    const cards = migrateLegacyCards([legacy({ taskId: 'task-bad', status: 'failed', errorMessage: '内容违规' })]);
+    expect(byId(cards, 'img')).toMatchObject({ role: 'generation', status: 'idle' });
+    expect(byId(cards, 'img').errorMessage).toBeUndefined();
+    const [r] = resultCardsOf(cards, 'img');
+    expect(r).toMatchObject({ id: 'img-failed', role: 'result', taskId: 'task-bad', status: 'failed', errorMessage: '内容违规' });
+    expect(cardsAwaitingTask(cards)).toEqual([]);
+  });
+
+  it.each(['cancelled', 'expired'] as const)('does the same for a %s task', (status) => {
+    const cards = migrateLegacyCards([legacy({ id: 'v', type: 'video', taskId: 't', status, errorMessage: 'x' })]);
+    expect(resultCardsOf(cards, 'v')).toMatchObject([{ status, errorMessage: 'x' }]);
+  });
+
+  it('keeps an earlier output next to a rerun that failed', () => {
+    const cards = migrateLegacyCards([{ ...doneImage(), taskId: 'task-bad', status: 'failed' as const, errorMessage: '超时' }]);
+    expect(resultCardsOf(cards, 'img').map((r) => [r.id, r.status, r.taskId])).toEqual([
+      ['img-result', 'succeeded', 'task-img'],
+      ['img-failed', 'failed', 'task-bad'],
+    ]);
+  });
+
+  it('clears a failure that happened before any task existed', () => {
+    const cards = migrateLegacyCards([legacy({ status: 'failed', errorMessage: '缺少提示词' })]);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({ role: 'generation', status: 'idle' });
+    expect(cards[0].errorMessage).toBeUndefined();
+  });
+
+  it('drops links to a card whose only run failed', () => {
+    const cards = migrateLegacyCards([legacy({ taskId: 'task-bad', status: 'failed' }), doneVideo()]);
+    expect(byId(cards, 'vid').references).toEqual([]);
+  });
+});
