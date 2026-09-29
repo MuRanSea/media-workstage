@@ -4,10 +4,27 @@ import {
   resolveReferenceAsset,
 } from './videoCompiler.ts';
 import type { SpatialCard } from '../types/canvas.ts';
+import type { BackendTaskResponse } from '../services/api.ts';
+import { addPendingResult, applyTaskToCards } from './resultCards.ts';
+import { createCard } from './cardFactory.ts';
+import { connectCards } from './connections.ts';
 
 describe('Video Task Payload Compiler & Asset Resolution', () => {
-  it('normalizes relative /assets/... URL in ReferenceItem to localPath and omits url', () => {
-    // When attachReference sets ref.url to "/assets/images/task-1/base.png"
+  it('ignores the address saved on the reference and reads the image card itself', () => {
+    const imgCard: SpatialCard = {
+      id: 'c-1',
+      type: 'image',
+      title: 'Character',
+      tagIndex: 1,
+      x: 0,
+      y: 0,
+      width: 340,
+      prompt: '',
+      model: 'doubao-seedream-5-0-pro-260628',
+      status: 'succeeded',
+      progress: 100,
+      resultUrl: 'assets/images/task-2/base.png',
+    };
     const resolved = resolveReferenceAsset(
       {
         cardId: 'c-1',
@@ -15,12 +32,12 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
         role: 'reference_image',
         label: 'Character',
         url: '/assets/images/task-1/base.png',
+        localPath: 'images/task-1/base.png',
       },
-      []
+      [imgCard]
     );
 
-    expect(resolved.localPath).toBe('assets/images/task-1/base.png');
-    expect(resolved.url).toBeUndefined();
+    expect(resolved).toEqual({ localPath: 'assets/images/task-2/base.png' });
   });
 
   it('prioritizes localPath alone when source card has both local_path and remote_url', () => {
@@ -60,20 +77,19 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
     expect(resolved.url).toBeUndefined();
   });
 
-  it('returns external HTTP/HTTPS URL when only remote URL is provided', () => {
-    const resolved = resolveReferenceAsset(
-      {
-        cardId: 'c-ext',
-        tagIndex: 2,
-        role: 'reference_image',
-        label: 'External',
-        url: 'https://cdn.example.com/character.png',
-      },
-      []
-    );
-
-    expect(resolved.url).toBe('https://cdn.example.com/character.png');
-    expect(resolved.localPath).toBeUndefined();
+  it('rejects a reference whose image card is no longer on the canvas, even with a saved address', () => {
+    expect(() =>
+      resolveReferenceAsset(
+        {
+          cardId: 'c-deleted',
+          tagIndex: 2,
+          role: 'reference_image',
+          label: 'Deleted',
+          url: 'https://cdn.example.com/character.png',
+        },
+        []
+      )
+    ).toThrowError(/@图2 was not found/);
   });
 
   it('rejects ungenerated reference image cards with a clear descriptive error', () => {
@@ -483,5 +499,61 @@ describe('APIMart Kling video compilation', () => {
         [imageCard]
       )
     ).toThrowError(/at most 1 reference/);
+  });
+});
+
+describe('references to image result cards', () => {
+  const task = (id: string, patch: Partial<BackendTaskResponse> = {}): BackendTaskResponse => ({
+    id,
+    provider: 'ark',
+    provider_task_id: '',
+    model: 'm',
+    task_type: 'image_generation',
+    task_mode: 'single',
+    prompt: '',
+    params_json: '',
+    status: 'queued',
+    progress: 0,
+    created_at: '',
+    updated_at: '',
+    ...patch,
+  });
+  const succeeded = (id: string) =>
+    task(id, {
+      status: 'succeeded',
+      assets: [{ id: `${id}-a0`, task_id: id, asset_index: 0, kind: 'image_base', z_index: 0, local_path: `images/${id}/base.png` }],
+    });
+
+  /** Runs the image generation card once more and lets the task finish. */
+  const generateImage = (cards: SpatialCard[], taskId: string) =>
+    applyTaskToCards(addPendingResult(cards, cards.find((c) => c.id === 'g1')!, task(taskId)), succeeded(taskId));
+
+  const imageGen: SpatialCard = { ...createCard('image', { x: 0, y: 0 }, []), id: 'g1', prompt: '街景' };
+  const videoGen: SpatialCard = { ...createCard('video', { x: 0, y: 800 }, []), id: 'v1', prompt: '镜头推进' };
+
+  it('keeps using the chosen image after the image card generates again', () => {
+    let cards = generateImage(generateImage([imageGen, videoGen], 'task-1'), 'task-2');
+    const first = cards.find((c) => c.taskId === 'task-1')!;
+
+    const link = connectCards(first, videoGen);
+    expect(link.ok).toBe(true);
+    if (!link.ok) return;
+    cards = cards.map((c) => (c.id === 'v1' ? { ...c, ...link.patch } : c));
+    cards = generateImage(cards, 'task-3');
+
+    const payload = compileCardVideoPayload(cards.find((c) => c.id === 'v1')!, cards);
+    expect(payload.reference_assets).toEqual([
+      expect.objectContaining({ card_id: first.id, local_path: 'assets/images/task-1/base.png' }),
+    ]);
+    expect(payload.prompt).toBe('镜头推进 图1');
+  });
+
+  it('refuses to generate from an image result card that is still running', () => {
+    const cards = addPendingResult([imageGen, videoGen], imageGen, task('task-1', { status: 'running' }));
+    const running = cards.find((c) => c.taskId === 'task-1')!;
+    const link = connectCards(running, videoGen);
+    if (!link.ok) throw new Error(link.reason);
+
+    expect(() => compileCardVideoPayload({ ...videoGen, ...link.patch }, cards)).toThrowError(/has not generated/);
   });
 });

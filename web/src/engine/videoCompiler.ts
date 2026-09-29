@@ -20,34 +20,20 @@ function isRemoteOrDataURI(str: string): boolean {
 }
 
 /**
- * Resolves the local asset path or remote URL for a referenced image card.
+ * Resolves the local asset path or remote URL of the image card a reference points at.
+ * The address saved on the reference when it was linked is ignored, so the video
+ * always uses the image the card shows; a result card never changes its image.
  */
 export function resolveReferenceAsset(
   ref: ReferenceItem,
   allCards: SpatialCard[] = []
 ): { url?: string; localPath?: string; remoteUrl?: string } {
-  // 1. If ref has explicit localPath
-  if (ref.localPath) {
-    if (isRemoteOrDataURI(ref.localPath)) {
-      return { url: ref.localPath };
-    }
-    return { localPath: normalizeLocalPath(ref.localPath) };
-  }
-
-  // 2. If ref has url (which might be a relative /assets/ path or remote URL)
-  if (ref.url) {
-    if (isRemoteOrDataURI(ref.url)) {
-      return { url: ref.url };
-    }
-    return { localPath: normalizeLocalPath(ref.url) };
-  }
-
   const srcCard = allCards.find((c) => c.id === ref.cardId);
   if (!srcCard) {
     throw new Error(`Referenced image card @图${ref.tagIndex} was not found on the canvas`);
   }
 
-  // 3. Find primary asset on source card
+  // The card's primary image asset
   const baseAsset = srcCard.outputAssets?.find(
     (a) => a.kind === 'image_base' || a.kind === 'image_layer' || a.kind === 'image_frame'
   );

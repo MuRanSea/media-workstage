@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { connectCards, effectivePrompt, hasInputPort, hasOutputPort, withEffectivePrompt } from './connections.ts';
+import { connectCards, effectivePrompt, hasInputPort, hasOutputPort, removeCards, withEffectivePrompt } from './connections.ts';
 import { buildProviderGroups } from './channelModels.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 import type { ProviderConfigItem } from '../services/api.ts';
@@ -34,7 +34,7 @@ describe('connectCards', () => {
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.patch.references).toEqual([
-      { cardId: 'i1', tagIndex: 3, role: 'reference_image', label: '街景', url: undefined },
+      { cardId: 'i1', tagIndex: 3, role: 'reference_image', label: '街景' },
     ]);
     expect(res.patch.prompt).toBe('镜头推进 @图3');
   });
@@ -104,6 +104,73 @@ describe('generation and result card ports', () => {
   });
 });
 
+describe('connecting result cards', () => {
+  const genImg = card({ id: 'gi', type: 'image', role: 'generation', tagIndex: undefined });
+  const genVideo = video({ id: 'gv', role: 'generation', tagIndex: undefined });
+  const genText = card({ id: 'gt', type: 'text', role: 'generation', tagIndex: undefined });
+  const imgResult = card({ id: 'ri', type: 'image', role: 'result', sourceId: 'gi', tagIndex: 5, title: '第一张', resultUrl: 'assets/images/t1/base.png' });
+  const textResult = card({ id: 'rt', type: 'text', role: 'result', sourceId: 'gt', tagIndex: undefined, textOutput: '雨夜' });
+  const videoResult = video({ id: 'rv', role: 'result', sourceId: 'gv', tagIndex: undefined });
+
+  it('makes a text result card the prompt source of image and video generation cards', () => {
+    expect(connectCards(textResult, genImg)).toEqual({ ok: true, patch: { promptSourceId: 'rt' } });
+    expect(connectCards(textResult, genVideo)).toEqual({ ok: true, patch: { promptSourceId: 'rt' } });
+  });
+
+  it('makes an image result card a reference of a video generation card, without saving its address', () => {
+    const res = connectCards(imgResult, genVideo);
+    expect(res.ok && res.patch.references).toEqual([
+      { cardId: 'ri', tagIndex: 5, role: 'reference_image', label: '第一张' },
+    ]);
+    expect(res.ok && res.patch.prompt).toBe('镜头推进 @图5');
+  });
+
+  it('refuses every other pairing, and repeats, with a reason', () => {
+    const cases: [SpatialCard, SpatialCard, string][] = [
+      [imgResult, genImg, '图片卡片之间'],
+      [imgResult, genText, '没有输入端口'],
+      [textResult, genText, '文本卡片之间'],
+      [videoResult, genVideo, '没有输出端口'],
+      [genImg, genVideo, '没有输出端口'],
+      [genText, genImg, '没有输出端口'],
+      [textResult, imgResult, '没有输入端口'],
+      [imgResult, videoResult, '没有输入端口'],
+      [textResult, { ...genImg, promptSourceId: 'rt' }, '已经连接'],
+      [imgResult, { ...genVideo, references: [{ cardId: 'ri', tagIndex: 5, role: 'reference_image', label: '' }] }, '已经连接'],
+    ];
+    for (const [src, tgt, reason] of cases) {
+      const res = connectCards(src, tgt);
+      expect(res.ok, `${src.id} → ${tgt.id}`).toBe(false);
+      if (!res.ok) expect(res.reason).toContain(reason);
+    }
+  });
+
+  it('gives only image and text result cards an output port', () => {
+    const ports = [genImg, genVideo, genText, imgResult, textResult, videoResult].map((c) => [c.id, hasOutputPort(c), hasInputPort(c)]);
+    expect(ports).toEqual([
+      ['gi', false, true],
+      ['gv', false, true],
+      ['gt', false, false],
+      ['ri', true, false],
+      ['rt', true, false],
+      ['rv', false, false],
+    ]);
+  });
+
+  it('generates with the text of the linked text result card', () => {
+    const linked = { ...genImg, prompt: '旧提示词', promptSourceId: 'rt' };
+    expect(withEffectivePrompt(linked, [textResult, linked]).prompt).toBe('雨夜');
+  });
+
+  it('refuses to generate while the linked text result card is empty or still running', () => {
+    const linked = { ...genVideo, prompt: '旧提示词', promptSourceId: 'rt' };
+    const empty = { ...textResult, textOutput: '  ' };
+    const running = { ...textResult, status: 'running' as const };
+    expect(() => withEffectivePrompt(linked, [empty, linked])).toThrowError(/还没有生成内容/);
+    expect(() => withEffectivePrompt(linked, [running, linked])).toThrowError(/还在生成中/);
+  });
+});
+
 describe('linked prompts', () => {
   it('uses the text card output once it exists', () => {
     const linked = { ...img, prompt: '旧提示词', promptSourceId: 't1' };
@@ -147,5 +214,29 @@ describe('text model options', () => {
     expect(groups.map((g) => [g.provider, g.options.map((o) => o.id), g.ready])).toEqual([
       ['apimart', ['gpt-5'], true],
     ]);
+  });
+});
+
+describe('removeCards', () => {
+  it('clears the prompt sources and references that pointed at deleted result cards', () => {
+    const imgResult = card({ id: 'ri', type: 'image', role: 'result', tagIndex: 5 });
+    const textResult = card({ id: 'rt', type: 'text', role: 'result', textOutput: '雨夜' });
+    const other = card({ id: 'ri2', type: 'image', role: 'result', tagIndex: 6 });
+    const linked = video({
+      role: 'generation',
+      promptSourceId: 'rt',
+      references: [
+        { cardId: 'ri', tagIndex: 5, role: 'reference_image', label: 'a' },
+        { cardId: 'ri2', tagIndex: 6, role: 'reference_image', label: 'b' },
+      ],
+    });
+    const untouched = card({ id: 'x', type: 'image' });
+
+    const next = removeCards([imgResult, textResult, other, linked, untouched], ['ri', 'rt']);
+
+    expect(next.map((c) => c.id)).toEqual(['ri2', 'v1', 'x']);
+    expect(next[1].promptSourceId).toBeUndefined();
+    expect(next[1].references?.map((r) => r.cardId)).toEqual(['ri2']);
+    expect(next[2]).toEqual(untouched);
   });
 });

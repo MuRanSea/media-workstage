@@ -3,7 +3,7 @@ import { Copy, FileText, Film, Image as ImageIcon, Sparkles, Trash2 } from 'luci
 import type { CardType, SpatialCard } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
 import { screenToWorld, type CanvasTransform, type Point } from '../engine/matrix.ts';
-import { connectCards, hasOutputPort } from '../engine/connections.ts';
+import { connectCards, hasOutputPort, removeCards } from '../engine/connections.ts';
 import { createCard, duplicateCards } from '../engine/cardFactory.ts';
 import { useHistory } from '../engine/useHistory.ts';
 import { removeReferencePatch } from '../engine/cardParams.ts';
@@ -222,18 +222,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     (ids: string[]) => {
       if (ids.length === 0) return;
       const gone = new Set(ids);
-      // Drop connections that point at the deleted cards along with them.
-      editCards((prev) =>
-        prev
-          .filter((c) => !gone.has(c.id))
-          .map((c) => {
-            const refs = c.references?.filter((r) => !gone.has(r.cardId));
-            const promptSourceId = c.promptSourceId && gone.has(c.promptSourceId) ? undefined : c.promptSourceId;
-            return refs?.length !== c.references?.length || promptSourceId !== c.promptSourceId
-              ? { ...c, references: refs, promptSourceId }
-              : c;
-          })
-      );
+      editCards((prev) => removeCards(prev, gone));
       setSelectedCardIds((prev) => new Set([...prev].filter((id) => !gone.has(id))));
       toast(`已删除 ${ids.length} 张卡片`, { action: { label: '撤销', onClick: undo } });
     },

@@ -27,7 +27,9 @@ export interface ReferenceItem {
   tagIndex: number;
   role: 'reference_image' | 'first_frame' | 'last_frame';
   label: string;
+  /** @deprecated Address snapshot taken when linking; no longer read, the image comes from the card itself. */
   url?: string;
+  /** @deprecated Never read; see `url`. */
   localPath?: string;
 }
 

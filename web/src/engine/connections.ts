@@ -73,7 +73,6 @@ function attachImageToVideo(image: SpatialCard, video: SpatialCard): ConnectResu
     tagIndex: image.tagIndex,
     role,
     label: image.title.slice(0, 10),
-    url: image.resultUrl,
   };
   const tag = `@图${image.tagIndex}`;
   const prompt = video.prompt.includes(tag) ? video.prompt : `${video.prompt} ${tag}`.trim();
@@ -88,13 +87,33 @@ export function effectivePrompt(card: SpatialCard, cards: SpatialCard[]): string
   return source?.textOutput?.trim() ? source.textOutput.trim() : card.prompt;
 }
 
-/** Throws when a linked text card has no output yet, so the user is told instead of silently using the old prompt. */
+/**
+ * Throws when a linked text card is still running or has no output yet, so the
+ * user is told instead of silently using the old prompt.
+ */
 export function withEffectivePrompt(card: SpatialCard, cards: SpatialCard[]): SpatialCard {
   if (!card.promptSourceId) return card;
   const source = cards.find((c) => c.id === card.promptSourceId);
   if (!source) return { ...card, promptSourceId: undefined };
+  if (source.status === 'queued' || source.status === 'running') {
+    throw new Error(`连接的文本卡片「${source.title}」还在生成中，请等它完成后再生成`);
+  }
   if (!source.textOutput?.trim()) {
     throw new Error(`连接的文本卡片「${source.title}」还没有生成内容，请先生成文本`);
   }
   return { ...card, prompt: source.textOutput.trim() };
+}
+
+/** `cards` without the cards in `ids`, and without the prompt sources and references that pointed at them. */
+export function removeCards(cards: SpatialCard[], ids: Iterable<string>): SpatialCard[] {
+  const gone = new Set(ids);
+  return cards
+    .filter((c) => !gone.has(c.id))
+    .map((c) => {
+      const refs = c.references?.filter((r) => !gone.has(r.cardId));
+      const promptSourceId = c.promptSourceId && gone.has(c.promptSourceId) ? undefined : c.promptSourceId;
+      return refs?.length !== c.references?.length || promptSourceId !== c.promptSourceId
+        ? { ...c, references: refs, promptSourceId }
+        : c;
+    });
 }
