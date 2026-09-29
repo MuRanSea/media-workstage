@@ -16,7 +16,15 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   The lightweight, zero-dependency canvas transform engine implementing cursor-anchored scaling ($w = (s - \text{pan}_1) / z_1$, $\text{pan}_2 = s - w \cdot z_2$) and fluid multi-ray bezier curve rendering between cards.
 
 - **MediaCardNode (媒体卡片节点)**:
-  A visual card on the canvas representing an atomic media generation or transformation unit (Image Generation Card, Video Generation Card). Contains large visual preview, compact summary pill, and collapsible parameter drawers.
+  Any card on the canvas. Two kinds: a **Generation Card** (where a generation is configured) and a **Result Card** (what a generation produced).
+
+- **Generation Card (生成卡)**:
+  A card that holds the prompt, model and parameters of an image, video or text (LLM) generation and can be run any number of times. It holds no output itself: every run yields new Result Cards linked to it.
+  _Avoid_: 参数卡
+
+- **Result Card (结果卡)**:
+  A card holding exactly one finished output — one image, one video or one text — linked to the Generation Card whose run produced it, and the thing other cards connect to and reuse. It appears the moment a run is submitted and shows the run's progress until the output arrives. A generation that yields several outputs (layers, storyboard frames) yields one Result Card per output.
+  _Avoid_: 素材卡, asset card (collides with `TaskAsset`), 输出卡
 
 - **MediaTask (媒体生成任务)**:
   An asynchronous generation job managed by the local Go backend (`media_tasks` table). Transitions through `Queued` → `Running` → `Succeeded` / `Failed` / `Cancelled` / `Expired`. Tracks token usage (`usage_tokens`) and billing metadata (`billing_details_json`).
