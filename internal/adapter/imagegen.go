@@ -29,6 +29,7 @@ type genericImageParams struct {
 	AspectRatio  string `json:"aspect_ratio"` // "16:9", "1:1", ... or "" / "auto"
 	Resolution   string `json:"resolution"`   // "1K" | "2K" | "4K"
 	OutputFormat string `json:"output_format"`
+	Speed        string `json:"speed"` // Midjourney: "FAST" | "RELAX" | "TURBO", or "" for the gateway default
 }
 
 func parseGenericImageParams(paramsJSON string) genericImageParams {
@@ -39,7 +40,18 @@ func parseGenericImageParams(paramsJSON string) genericImageParams {
 		p.AspectRatio = ""
 	}
 	p.Resolution = strings.ToUpper(strings.TrimSpace(p.Resolution))
+	p.Speed = strings.ToUpper(strings.TrimSpace(p.Speed))
 	return p
+}
+
+// parseReferenceAssets reads the reference images the server stored in task params
+// (local paths already resolved against the project folder).
+func parseReferenceAssets(paramsJSON string) []model.ReferenceItem {
+	var p struct {
+		ReferenceAssets []model.ReferenceItem `json:"reference_assets"`
+	}
+	_ = json.Unmarshal([]byte(paramsJSON), &p)
+	return p.ReferenceAssets
 }
 
 // ratioValue parses "16:9" into 16/9; ok is false for empty or malformed ratios.

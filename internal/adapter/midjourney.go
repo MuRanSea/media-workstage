@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -29,8 +30,28 @@ func NewMidjourneyAdapter(cfg ChannelConfig) *MidjourneyAdapter {
 }
 
 type midjourneyImagineRequest struct {
-	BotType string `json:"botType,omitempty"`
-	Prompt  string `json:"prompt"`
+	BotType       string                   `json:"botType,omitempty"`
+	Prompt        string                   `json:"prompt"`
+	AccountFilter *midjourneyAccountFilter `json:"accountFilter,omitempty"`
+	Base64Array   []string                 `json:"base64Array,omitempty"` // reference images as data URIs
+}
+
+type midjourneyBlendRequest struct {
+	BotType       string                   `json:"botType,omitempty"`
+	Base64Array   []string                 `json:"base64Array"`
+	Dimensions    string                   `json:"dimensions"` // PORTRAIT | SQUARE | LANDSCAPE
+	AccountFilter *midjourneyAccountFilter `json:"accountFilter,omitempty"`
+}
+
+type midjourneyDescribeRequest struct {
+	BotType       string                   `json:"botType,omitempty"`
+	Base64        string                   `json:"base64"`
+	AccountFilter *midjourneyAccountFilter `json:"accountFilter,omitempty"`
+}
+
+// midjourneyAccountFilter picks the proxy account a job runs on; modes selects by speed.
+type midjourneyAccountFilter struct {
+	Modes []string `json:"modes"`
 }
 
 type midjourneySubmitResponse struct {
@@ -40,59 +61,239 @@ type midjourneySubmitResponse struct {
 }
 
 type midjourneyFetchResponse struct {
-	ID          string `json:"id"`
-	Status      string `json:"status"`   // NOT_START | SUBMITTED | MODAL | IN_PROGRESS | SUCCESS | FAILURE | CANCEL
-	Progress    string `json:"progress"` // "45%"
-	ImageURL    string `json:"imageUrl"`
-	FailReason  string `json:"failReason"`
-	Description string `json:"description"` // task description, or the error text of a relay envelope
+	ID          string             `json:"id"`
+	Action      string             `json:"action"`   // IMAGINE | UPSCALE | VARIATION | REROLL | DESCRIBE | BLEND | ...
+	Status      string             `json:"status"`   // NOT_START | SUBMITTED | MODAL | IN_PROGRESS | SUCCESS | FAILURE | CANCEL
+	Progress    string             `json:"progress"` // "45%"
+	ImageURL    string             `json:"imageUrl"`
+	FailReason  string             `json:"failReason"`
+	Description string             `json:"description"` // task description, or the error text of a relay envelope
+	Buttons     []midjourneyButton `json:"buttons"`
+	Properties  struct {
+		FinalPrompt string `json:"finalPrompt"`
+	} `json:"properties"`
 }
 
-// Submit codes that carry a task ID: 1 accepted, 22 queued.
+// midjourneyButton is one follow-up the result offers; customId is what /mj/submit/action takes.
+type midjourneyButton struct {
+	CustomID string `json:"customId"`
+	Label    string `json:"label"`
+	Emoji    string `json:"emoji"`
+}
+
+// midjourneyActionParams are the task params of a follow-up action (task_mode "action").
+type midjourneyActionParams struct {
+	SourceProviderTaskID string `json:"source_provider_task_id"`
+	ActionID             string `json:"action_id"`
+}
+
+type midjourneyActionRequest struct {
+	TaskID            string `json:"taskId"`
+	CustomID          string `json:"customId"`
+	ChooseSameChannel bool   `json:"chooseSameChannel"`
+}
+
+type midjourneyModalRequest struct {
+	TaskID string `json:"taskId"`
+	Prompt string `json:"prompt"`
+}
+
+// Submit codes: 1 accepted and 22 queued carry a new task ID. 21 is used both for "task
+// already exists" and "waiting for a modal"; the task's status tells them apart.
 const (
 	midjourneyCodeSubmitted = 1
+	midjourneyCodeExisting  = 21
 	midjourneyCodeQueued    = 22
 )
 
+// Task modes the adapter dispatches on; any other mode is an imagine.
+const (
+	midjourneyModeAction   = "action"
+	midjourneyModeBlend    = "blend"
+	midjourneyModeDescribe = "describe"
+)
+
+// SubmitTask dispatches on the task mode: "action" runs a follow-up on a finished task,
+// anything else is an imagine.
 func (a *MidjourneyAdapter) SubmitTask(ctx context.Context, task *model.MediaTask) (string, error) {
 	if err := requireImageTask(a.name, task); err != nil {
 		return "", err
 	}
-	body, err := json.Marshal(midjourneyImagineRequest{
-		BotType: midjourneyBotType(task.Model),
-		Prompt:  midjourneyPrompt(task.Prompt, parseGenericImageParams(task.ParamsJSON)),
-	})
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal midjourney request: %w", err)
-	}
-	baseURL, apiKey := a.credentials()
-	if baseURL == "" {
+	if baseURL, _ := a.credentials(); baseURL == "" {
 		return "", fmt.Errorf("%s 未填写 Base URL：Midjourney 没有官方地址，请在设置中填写代理或中转地址", a.name)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/mj/submit/imagine", bytes.NewReader(body))
+	switch task.TaskMode {
+	case midjourneyModeAction:
+		return a.submitAction(ctx, task)
+	case midjourneyModeBlend:
+		return a.submitBlend(ctx, task)
+	case midjourneyModeDescribe:
+		return a.submitDescribe(ctx, task)
+	default:
+		return a.submitImagine(ctx, task)
+	}
+}
+
+func (a *MidjourneyAdapter) submitImagine(ctx context.Context, task *model.MediaTask) (string, error) {
+	params := parseGenericImageParams(task.ParamsJSON)
+	images, err := midjourneyBase64Array(parseReferenceAssets(task.ParamsJSON))
 	if err != nil {
 		return "", err
+	}
+	resp, err := a.postSubmit(ctx, "/mj/submit/imagine", midjourneyImagineRequest{
+		BotType:       midjourneyBotType(task.Model),
+		Prompt:        midjourneyPrompt(task.Prompt, params),
+		AccountFilter: midjourneyAccountFilterFor(params, task.Prompt),
+		Base64Array:   images,
+	})
+	if err != nil {
+		return "", err
+	}
+	return a.acceptedID(resp)
+}
+
+// submitBlend mixes 2–5 reference images into one grid; the card's ratio picks the shape.
+func (a *MidjourneyAdapter) submitBlend(ctx context.Context, task *model.MediaTask) (string, error) {
+	refs := parseReferenceAssets(task.ParamsJSON)
+	if len(refs) < 2 || len(refs) > midjourneyMaxReferences {
+		return "", fmt.Errorf("Midjourney Blend 需要 2–5 张参考图，当前 %d 张", len(refs))
+	}
+	images, err := midjourneyBase64Array(refs)
+	if err != nil {
+		return "", err
+	}
+	params := parseGenericImageParams(task.ParamsJSON)
+	resp, err := a.postSubmit(ctx, "/mj/submit/blend", midjourneyBlendRequest{
+		BotType:       midjourneyBotType(task.Model),
+		Base64Array:   images,
+		Dimensions:    midjourneyDimensions(params.AspectRatio),
+		AccountFilter: midjourneyAccountFilterFor(params, ""),
+	})
+	if err != nil {
+		return "", err
+	}
+	return a.acceptedID(resp)
+}
+
+// submitDescribe asks Midjourney for prompts that would produce the reference image.
+func (a *MidjourneyAdapter) submitDescribe(ctx context.Context, task *model.MediaTask) (string, error) {
+	refs := parseReferenceAssets(task.ParamsJSON)
+	if len(refs) != 1 {
+		return "", fmt.Errorf("Midjourney 反推提示词需要 1 张图片，当前 %d 张", len(refs))
+	}
+	images, err := midjourneyBase64Array(refs)
+	if err != nil {
+		return "", err
+	}
+	resp, err := a.postSubmit(ctx, "/mj/submit/describe", midjourneyDescribeRequest{
+		BotType:       midjourneyBotType(task.Model),
+		Base64:        images[0],
+		AccountFilter: midjourneyAccountFilterFor(parseGenericImageParams(task.ParamsJSON), ""),
+	})
+	if err != nil {
+		return "", err
+	}
+	return a.acceptedID(resp)
+}
+
+// midjourneyDimensions maps a ratio onto Blend's three shapes (2:3, 1:1, 3:2).
+func midjourneyDimensions(ratio string) string {
+	r, ok := ratioValue(ratio)
+	switch {
+	case !ok || r == 1:
+		return "SQUARE"
+	case r < 1:
+		return "PORTRAIT"
+	default:
+		return "LANDSCAPE"
+	}
+}
+
+// submitAction runs one of the source task's buttons. An action that opens a modal (a
+// variation in remix mode, for one) is confirmed with the task's prompt.
+func (a *MidjourneyAdapter) submitAction(ctx context.Context, task *model.MediaTask) (string, error) {
+	var params midjourneyActionParams
+	_ = json.Unmarshal([]byte(task.ParamsJSON), &params)
+	if params.SourceProviderTaskID == "" || params.ActionID == "" {
+		return "", fmt.Errorf("%s 后续操作缺少来源任务或操作 ID", a.name)
+	}
+	resp, err := a.postSubmit(ctx, "/mj/submit/action", midjourneyActionRequest{
+		TaskID:            params.SourceProviderTaskID,
+		CustomID:          params.ActionID,
+		ChooseSameChannel: true,
+	})
+	if err != nil {
+		return "", err
+	}
+	if resp.Code != midjourneyCodeExisting {
+		return a.acceptedID(resp)
+	}
+
+	id := resp.taskID()
+	if id == "" {
+		return "", fmt.Errorf("%s 提交失败（code %d）：%s", a.name, resp.Code, resp.Description)
+	}
+	existing, err := a.fetch(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	// MODAL is not in every proxy's status list; midjourney-proxy-plus also says "窗口等待".
+	if existing.Status != "MODAL" && !strings.Contains(resp.Description, "窗口") {
+		return id, nil
+	}
+	modal, err := a.postSubmit(ctx, "/mj/submit/modal", midjourneyModalRequest{TaskID: id, Prompt: strings.TrimSpace(task.Prompt)})
+	if err != nil {
+		return "", err
+	}
+	return a.acceptedID(modal)
+}
+
+// postSubmit sends a /mj/submit/* request and decodes the submit envelope.
+func (a *MidjourneyAdapter) postSubmit(ctx context.Context, path string, payload any) (*midjourneySubmitResponse, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal midjourney request: %w", err)
+	}
+	baseURL, apiKey := a.credentials()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	setMidjourneyKey(req, apiKey)
 
 	var resp midjourneySubmitResponse
 	if err := a.doJSON(req, &resp); err != nil {
-		return "", err
+		return nil, err
 	}
-	id := strings.Trim(strings.TrimSpace(string(resp.Result)), `"`)
+	return &resp, nil
+}
+
+// acceptedID returns the new task ID of an accepted (1) or queued (22) submission.
+func (a *MidjourneyAdapter) acceptedID(resp *midjourneySubmitResponse) (string, error) {
 	if resp.Code != midjourneyCodeSubmitted && resp.Code != midjourneyCodeQueued {
 		return "", fmt.Errorf("%s 提交失败（code %d）：%s", a.name, resp.Code, resp.Description)
 	}
-	if id == "" || id == "null" {
+	id := resp.taskID()
+	if id == "" {
 		return "", fmt.Errorf("%s did not return a task ID", a.name)
 	}
 	return id, nil
 }
 
-func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask) (*PollResult, error) {
+// taskID reads the result field, which carries the task ID as a string or a bare number.
+func (r *midjourneySubmitResponse) taskID() string {
+	id := strings.Trim(strings.TrimSpace(string(r.Result)), `"`)
+	if id == "null" {
+		return ""
+	}
+	return id
+}
+
+// fetch reads one task from /mj/task/{id}/fetch.
+func (a *MidjourneyAdapter) fetch(ctx context.Context, id string) (*midjourneyFetchResponse, error) {
 	baseURL, apiKey := a.credentials()
-	endpoint := fmt.Sprintf("%s/mj/task/%s/fetch", baseURL, url.PathEscape(task.ProviderTaskID))
+	endpoint := fmt.Sprintf("%s/mj/task/%s/fetch", baseURL, url.PathEscape(id))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -101,6 +302,14 @@ func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 
 	var resp midjourneyFetchResponse
 	if err := a.doJSON(req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask) (*PollResult, error) {
+	resp, err := a.fetch(ctx, task.ProviderTaskID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -115,15 +324,23 @@ func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 
 	switch resp.Status {
 	case "SUCCESS":
+		if task.TaskMode == midjourneyModeDescribe {
+			// The result is text; the task's image is the user's own upload.
+			if strings.TrimSpace(resp.Properties.FinalPrompt) == "" {
+				return &PollResult{Status: model.TaskStatusFailed, ErrorCode: "EmptyResult", ErrorMessage: "Midjourney 反推完成但没有返回提示词"}, nil
+			}
+			return &PollResult{Status: model.TaskStatusSucceeded, Progress: 100, Text: resp.Properties.FinalPrompt}, nil
+		}
 		if resp.ImageURL == "" {
 			return &PollResult{Status: model.TaskStatusFailed, ErrorCode: "EmptyResult", ErrorMessage: "Midjourney 任务完成但没有返回图片"}, nil
 		}
 		asset := imageAsset(task.ID, 0, resp.ImageURL, imageExt("", resp.ImageURL))
 		return &PollResult{
-			Status:    model.TaskStatusSucceeded,
-			Progress:  100,
-			ResultURL: resp.ImageURL,
-			Assets:    []model.TaskAsset{asset},
+			Status:        model.TaskStatusSucceeded,
+			Progress:      100,
+			ResultURL:     resp.ImageURL,
+			Assets:        []model.TaskAsset{asset},
+			ResultActions: midjourneyActions(resp.Buttons),
 		}, nil
 
 	case "FAILURE", "CANCEL":
@@ -149,6 +366,28 @@ func (a *MidjourneyAdapter) PollTimeout(*model.MediaTask) time.Duration {
 	return 15 * time.Minute
 }
 
+// midjourneyInteractiveButtons marks buttons that need user input (a zoom factor, a
+// region mask, an image picker) or only bookmark the message; they are not offered.
+var midjourneyInteractiveButtons = []string{"CustomZoom", "Inpaint", "PicReader", "BOOKMARK"}
+
+// midjourneyActions turns the result's buttons into the follow-ups a card can run directly.
+func midjourneyActions(buttons []midjourneyButton) []model.ResultAction {
+	var actions []model.ResultAction
+next:
+	for _, b := range buttons {
+		if b.CustomID == "" {
+			continue
+		}
+		for _, marker := range midjourneyInteractiveButtons {
+			if strings.Contains(b.CustomID, "::"+marker+"::") {
+				continue next
+			}
+		}
+		actions = append(actions, model.ResultAction{ID: b.CustomID, Label: b.Label, Emoji: b.Emoji})
+	}
+	return actions
+}
+
 // setMidjourneyKey sends the key both ways: midjourney-proxy reads mj-api-secret,
 // relays read the Bearer token.
 func setMidjourneyKey(req *http.Request, apiKey string) {
@@ -165,6 +404,65 @@ func midjourneyBotType(modelID string) string {
 		return bot
 	}
 	return ""
+}
+
+// Reference image limits of midjourney-proxy: at most 5 images, 4MB each.
+const (
+	midjourneyMaxReferences = 5
+	midjourneyMaxImageBytes = 4 << 20
+)
+
+// midjourneyBase64Array encodes reference images as the data URIs the proxy takes.
+// Local files are preferred: a result's remote URL (Discord's CDN) expires.
+func midjourneyBase64Array(refs []model.ReferenceItem) ([]string, error) {
+	if len(refs) > midjourneyMaxReferences {
+		return nil, fmt.Errorf("Midjourney 最多 %d 张参考图，当前 %d 张", midjourneyMaxReferences, len(refs))
+	}
+	var images []string
+	for i, ref := range refs {
+		name := ref.Label
+		if name == "" {
+			name = fmt.Sprintf("第 %d 张", i+1)
+		}
+		switch {
+		case ref.LocalPath != "":
+			info, err := os.Stat(ref.LocalPath)
+			if err != nil {
+				return nil, fmt.Errorf("参考图「%s」读取失败：%w", name, err)
+			}
+			if info.Size() > midjourneyMaxImageBytes {
+				return nil, fmt.Errorf("参考图「%s」有 %.1fMB，Midjourney 单张最大 4MB，请换一张小一点的图", name, float64(info.Size())/(1<<20))
+			}
+			data, err := EncodeLocalAssetToBase64(ref.LocalPath)
+			if err != nil {
+				return nil, err
+			}
+			images = append(images, data)
+		case strings.HasPrefix(ref.URL, "data:"):
+			images = append(images, ref.URL)
+		default:
+			return nil, fmt.Errorf("参考图「%s」没有本地文件，Midjourney 只接受上传的图片", name)
+		}
+	}
+	return images, nil
+}
+
+// midjourneySpeedFlag matches a prompt's own speed parameter ("--relax", "—fast").
+var midjourneySpeedFlag = regexp.MustCompile(`(?i)(^|\s)(--|—)(fast|relax|turbo)(\s|$)`)
+
+// midjourneyAccountFilterFor asks the proxy for an account in the card's speed mode.
+// The prompt is left alone: gateways add their own mode flag to the final prompt, so
+// the speed goes through accountFilter only, and a speed flag the user typed wins.
+func midjourneyAccountFilterFor(params genericImageParams, prompt string) *midjourneyAccountFilter {
+	switch params.Speed {
+	case "FAST", "RELAX", "TURBO":
+	default:
+		return nil
+	}
+	if midjourneySpeedFlag.MatchString(prompt) {
+		return nil
+	}
+	return &midjourneyAccountFilter{Modes: []string{params.Speed}}
 }
 
 // midjourneyAspectFlag matches a prompt's own aspect parameter ("--ar 2:3", "--aspect 3:2"),

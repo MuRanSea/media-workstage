@@ -23,7 +23,7 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   _Avoid_: 参数卡
 
 - **Result Card (结果卡)**:
-  A card holding exactly one finished output — one image, one video or one text — linked to the Generation Card whose run produced it, and the thing other cards connect to and reuse. It appears as soon as the backend accepts the run and shows the run's progress until the output arrives (a text run is synchronous, so its Result Card appears when the text returns). A generation that yields several outputs (layers, storyboard frames) yields one Result Card per output. Image Result Cards carry an `@图N` tag and video Result Cards an `@视频N` tag (one shared counter); text ones carry none. An **Upload Card** is a Result Card with no source. Deleting its Generation Card leaves a Result Card standing on its own, without a source.
+  A card holding exactly one finished output — one image, one video or one text — linked to the Generation Card whose run produced it (or to the Result Card a `Result action` or Midjourney Describe ran on), and the thing other cards connect to and reuse. It appears as soon as the backend accepts the run and shows the run's progress until the output arrives (a text run is synchronous, so its Result Card appears when the text returns). A generation that yields several outputs (layers, storyboard frames) yields one Result Card per output. Image Result Cards carry an `@图N` tag and video Result Cards an `@视频N` tag (one shared counter); text ones carry none. An **Upload Card** is a Result Card with no source. Deleting its Generation Card leaves a Result Card standing on its own, without a source.
   _Avoid_: 素材卡, asset card (collides with `TaskAsset`), 输出卡
 
 - **MediaTask (媒体生成任务)**:
@@ -56,7 +56,7 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   The concrete provider adapter for MiniMax official video generation APIs (MiniMax-H3, Video-01).
 
 - **MidjourneyAdapter (Midjourney 适配器)**:
-  The concrete provider adapter for the MJ Proxy protocol (midjourney-proxy's `/mj` API, spoken by self-hosted proxies and new-api style relays). Text-to-image only; the result is Midjourney's 2×2 grid kept as one image, and the card's aspect ratio becomes `--ar` unless the prompt sets its own.
+  The concrete provider adapter for the MJ Proxy protocol (midjourney-proxy's `/mj` API, spoken by self-hosted proxies and new-api style relays). Dispatches on task mode: imagine (the 2×2 grid kept as one image; the card's aspect ratio becomes `--ar` unless the prompt sets its own; connected images go inline as reference images, shrunk to fit the proxy's size limit), `action` (a `Result action`), `blend` (2–5 connected images) and `describe` (an image's prompts, returned as a text Result Card). The card's speed mode is sent as the proxy's `accountFilter.modes`, never added to the prompt.
 
 - **Bot type (MJ 机器人类型)**:
   What an MJ Proxy Provider binds as its models: `MID_JOURNEY` or `NIJI_JOURNEY`, sent as the request's `botType`. Relays like new-api list billing model names (`mj_imagine`) instead; those send no `botType`, leaving the proxy's default.
@@ -64,6 +64,14 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
 
 - **Upload Card (上传卡片)**:
   A Result Card with no source holding a user-picked image or video (`type: 'upload'`, `mediaKind`). The file is saved into the project (`assets/uploads/`) and can be sent to a Provider's platform for a **Platform Asset ID** (素材库 `asset://<id>`, usable once review turns `Active`, Seedance only) and/or a **File URL** (7-day download link). Wired to a video card it becomes a reference: images as `reference_image` (`@图N`), videos as `reference_video` (`@视频N`, multi-reference mode, on models that take reference videos). A video reference must be uploaded first; images fall back to the saved file. A video Result Card uploads and wires in the same way.
+
+- **Result action (结果动作)**:
+  A follow-up a provider offers on a finished task's result, such as Midjourney's U1–U4 / V1–V4 / reroll buttons. Stored on the task (`result_actions`) with the provider's own ID and shown as buttons on the Result Card. Running one submits a new task whose params name the source task and the action (the server checks the source task offered it) and yields a new Result Card sourced from the Result Card it ran on, its line labelled with the action ("U2", "重绘").
+  _Avoid_: derived card, 派生卡 (the output is an ordinary Result Card)
+
+- **Asset library reference (素材库参考)**:
+  A Seedance video card's reference to an item already in the Ark asset library (素材库 & 虚拟人像库), entered by its asset ID and sent as `asset://<ASSET_ID>` in the image, video or audio slot. Ark protocol and `all_modal` only. The prompt names it by modality and position (`图N`, `视频N`, `音频N`, counted after the connected cards), never by the ID. Files of your own go through an Upload Card instead.
+  _Avoid_: asset (alone — collides with `TaskAsset` and `LocalAssetStore`)
 
 - **LocalAssetStore (本地资产库)**:
   The local filesystem repository responsible for caching uploaded reference assets, downloading finished generation outputs, and serving them via local HTTP endpoints.

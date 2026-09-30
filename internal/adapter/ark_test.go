@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"media-workstage/internal/model"
 )
@@ -116,6 +117,40 @@ func TestArkAdapter_SeedanceValidation(t *testing.T) {
 		_, err := adapter.ValidateTask(task)
 		if err != nil {
 			t.Fatalf("expected valid all_modal task, got: %v", err)
+		}
+	})
+
+	t.Run("all_modal accepts asset library references", func(t *testing.T) {
+		task := &model.MediaTask{
+			Model:    "doubao-seedance-2-5-260628",
+			TaskType: "video_generation",
+			TaskMode: "all_modal",
+			Prompt:   "视频1中的人物走进图片1的场景",
+			ParamsJSON: `{
+				"reference_assets": [
+					{"role": "reference_image", "url": "asset://asset-20260401123823-6d4x2"},
+					{"role": "reference_video", "url": "asset://asset-20260401123823-7k2p9"}
+				]
+			}`,
+		}
+		if _, err := adapter.ValidateTask(task); err != nil {
+			t.Fatalf("expected valid asset references, got: %v", err)
+		}
+	})
+
+	t.Run("asset library reference needs an ID", func(t *testing.T) {
+		for _, url := range []string{"asset://", "asset://asset 1"} {
+			task := &model.MediaTask{
+				Model:      "doubao-seedance-2-5-260628",
+				TaskType:   "video_generation",
+				TaskMode:   "all_modal",
+				Prompt:     "Prompt",
+				ParamsJSON: fmt.Sprintf(`{"reference_assets": [{"role": "reference_video", "url": %q}]}`, url),
+			}
+			_, err := adapter.ValidateTask(task)
+			if err == nil || !strings.Contains(err.Error(), "invalid asset library reference") {
+				t.Fatalf("%q: expected asset reference error, got: %v", url, err)
+			}
 		}
 	})
 
@@ -397,7 +432,8 @@ func TestArkAdapter_VideoTaskFlow(t *testing.T) {
 		TaskType:   "video_generation",
 		TaskMode:   "all_modal",
 		Prompt:     "A dramatic cinematic drone shot",
-		ParamsJSON: `{"resolution": "720p", "ratio": "16:9", "duration": 5}`,
+		ParamsJSON: `{"resolution": "720p", "ratio": "16:9", "duration": 5,
+			"reference_assets": [{"role": "reference_video", "url": "asset://asset-20260401123823-7k2p9"}]}`,
 	}
 
 	taskID, err := adapter.SubmitTask(ctx, task)
@@ -411,6 +447,16 @@ func TestArkAdapter_VideoTaskFlow(t *testing.T) {
 	// Verify captured request body sent to server
 	if capturedSubmitBody["model"] != "doubao-seedance-2-5-260628" {
 		t.Errorf("unexpected model in request: %v", capturedSubmitBody["model"])
+	}
+	// The asset library reference goes through untouched as the video URL.
+	content, _ := capturedSubmitBody["content"].([]interface{})
+	if len(content) != 2 {
+		t.Fatalf("expected text + video content, got: %v", capturedSubmitBody["content"])
+	}
+	videoItem, _ := content[1].(map[string]interface{})
+	videoURL, _ := videoItem["video_url"].(map[string]interface{})
+	if videoItem["type"] != "video_url" || videoItem["role"] != "reference_video" || videoURL["url"] != "asset://asset-20260401123823-7k2p9" {
+		t.Errorf("unexpected asset content item: %v", videoItem)
 	}
 
 	// 2. Poll Succeeded Task
@@ -621,4 +667,40 @@ func TestArkAdapter_DownloadAsset(t *testing.T) {
 	if err != nil || string(content2) != "FAKE_DATA_URI_PAYLOAD" {
 		t.Fatalf("unexpected data URI decoded content: %s, err: %v", string(content2), err)
 	}
+}
+
+func TestResolveVideoURL(t *testing.T) {
+	signed := func(at time.Time, seconds int) string {
+		return fmt.Sprintf("https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/out.mp4?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Date=%s&X-Tos-Expires=%d",
+			at.UTC().Format("20060102T150405Z"), seconds)
+	}
+
+	t.Run("explicit URL or asset ID passes through", func(t *testing.T) {
+		got, err := resolveVideoURL(model.ReferenceItem{URL: "asset://asset-1", LocalPath: "/x/output.mp4"})
+		if err != nil || got != "asset://asset-1" {
+			t.Fatalf("got %q, %v", got, err)
+		}
+	})
+
+	t.Run("generated video uses its provider URL while it is valid", func(t *testing.T) {
+		remote := signed(time.Now().Add(-time.Hour), 86400)
+		got, err := resolveVideoURL(model.ReferenceItem{LocalPath: "/x/output.mp4", RemoteURL: remote})
+		if err != nil || got != remote {
+			t.Fatalf("got %q, %v", got, err)
+		}
+	})
+
+	t.Run("expired provider URL is refused", func(t *testing.T) {
+		_, err := resolveVideoURL(model.ReferenceItem{LocalPath: "/x/output.mp4", RemoteURL: signed(time.Now().Add(-25*time.Hour), 86400)})
+		if err == nil || !strings.Contains(err.Error(), "过期") {
+			t.Fatalf("expected expiry error, got: %v", err)
+		}
+	})
+
+	t.Run("local file alone is refused instead of sent as Base64", func(t *testing.T) {
+		_, err := resolveVideoURL(model.ReferenceItem{LocalPath: "/x/output.mp4"})
+		if err == nil || !strings.Contains(err.Error(), "公网链接") {
+			t.Fatalf("expected missing public URL error, got: %v", err)
+		}
+	})
 }

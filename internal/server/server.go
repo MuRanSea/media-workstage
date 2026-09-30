@@ -721,6 +721,10 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 	if len(payload.ReferenceAssets) > 0 {
 		params["reference_assets"] = payload.ReferenceAssets
 	}
+	if status, err := resolveSourceTask(s.db, payload, params); err != nil {
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
 
 	paramsBytes, _ := json.Marshal(params)
 	taskID := uuid.New().String()

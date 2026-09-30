@@ -241,3 +241,320 @@ func TestMidjourneyAdapter_RequiresBaseURL(t *testing.T) {
 	_, err := NewMidjourneyAdapter(ChannelConfig{APIKey: "k"}).SubmitTask(context.Background(), imageTask("midjourney", "MID_JOURNEY", `{}`))
 	assert.ErrorContains(t, err, "Base URL")
 }
+
+func TestMidjourneyPollTask_SuccessReturnsActions(t *testing.T) {
+	// Buttons as the real gateway returned them for an IMAGINE grid, plus ones needing user input.
+	body := `{"id":"1790217491102846","action":"IMAGINE","status":"SUCCESS","progress":"100%",
+	"imageUrl":"https://cdn.example.test/grid.webp","buttons":[
+	{"customId":"MJ::JOB::upsample::1::ade29d25","emoji":"","label":"U1","type":2,"style":2},
+	{"customId":"MJ::JOB::upsample::2::ade29d25","emoji":"","label":"U2","type":2,"style":2},
+	{"customId":"MJ::JOB::reroll::0::ade29d25::SOLO","emoji":"🔄","label":"","type":2,"style":2},
+	{"customId":"MJ::JOB::variation::1::ade29d25","emoji":"","label":"V1","type":2,"style":2},
+	{"customId":"MJ::CustomZoom::ade29d25","emoji":"🔍","label":"Custom Zoom","type":2,"style":2},
+	{"customId":"MJ::Inpaint::1::ade29d25::SOLO","emoji":"🖌️","label":"Vary (Region)","type":2,"style":2},
+	{"customId":"MJ::BOOKMARK::ade29d25","emoji":"❤️","label":"","type":2,"style":2}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	task := imageTask("midjourney", "mj_imagine", `{}`)
+	task.ProviderTaskID = "1790217491102846"
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSucceeded, res.Status)
+	assert.Equal(t, []model.ResultAction{
+		{ID: "MJ::JOB::upsample::1::ade29d25", Label: "U1"},
+		{ID: "MJ::JOB::upsample::2::ade29d25", Label: "U2"},
+		{ID: "MJ::JOB::reroll::0::ade29d25::SOLO", Emoji: "🔄"},
+		{ID: "MJ::JOB::variation::1::ade29d25", Label: "V1"},
+	}, res.ResultActions, "buttons needing user input (custom zoom, region, bookmark) are dropped")
+}
+
+func actionTask(sourceProviderTaskID, actionID string) *model.MediaTask {
+	params, _ := json.Marshal(map[string]string{
+		"source_task_id": "src-1", "source_provider_task_id": sourceProviderTaskID, "action_id": actionID,
+	})
+	task := imageTask("midjourney", "mj_imagine", string(params))
+	task.TaskMode = "action"
+	return task
+}
+
+func TestMidjourneySubmitAction_Body(t *testing.T) {
+	var path string
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&submitted)
+		_, _ = io.WriteString(w, `{"code":1,"description":"提交成功","result":"1790300000000001"}`)
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	id, err := a.SubmitTask(context.Background(), actionTask("1790217491102846", "MJ::JOB::upsample::2::h"))
+	require.NoError(t, err)
+	assert.Equal(t, "1790300000000001", id)
+	assert.Equal(t, "/mj/submit/action", path)
+	assert.Equal(t, map[string]any{
+		"taskId": "1790217491102846", "customId": "MJ::JOB::upsample::2::h", "chooseSameChannel": true,
+	}, submitted, "an action runs on the source task's channel; no prompt, bot or account filter")
+}
+
+func TestMidjourneySubmitAction_Code21NeedingModalSubmitsPrompt(t *testing.T) {
+	var modal map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mj/submit/action":
+			_, _ = io.WriteString(w, `{"code":21,"description":"窗口等待","result":"1790300000000002"}`)
+		case "/mj/task/1790300000000002/fetch":
+			_, _ = io.WriteString(w, `{"id":"1790300000000002","status":"MODAL"}`)
+		case "/mj/submit/modal":
+			_ = json.NewDecoder(r.Body).Decode(&modal)
+			_, _ = io.WriteString(w, `{"code":1,"description":"提交成功","result":"1790300000000002"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	id, err := a.SubmitTask(context.Background(), actionTask("1790217491102846", "MJ::JOB::variation::1::h"))
+	require.NoError(t, err)
+	assert.Equal(t, "1790300000000002", id)
+	assert.Equal(t, map[string]any{"taskId": "1790300000000002", "prompt": "a red fox"}, modal)
+}
+
+func TestMidjourneySubmitAction_Code21ExistingTaskIsReused(t *testing.T) {
+	modalCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mj/submit/action":
+			_, _ = io.WriteString(w, `{"code":21,"description":"任务已存在","result":"1790300000000003"}`)
+		case "/mj/task/1790300000000003/fetch":
+			_, _ = io.WriteString(w, `{"id":"1790300000000003","status":"SUCCESS","imageUrl":"https://cdn/x.png"}`)
+		case "/mj/submit/modal":
+			modalCalled = true
+		}
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	id, err := a.SubmitTask(context.Background(), actionTask("1790217491102846", "MJ::JOB::upsample::1::h"))
+	require.NoError(t, err)
+	assert.Equal(t, "1790300000000003", id)
+	assert.False(t, modalCalled)
+}
+
+func TestMidjourneySubmitAction_RequiresSourceTask(t *testing.T) {
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: "http://unused", APIKey: "k"})
+	_, err := a.SubmitTask(context.Background(), actionTask("", "MJ::JOB::upsample::1::h"))
+	assert.ErrorContains(t, err, "来源任务")
+}
+
+func TestMidjourneySubmit_SpeedAccountFilter(t *testing.T) {
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		submitted = nil
+		_ = json.NewDecoder(r.Body).Decode(&submitted)
+		_, _ = io.WriteString(w, `{"code":1,"result":"1"}`)
+	}))
+	defer srv.Close()
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+
+	cases := []struct {
+		name, prompt, speed string
+		want                any
+	}{
+		{"relax picks relax accounts", "a fox", "RELAX", map[string]any{"modes": []any{"RELAX"}}},
+		{"lower case is accepted", "a fox", "turbo", map[string]any{"modes": []any{"TURBO"}}},
+		{"no speed leaves the gateway default", "a fox", "", nil},
+		{"unknown speed is ignored", "a fox", "warp", nil},
+		{"the prompt's own flag wins", "a fox --fast", "RELAX", nil},
+	}
+	for _, c := range cases {
+		params, _ := json.Marshal(map[string]string{"speed": c.speed})
+		task := imageTask("midjourney", "mj_imagine", string(params))
+		task.Prompt = c.prompt
+		_, err := a.SubmitTask(context.Background(), task)
+		require.NoError(t, err, c.name)
+		assert.Equal(t, c.want, submitted["accountFilter"], c.name)
+		assert.Equal(t, c.prompt, submitted["prompt"], "%s: the speed never changes the prompt", c.name)
+	}
+}
+
+func referenceTask(t *testing.T, refs []model.ReferenceItem) *model.MediaTask {
+	t.Helper()
+	params, _ := json.Marshal(map[string]any{"aspect_ratio": "1:1", "reference_assets": refs})
+	return imageTask("midjourney", "mj_imagine", string(params))
+}
+
+func TestMidjourneySubmit_ReferenceImages(t *testing.T) {
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		submitted = nil
+		_ = json.NewDecoder(r.Body).Decode(&submitted)
+		_, _ = io.WriteString(w, `{"code":1,"result":"1"}`)
+	}))
+	defer srv.Close()
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+
+	png := localPNG(t, "ref.png")
+	_, err := a.SubmitTask(context.Background(), referenceTask(t, []model.ReferenceItem{
+		{Role: "reference_image", LocalPath: png, RemoteURL: "https://cdn.example.test/old.png"},
+		{Role: "reference_image", URL: "data:image/jpeg;base64,/9j/AAAA"},
+	}))
+	require.NoError(t, err)
+	arr, _ := submitted["base64Array"].([]any)
+	require.Len(t, arr, 2)
+	assert.Contains(t, arr[0], "data:image/png;base64,", "local files are sent inline, not by their expiring remote URL")
+	assert.Equal(t, "data:image/jpeg;base64,/9j/AAAA", arr[1])
+	assert.Equal(t, "a red fox --ar 1:1", submitted["prompt"])
+
+	_, err = a.SubmitTask(context.Background(), referenceTask(t, nil))
+	require.NoError(t, err)
+	assert.NotContains(t, submitted, "base64Array")
+}
+
+func TestMidjourneySubmit_ReferenceImageLimits(t *testing.T) {
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: "http://unused", APIKey: "k"})
+	submit := func(refs []model.ReferenceItem) error {
+		_, err := a.SubmitTask(context.Background(), referenceTask(t, refs))
+		return err
+	}
+
+	big := filepath.Join(t.TempDir(), "big.png")
+	require.NoError(t, os.WriteFile(big, make([]byte, 4<<20+1), 0644))
+	assert.ErrorContains(t, submit([]model.ReferenceItem{{LocalPath: big}}), "4MB")
+
+	assert.ErrorContains(t, submit([]model.ReferenceItem{{URL: "https://cdn.example.test/a.png"}}), "本地")
+
+	png := localPNG(t, "ref.png")
+	six := make([]model.ReferenceItem, 6)
+	for i := range six {
+		six[i] = model.ReferenceItem{LocalPath: png}
+	}
+	assert.ErrorContains(t, submit(six), "最多 5 张")
+}
+
+func TestMidjourneySubmitBlend(t *testing.T) {
+	var path string
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, submitted = r.URL.Path, nil
+		_ = json.NewDecoder(r.Body).Decode(&submitted)
+		_, _ = io.WriteString(w, `{"code":1,"result":"blend-1"}`)
+	}))
+	defer srv.Close()
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+
+	png := localPNG(t, "blend.png")
+	blend := func(n int, ratio, speed string) *model.MediaTask {
+		refs := make([]model.ReferenceItem, n)
+		for i := range refs {
+			refs[i] = model.ReferenceItem{LocalPath: png}
+		}
+		params, _ := json.Marshal(map[string]any{"aspect_ratio": ratio, "speed": speed, "reference_assets": refs})
+		task := imageTask("midjourney", "NIJI_JOURNEY", string(params))
+		task.TaskMode = "blend"
+		return task
+	}
+
+	id, err := a.SubmitTask(context.Background(), blend(2, "2:3", "RELAX"))
+	require.NoError(t, err)
+	assert.Equal(t, "blend-1", id)
+	assert.Equal(t, "/mj/submit/blend", path)
+	assert.Equal(t, "NIJI_JOURNEY", submitted["botType"])
+	assert.Equal(t, "PORTRAIT", submitted["dimensions"])
+	assert.Equal(t, map[string]any{"modes": []any{"RELAX"}}, submitted["accountFilter"])
+	assert.Len(t, submitted["base64Array"], 2)
+	assert.NotContains(t, submitted, "prompt", "blend takes no prompt")
+
+	for ratio, want := range map[string]string{"1:1": "SQUARE", "16:9": "LANDSCAPE", "3:2": "LANDSCAPE", "9:16": "PORTRAIT", "": "SQUARE"} {
+		_, err := a.SubmitTask(context.Background(), blend(2, ratio, ""))
+		require.NoError(t, err)
+		assert.Equal(t, want, submitted["dimensions"], ratio)
+	}
+
+	_, err = a.SubmitTask(context.Background(), blend(1, "1:1", ""))
+	assert.ErrorContains(t, err, "2–5 张")
+}
+
+func describeTask(refs []model.ReferenceItem) *model.MediaTask {
+	params, _ := json.Marshal(map[string]any{"reference_assets": refs})
+	task := imageTask("midjourney", "mj_imagine", string(params))
+	task.TaskMode = "describe"
+	task.Prompt = "反推提示词"
+	return task
+}
+
+func TestMidjourneySubmitDescribe(t *testing.T) {
+	var path string
+	var submitted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, submitted = r.URL.Path, nil
+		_ = json.NewDecoder(r.Body).Decode(&submitted)
+		_, _ = io.WriteString(w, `{"code":1,"result":"desc-1"}`)
+	}))
+	defer srv.Close()
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+
+	id, err := a.SubmitTask(context.Background(), describeTask([]model.ReferenceItem{{LocalPath: localPNG(t, "d.png")}}))
+	require.NoError(t, err)
+	assert.Equal(t, "desc-1", id)
+	assert.Equal(t, "/mj/submit/describe", path)
+	assert.Contains(t, submitted["base64"], "data:image/png;base64,")
+	assert.NotContains(t, submitted, "prompt")
+
+	_, err = a.SubmitTask(context.Background(), describeTask(nil))
+	assert.ErrorContains(t, err, "1 张图片")
+}
+
+func TestMidjourneyPollTask_DescribeText(t *testing.T) {
+	finalPrompt := "1️⃣ a red fox in the snow --ar 3:2\n\n2️⃣ a fox, watercolor --ar 3:2"
+	body := map[string]any{"id": "desc-1", "action": "DESCRIBE", "status": "SUCCESS", "progress": "100%",
+		"imageUrl": "https://cdn.example.test/uploaded.png", "properties": map[string]any{"finalPrompt": finalPrompt}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	defer srv.Close()
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	task := describeTask(nil)
+	task.ProviderTaskID = "desc-1"
+
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSucceeded, res.Status)
+	assert.Equal(t, finalPrompt, res.Text)
+	assert.Empty(t, res.Assets, "the described image is the user's own upload, not a result")
+
+	body["properties"] = map[string]any{"finalPrompt": ""}
+	res, err = a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailed, res.Status)
+	assert.Equal(t, "EmptyResult", res.ErrorCode)
+}
+
+func TestMidjourneySubmitAction_Code21WindowWaitSubmitsModalWithoutModalStatus(t *testing.T) {
+	// midjourney-proxy-plus answers a remix confirmation with code 21 "窗口等待"; the task
+	// status may still read SUBMITTED (MODAL is not in every proxy's status list).
+	modalCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/mj/submit/action":
+			_, _ = io.WriteString(w, `{"code":21,"description":"窗口等待","result":"1790300000000004"}`)
+		case "/mj/task/1790300000000004/fetch":
+			_, _ = io.WriteString(w, `{"id":"1790300000000004","status":"SUBMITTED"}`)
+		case "/mj/submit/modal":
+			modalCalled = true
+			_, _ = io.WriteString(w, `{"code":1,"result":"1790300000000004"}`)
+		}
+	}))
+	defer srv.Close()
+
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL, APIKey: "k"})
+	id, err := a.SubmitTask(context.Background(), actionTask("1790217491102846", "MJ::JOB::variation::1::h"))
+	require.NoError(t, err)
+	assert.Equal(t, "1790300000000004", id)
+	assert.True(t, modalCalled)
+}
