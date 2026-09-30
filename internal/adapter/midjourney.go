@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -406,7 +405,7 @@ func midjourneyBotType(modelID string) string {
 	return ""
 }
 
-// Reference image limits of midjourney-proxy: at most 5 images, 4MB each.
+// Reference image limits of midjourney-proxy: at most 5 images, 4MB each (larger ones are shrunk).
 const (
 	midjourneyMaxReferences = 5
 	midjourneyMaxImageBytes = 4 << 20
@@ -426,16 +425,9 @@ func midjourneyBase64Array(refs []model.ReferenceItem) ([]string, error) {
 		}
 		switch {
 		case ref.LocalPath != "":
-			info, err := os.Stat(ref.LocalPath)
+			data, err := EncodeImageWithin(ref.LocalPath, midjourneyMaxImageBytes)
 			if err != nil {
-				return nil, fmt.Errorf("参考图「%s」读取失败：%w", name, err)
-			}
-			if info.Size() > midjourneyMaxImageBytes {
-				return nil, fmt.Errorf("参考图「%s」有 %.1fMB，Midjourney 单张最大 4MB，请换一张小一点的图", name, float64(info.Size())/(1<<20))
-			}
-			data, err := EncodeLocalAssetToBase64(ref.LocalPath)
-			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("参考图「%s」：%w", name, err)
 			}
 			images = append(images, data)
 		case strings.HasPrefix(ref.URL, "data:"):

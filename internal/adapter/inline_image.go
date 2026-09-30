@@ -28,8 +28,8 @@ func EncodeImageWithin(path string, limit int) (string, error) {
 	}
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return "", fmt.Errorf("图片 %s 有 %.1f MiB，超过内联上限且无法压缩（%v），请先在卡片上「获取链接」",
-			filepath.Base(path), float64(len(data))/(1<<20), err)
+		return "", fmt.Errorf("图片 %s 有 %.1f MiB，超过 %.1f MiB 的上限，且无法压缩（%v）",
+			filepath.Base(path), float64(len(data))/(1<<20), float64(limit)/(1<<20), err)
 	}
 
 	b := src.Bounds()
@@ -48,7 +48,7 @@ func EncodeImageWithin(path string, limit int) (string, error) {
 		}
 		w, h = w*4/5, h*4/5
 	}
-	return "", fmt.Errorf("图片 %s 压缩后仍超过内联上限，请先在卡片上「获取链接」", filepath.Base(path))
+	return "", fmt.Errorf("图片 %s 压缩后仍超过 %.1f MiB 的上限", filepath.Base(path), float64(limit)/(1<<20))
 }
 
 func dataURI(mimeType string, data []byte) string {

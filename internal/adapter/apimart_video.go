@@ -290,10 +290,13 @@ func (a *APIMartAdapter) referenceURL(ctx context.Context, ref model.ReferenceIt
 		return publicURL, nil
 	}
 	inline, err := EncodeImageWithin(ref.LocalPath, inlineLimit)
-	if err != nil && !errors.Is(filesErr, errPlatformFilesUnsupported) {
+	if err == nil {
+		return inline, nil
+	}
+	if !errors.Is(filesErr, errPlatformFilesUnsupported) {
 		return "", fmt.Errorf("参考图 %s 自动获取链接失败（%v），也无法内联发送: %w", ref.Label, filesErr, err)
 	}
-	return inline, err
+	return "", fmt.Errorf("参考图 %s 无法内联发送，请先在卡片上「获取链接」: %w", ref.Label, err)
 }
 
 // uploadImage sends a local image to POST /uploads/images and returns its public URL.

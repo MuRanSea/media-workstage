@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"media-workstage/internal/model"
@@ -389,6 +390,17 @@ func referenceTask(t *testing.T, refs []model.ReferenceItem) *model.MediaTask {
 	return imageTask("midjourney", "mj_imagine", string(params))
 }
 
+// newFakeMJSubmit accepts every submit and records the last request body in submitted.
+func newFakeMJSubmit(t *testing.T, submitted *map[string]any) string {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*submitted = nil
+		_ = json.NewDecoder(r.Body).Decode(submitted)
+		_, _ = io.WriteString(w, `{"code":1,"result":"1"}`)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
 func TestMidjourneySubmit_ReferenceImages(t *testing.T) {
 	var submitted map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -423,9 +435,18 @@ func TestMidjourneySubmit_ReferenceImageLimits(t *testing.T) {
 		return err
 	}
 
-	big := filepath.Join(t.TempDir(), "big.png")
-	require.NoError(t, os.WriteFile(big, make([]byte, 4<<20+1), 0644))
-	assert.ErrorContains(t, submit([]model.ReferenceItem{{LocalPath: big}}), "4MB")
+	// A big image is shrunk to fit; a big file that is no image cannot be.
+	var submitted map[string]any
+	shrink := NewMidjourneyAdapter(ChannelConfig{BaseURL: newFakeMJSubmit(t, &submitted), APIKey: "k"})
+	_, err := shrink.SubmitTask(context.Background(), referenceTask(t, []model.ReferenceItem{{LocalPath: noisePNG(t, 1600, 1200)}}))
+	require.NoError(t, err)
+	shrunk := submitted["base64Array"].([]any)[0].(string)
+	assert.True(t, strings.HasPrefix(shrunk, "data:image/jpeg;base64,"))
+	assert.LessOrEqual(t, len(shrunk), midjourneyMaxImageBytes)
+
+	junk := filepath.Join(t.TempDir(), "big.png")
+	require.NoError(t, os.WriteFile(junk, make([]byte, 4<<20+1), 0644))
+	assert.ErrorContains(t, submit([]model.ReferenceItem{{LocalPath: junk}}), "无法压缩")
 
 	assert.ErrorContains(t, submit([]model.ReferenceItem{{URL: "https://cdn.example.test/a.png"}}), "本地")
 
