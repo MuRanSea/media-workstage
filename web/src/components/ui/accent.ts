@@ -1,5 +1,5 @@
-/** Card-type accents: pink = image, indigo = video, emerald = text. */
-export type Accent = 'pink' | 'indigo' | 'emerald';
+/** Card-type accents: pink = image, indigo = video, emerald = text, amber = upload. */
+export type Accent = 'pink' | 'indigo' | 'emerald' | 'amber';
 
 interface AccentClasses {
   /** Solid primary button. */
@@ -34,6 +34,14 @@ export const ACCENT: Record<Accent, AccentClasses> = {
     selected: 'border-indigo-500 ring-2 ring-indigo-500/30',
     soft: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
   },
+  amber: {
+    solid: 'bg-amber-600 hover:bg-amber-500 text-white',
+    active: 'bg-amber-600 text-white',
+    text: 'text-amber-300',
+    focus: 'focus:border-amber-500',
+    selected: 'border-amber-500 ring-2 ring-amber-500/30',
+    soft: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+  },
   emerald: {
     solid: 'bg-emerald-600 hover:bg-emerald-500 text-white',
     active: 'bg-emerald-600 text-white',
@@ -44,7 +52,8 @@ export const ACCENT: Record<Accent, AccentClasses> = {
   },
 };
 
-export const ACCENT_BY_CARD_TYPE: Record<'image' | 'video' | 'text', Accent> = {
+export const ACCENT_BY_CARD_TYPE: Record<'image' | 'video' | 'text' | 'upload', Accent> = {
+  upload: 'amber',
   image: 'pink',
   video: 'indigo',
   text: 'emerald',

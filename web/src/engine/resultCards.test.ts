@@ -272,7 +272,7 @@ describe('video result cards', () => {
     expect(card.tagIndex).toBeUndefined();
   });
 
-  it('adds a queued, untagged video result card with a video snapshot', () => {
+  it('adds a queued video result card with the next @视频N and a video snapshot', () => {
     const g = videoGen({ mode: 'text_to_video', resolution: '1080p', duration: 10, ratio: '9:16', generateAudio: false, seed: 42 });
     const cards = addPendingResult([g], g, task({ task_type: 'video_generation' }));
     const [r] = results(cards);
@@ -286,7 +286,7 @@ describe('video result cards', () => {
       title: '镜头 #1',
       ratio: '9:16',
     });
-    expect(r.tagIndex).toBeUndefined();
+    expect(r.tagIndex).toBe(1);
     expect(r.references).toBeUndefined();
     expect(r.snapshot).toEqual({
       prompt: '镜头缓缓推进',

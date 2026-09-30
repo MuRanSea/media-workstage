@@ -10,6 +10,7 @@ import {
   Film,
   Image as ImageIcon,
   LayoutGrid,
+  Upload,
   X,
 } from 'lucide-react';
 import type { SpatialCard } from '../../types/canvas.ts';
@@ -19,6 +20,7 @@ import { ImageInspector } from './ImageInspector.tsx';
 import { VideoInspector } from './VideoInspector.tsx';
 import { TextInspector } from './TextInspector.tsx';
 import { ResultSnapshotView } from './ResultSnapshotView.tsx';
+import { UploadInspector } from './UploadInspector.tsx';
 
 export const INSPECTOR_WIDTH = 320;
 
@@ -26,6 +28,7 @@ const TYPE_META = {
   image: { label: '图片卡片', icon: ImageIcon },
   video: { label: '视频卡片', icon: Film },
   text: { label: '文本卡片', icon: FileText },
+  upload: { label: '上传卡片', icon: Upload },
 } as const;
 
 const ROLE_LABEL = { generation: '生成卡', result: '结果卡' } as const;
@@ -92,7 +95,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
       </header>
 
       <div className="flex-1 overflow-y-auto px-4">
-        {single?.role === 'result' ? (
+        {single?.type === 'upload' ? (
+          // Upload cards have no generation settings, only where they upload to.
+          <UploadInspector card={single} update={update} />
+        ) : single?.role === 'result' ? (
           // Result cards show what they were generated with; nothing to edit.
           <ResultSnapshotView card={single} />
         ) : (

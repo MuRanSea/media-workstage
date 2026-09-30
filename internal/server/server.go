@@ -202,6 +202,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.GET("/tasks/:id", s.handleGetTask)
 		api.GET("/tasks/events", s.handleSSEEvents)
 		s.registerProjectRoutes(api)
+		s.registerUploadRoutes(api)
 	}
 
 	// Embedded SPA Static File Server & Fallback handler

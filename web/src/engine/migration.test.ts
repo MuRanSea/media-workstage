@@ -163,12 +163,12 @@ describe('migrateLegacyCards: an image or video card with a result', () => {
     expect(byId(cards, 'img').tagIndex).toBeUndefined();
   });
 
-  it('gives a video result card the video, not the saved last frame, and no tag', () => {
+  it('gives a video result card the video, not the saved last frame, and the old number', () => {
     const cards = migrateLegacyCards([doneVideo({ references: [] })]);
     const [r] = resultCardsOf(cards, 'vid');
     expect(r).toMatchObject({ type: 'video', resultUrl: '/assets/videos/task-vid/output.mp4', status: 'succeeded' });
     expect(r.outputAssets?.map((a) => a.kind)).toEqual(['video']);
-    expect(r.tagIndex).toBeUndefined();
+    expect(r.tagIndex).toBe(2);
     expect(r.snapshot?.params).toMatchObject({ mode: 'all_modal', resolution: '720p', duration: 5, ratio: '16:9' });
   });
 

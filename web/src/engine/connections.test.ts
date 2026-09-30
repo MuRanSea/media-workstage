@@ -130,7 +130,8 @@ describe('connecting result cards', () => {
       [imgResult, genImg, '图片卡片之间'],
       [imgResult, genText, '没有输入端口'],
       [textResult, genText, '文本卡片之间'],
-      [videoResult, genVideo, '没有输出端口'],
+      [videoResult, genImg, '视频只能连接到视频卡片'],
+      [videoResult, genVideo, '没有 @视频 编号'],
       [genImg, genVideo, '没有输出端口'],
       [genText, genImg, '没有输出端口'],
       [textResult, imgResult, '没有输入端口'],
@@ -145,7 +146,7 @@ describe('connecting result cards', () => {
     }
   });
 
-  it('gives only image and text result cards an output port', () => {
+  it('gives every result card an output port, and only image and video generation cards an input port', () => {
     const ports = [genImg, genVideo, genText, imgResult, textResult, videoResult].map((c) => [c.id, hasOutputPort(c), hasInputPort(c)]);
     expect(ports).toEqual([
       ['gi', false, true],
@@ -153,7 +154,7 @@ describe('connecting result cards', () => {
       ['gt', false, false],
       ['ri', true, false],
       ['rt', true, false],
-      ['rv', false, false],
+      ['rv', true, false],
     ]);
   });
 

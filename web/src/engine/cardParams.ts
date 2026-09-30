@@ -1,5 +1,6 @@
 import {
   IMAGE_MODELS,
+  maxReferenceVideos,
   resolveVideoModelDef,
   type SpatialCard,
   type VideoModelDef,
@@ -7,6 +8,7 @@ import {
 } from '../types/canvas.ts';
 import type { ModelOption } from './channelModels.ts';
 import { protocolOf } from './providers.ts';
+import { refTag } from './refTags.ts';
 import { inferVideoProvider } from './videoCompiler.ts';
 
 /**
@@ -100,12 +102,29 @@ export function videoModePatch(
   if (mode === 'text_to_video') {
     references = [];
   } else if (mode === 'first_last_frame') {
-    references = references.slice(0, 2).map((r, i) => ({ ...r, role: i === 0 ? 'first_frame' : 'last_frame' }));
+    references = references
+      .filter((r) => r.role !== 'reference_video')
+      .slice(0, 2)
+      .map((r, i) => ({ ...r, role: i === 0 ? 'first_frame' : 'last_frame' }));
     nextRatio = 'adaptive';
   } else {
-    references = references.map((r) => ({ ...r, role: 'reference_image' }));
+    references = references.map((r) => ({ ...r, role: r.role === 'reference_video' ? r.role : 'reference_image' }));
   }
   return { mode, ratio: nextRatio, references };
+}
+
+/** A model that cannot take reference videos loses the ones already attached (with their prompt tags). */
+function dropUnsupportedVideoRefs(card: SpatialCard, option: ModelOption): Partial<SpatialCard> {
+  const limit = maxReferenceVideos(option.protocol, option.id);
+  const videos = (card.references ?? []).filter((r) => r.role === 'reference_video');
+  if (videos.length <= limit) return {};
+  const kept = videos.slice(0, limit);
+  let prompt = card.prompt;
+  for (const dropped of videos.slice(limit)) {
+    prompt = prompt.replace(new RegExp(`${refTag(dropped)}\\b`, 'g'), '').replace(/\s{2,}/g, ' ').trim();
+  }
+  const base = videoModePatch(card, card.mode ?? 'all_modal', Infinity).references ?? [];
+  return { prompt, references: base.filter((r) => r.role !== 'reference_video' || kept.some((k) => k.cardId === r.cardId)) };
 }
 
 /**
@@ -126,13 +145,14 @@ export function videoModelPatch(card: SpatialCard, option: ModelOption): Partial
     resolution: def.resolutions[0],
     duration: def.durations.includes(5) ? 5 : def.durations[0],
     ...videoModePatch(card, mode, def.maxRefs, def.ratios[0]),
+    ...dropUnsupportedVideoRefs(card, option),
   };
 }
 
 /** Removing a reference also removes its @图N tags from the prompt. */
 export function removeReferencePatch(card: SpatialCard, refCardId: string): Partial<SpatialCard> {
   const ref = card.references?.find((r) => r.cardId === refCardId);
-  const prompt = ref ? card.prompt.replace(new RegExp(`@图${ref.tagIndex}\\b`, 'g'), '').replace(/\s{2,}/g, ' ').trim() : card.prompt;
+  const prompt = ref ? card.prompt.replace(new RegExp(`${refTag(ref)}\\b`, 'g'), '').replace(/\s{2,}/g, ' ').trim() : card.prompt;
   return { prompt, references: (card.references ?? []).filter((r) => r.cardId !== refCardId) };
 }
 

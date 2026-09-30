@@ -86,7 +86,28 @@ func (a *APIMartAdapter) submitVideo(ctx context.Context, task *model.MediaTask)
 		return "", fmt.Errorf("invalid video params: %w", err)
 	}
 
-	refs := params.ReferenceAssets
+	// Reference videos ride in video_urls; everything else is an image.
+	var refs []model.ReferenceItem
+	var videoRefs []model.ReferenceItem
+	for _, r := range params.ReferenceAssets {
+		if r.Role == "reference_video" {
+			videoRefs = append(videoRefs, r)
+		} else {
+			refs = append(refs, r)
+		}
+	}
+	if len(videoRefs) > 0 {
+		if family != klingOmni && family != minimaxH3 {
+			return "", fmt.Errorf("%s 不支持参考视频，请换用 Kling Omni 或 MiniMax-H3", task.Model)
+		}
+		limit := 3
+		if family == klingOmni {
+			limit = 1
+		}
+		if len(videoRefs) > limit {
+			return "", fmt.Errorf("%s 最多 %d 个参考视频", task.Model, limit)
+		}
+	}
 	if family != klingOmni && family != minimaxH3 {
 		for _, r := range refs {
 			if r.Role == "reference_image" {
@@ -109,7 +130,19 @@ func (a *APIMartAdapter) submitVideo(ctx context.Context, task *model.MediaTask)
 		urls[i] = u
 	}
 
+	videoURLs := make([]string, len(videoRefs))
+	for i, ref := range videoRefs {
+		u, err := referenceVideoURL(ref)
+		if err != nil {
+			return "", err
+		}
+		videoURLs[i] = u
+	}
+
 	body := map[string]any{"model": task.Model, "prompt": task.Prompt}
+	if len(videoURLs) > 0 {
+		body["video_urls"] = videoURLs
+	}
 	if params.Duration > 0 {
 		body["duration"] = params.Duration
 	}
@@ -197,12 +230,25 @@ func (a *APIMartAdapter) submitVideo(ctx context.Context, task *model.MediaTask)
 	if params.Watermark != nil {
 		body["watermark"] = *params.Watermark
 	}
+	// Kling takes a reference video's sound as-is and rejects generated audio alongside it.
+	if len(videoURLs) > 0 && family == klingOmni {
+		delete(body, "audio")
+	}
 
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal apimart video request: %w", err)
 	}
 	return a.postTask(ctx, "/videos/generations", raw)
+}
+
+// referenceVideoURL returns the public URL of a reference video. APIMart cannot take a
+// local file or base64 video, so the card must have uploaded it first.
+func referenceVideoURL(ref model.ReferenceItem) (string, error) {
+	if strings.HasPrefix(ref.URL, "https://") || strings.HasPrefix(ref.URL, "http://") {
+		return ref.URL, nil
+	}
+	return "", fmt.Errorf("参考视频 %s 需要公网链接：请先在上传卡片上「获取链接」", ref.Label)
 }
 
 // referenceURL turns a reference image into something APIMart accepts. APIMart wants

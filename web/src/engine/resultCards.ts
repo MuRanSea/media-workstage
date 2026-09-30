@@ -36,7 +36,9 @@ const PREVIEW_MAX_HEIGHT = 480;
 /** Model / spec summary row under a result card's preview. */
 const SUMMARY_ROW = 30;
 /** Generation card body: prompt, summary row and the Generate button; video adds reference chips. */
-const GENERATION_BODY = { image: 150, video: 180, text: 150 } as const;
+const GENERATION_BODY = { image: 150, video: 180, text: 150, upload: 0 } as const;
+/** Upload panel under an uploaded or generated video: provider, upload buttons and what was uploaded. */
+const UPLOAD_PANEL = 110;
 /** Text result card body: summary row and a few rows of editable text. */
 const TEXT_RESULT_BODY = 160;
 
@@ -46,7 +48,8 @@ export function estimateCardHeight(card: SpatialCard): number {
   const preview = Math.min((card.width - PADDING) / aspect, PREVIEW_MAX_HEIGHT);
   // No preview on generation cards.
   if (card.role === 'generation') return HEADER + PADDING + GENERATION_BODY[card.type];
-  return card.type === 'text' ? HEADER + PADDING + TEXT_RESULT_BODY : HEADER + PADDING + preview + SUMMARY_ROW;
+  if (card.type === 'text') return HEADER + PADDING + TEXT_RESULT_BODY;
+  return HEADER + PADDING + preview + (card.type === 'image' ? SUMMARY_ROW : SUMMARY_ROW + UPLOAD_PANEL);
 }
 
 /** Result cards take their id from the task that produced them. */
@@ -126,7 +129,7 @@ export function addPendingResult(
   const draft: SpatialCard = {
     ...resultDraft(submitted, resultIdFor(task.id), `${submitted.title} #${resultCardsOf(cards, submitted.id).length + 1}`),
     taskId: task.id,
-    tagIndex: submitted.type === 'image' ? nextTagIndex(cards) : undefined,
+    tagIndex: submitted.type === 'text' ? undefined : nextTagIndex(cards),
   };
 
   return settleResult([...cards, placeResult(cards, submitted, draft, heightOf)], draft.id, task, heightOf);

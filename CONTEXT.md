@@ -23,7 +23,7 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   _Avoid_: 参数卡
 
 - **Result Card (结果卡)**:
-  A card holding exactly one finished output — one image, one video or one text — linked to the Generation Card whose run produced it, and the thing other cards connect to and reuse. It appears as soon as the backend accepts the run and shows the run's progress until the output arrives (a text run is synchronous, so its Result Card appears when the text returns). A generation that yields several outputs (layers, storyboard frames) yields one Result Card per output. Only image Result Cards carry an `@图N` tag. Deleting its Generation Card leaves a Result Card standing on its own, without a source.
+  A card holding exactly one finished output — one image, one video or one text — linked to the Generation Card whose run produced it, and the thing other cards connect to and reuse. It appears as soon as the backend accepts the run and shows the run's progress until the output arrives (a text run is synchronous, so its Result Card appears when the text returns). A generation that yields several outputs (layers, storyboard frames) yields one Result Card per output. Image Result Cards carry an `@图N` tag and video Result Cards an `@视频N` tag (one shared counter); text ones carry none. An **Upload Card** is a Result Card with no source. Deleting its Generation Card leaves a Result Card standing on its own, without a source.
   _Avoid_: 素材卡, asset card (collides with `TaskAsset`), 输出卡
 
 - **MediaTask (媒体生成任务)**:
@@ -61,6 +61,9 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
 - **Bot type (MJ 机器人类型)**:
   What an MJ Proxy Provider binds as its models: `MID_JOURNEY` or `NIJI_JOURNEY`, sent as the request's `botType`. Relays like new-api list billing model names (`mj_imagine`) instead; those send no `botType`, leaving the proxy's default.
   _Avoid_: MJ model version (`--v` / `--niji` stay prompt parameters)
+
+- **Upload Card (上传卡片)**:
+  A Result Card with no source holding a user-picked image or video (`type: 'upload'`, `mediaKind`). The file is saved into the project (`assets/uploads/`) and can be sent to a Provider's platform for a **Platform Asset ID** (素材库 `asset://<id>`, usable once review turns `Active`, Seedance only) and/or a **File URL** (7-day download link). Wired to a video card it becomes a reference: images as `reference_image` (`@图N`), videos as `reference_video` (`@视频N`, multi-reference mode, on models that take reference videos). A video reference must be uploaded first; images fall back to the saved file. A video Result Card uploads and wires in the same way.
 
 - **LocalAssetStore (本地资产库)**:
   The local filesystem repository responsible for caching uploaded reference assets, downloading finished generation outputs, and serving them via local HTTP endpoints.

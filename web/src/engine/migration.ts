@@ -16,9 +16,13 @@ import { assetStoredPath } from './assetPaths.ts';
  * result cards where they are, linked to that card when they still match one of
  * its assets, which then gets no second card.
  *
+ * Upload cards saved before roles existed are result cards with no source; the
+ * extra cards that version made for finished videos stay as upload cards.
+ *
  * Pure and deterministic: result ids derive from the old card's id, so opening a
  * project twice gives the same cards, and migrated cards (which have a role) pass
- * through untouched apart from dropping saved reference addresses.
+ * through untouched apart from dropping saved reference addresses. Video results
+ * saved before they could be referenced get an @视频N.
  */
 
 /** A reference as older versions saved it, with the image address it had when linked. */
@@ -27,8 +31,11 @@ type SavedReference = ReferenceItem & { url?: string; localPath?: string };
 /** A card as project.json holds it: without a role when saved before roles existed. */
 export type SavedCard = Omit<SpatialCard, 'role' | 'references'> & { role?: CardRole; references?: SavedReference[] };
 
-/** Card types this migration knows; anything else passes through as saved. */
+/** Card types this migration splits into generation and result cards; anything else passes through as saved. */
 const MIGRATABLE = new Set<string>(['image', 'video', 'text']);
+
+/** Fields of the upload cards' first version, which copied each finished video onto an upload card. */
+const SPAWN_FIELDS = ['spawnedTaskId', 'resultOfCardId'] as const;
 
 /** Run and output fields a generation card no longer holds. */
 const RUN_FIELDS = ['taskId', 'resultUrl', 'outputAssets', 'errorMessage', 'textOutput', 'tagIndex'] as const;
@@ -36,6 +43,9 @@ const RUN_FIELDS = ['taskId', 'resultUrl', 'outputAssets', 'errorMessage', 'text
 const FAILED = new Set<SpatialCard['status']>(['failed', 'cancelled', 'expired']);
 
 const isLegacy = (card: SavedCard) => !card.role && MIGRATABLE.has(card.type);
+const isLegacyUpload = (card: SavedCard) => !card.role && card.type === 'upload';
+/** A video result saved before video results carried an @视频N. */
+const isUntaggedVideo = (card: SavedCard) => card.role === 'result' && card.type === 'video' && card.tagIndex === undefined;
 const isInProgress = (card: SavedCard) => !!card.taskId && (card.status === 'queued' || card.status === 'running');
 const hasOutput = (card: SavedCard) => !!card.resultUrl || !!card.outputAssets?.length;
 
@@ -75,7 +85,7 @@ interface Split {
 export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
   // Legacy cards read as cards with a role still missing; only fields they share with new cards are used.
   const cards = saved as SpatialCard[];
-  if (!saved.some((c) => isLegacy(c) || hasSavedAddress(c))) return cards;
+  if (!saved.some((c) => isLegacy(c) || isLegacyUpload(c) || isUntaggedVideo(c) || hasSavedAddress(c))) return cards;
 
   let lastTag = cards.reduce((max, c) => Math.max(max, c.tagIndex ?? 0), 0);
   const claimedTasks = new Set(cards.filter((c) => c.role === 'result' && c.taskId).map((c) => c.taskId!));
@@ -85,10 +95,10 @@ export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
 
   const splits = new Map<string, Split>();
   for (const card of cards.filter((c) => isLegacy(c) && !unpacked.has(c.id))) {
-    // The old @图N goes to the first image result made for the card; later ones get fresh numbers.
+    // The old @图N goes to the first image or video result made for the card; later ones get fresh numbers.
     let tag = card.tagIndex;
     const nextTag = () => {
-      if (card.type !== 'image') return undefined;
+      if (card.type === 'text') return undefined;
       const t = tag ?? ++lastTag;
       tag = undefined;
       return t;
@@ -190,8 +200,11 @@ export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
     }, prompt);
 
   // Legacy cards become generation or result cards in place; nothing already on the canvas moves.
-  const inPlace = saved.map((savedCard): SpatialCard => {
+  const inPlace = saved.map((raw): SpatialCard => {
+    const savedCard = withoutSpawnFields(raw);
     const card = savedCard as SpatialCard;
+    if (isLegacyUpload(savedCard)) return { ...card, role: 'result' };
+    if (isUntaggedVideo(savedCard)) return { ...card, tagIndex: ++lastTag };
     if (!isLegacy(savedCard)) {
       return hasSavedAddress(savedCard) ? { ...card, references: withoutSavedAddress(savedCard.references!) } : card;
     }
@@ -237,6 +250,14 @@ export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
     for (const run of split.runs) next = [...next, placeResult(next, generation, withLinks(run))];
   }
   return next;
+}
+
+/** `card` without the fields the first upload-card version kept; the same card when it has none. */
+function withoutSpawnFields(card: SavedCard): SavedCard {
+  if (!SPAWN_FIELDS.some((f) => f in card)) return card;
+  const clean = { ...card } as SavedCard & Partial<Record<(typeof SPAWN_FIELDS)[number], string>>;
+  for (const f of SPAWN_FIELDS) delete clean[f];
+  return clean;
 }
 
 /** The assets a card's output splits into: every image in output order, or a video alone. */

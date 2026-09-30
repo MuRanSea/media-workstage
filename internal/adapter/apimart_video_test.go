@@ -220,3 +220,41 @@ func TestAPIMartVideoPoll_ReadsVideosInEitherURLShape(t *testing.T) {
 	}
 	assert.Equal(t, 30*60, int(NewAPIMartAdapter(ChannelConfig{}).PollTimeout(videoTask("kling-v3", nil)).Seconds()))
 }
+
+// A reference video goes to video_urls as a public URL, never into the image list.
+func TestAPIMartVideo_ReferenceVideoUsesVideoURLs(t *testing.T) {
+	f := newFakeAPIMart(t)
+	a := NewAPIMartAdapter(ChannelConfig{BaseURL: f.srv.URL + "/v1", APIKey: "k"})
+	video := model.ReferenceItem{Role: "reference_video", Label: "动作", URL: "https://tos.example/m.mp4?sig=1"}
+
+	_, err := a.SubmitTask(context.Background(), videoTask("kling-v3-omni", map[string]any{
+		"generate_audio":   true,
+		"reference_assets": []model.ReferenceItem{{Role: "reference_image", URL: "https://x/a.png"}, video},
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, []any{"https://tos.example/m.mp4?sig=1"}, f.submitted["video_urls"])
+	assert.Len(t, f.submitted["image_with_roles"], 1)
+	assert.NotContains(t, f.submitted, "audio", "Kling rejects generated audio with a reference video")
+
+	_, err = a.SubmitTask(context.Background(), videoTask("MiniMax-H3", map[string]any{
+		"reference_assets": []model.ReferenceItem{video},
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, []any{"https://tos.example/m.mp4?sig=1"}, f.submitted["video_urls"])
+	assert.NotContains(t, f.submitted, "image_with_roles")
+}
+
+func TestAPIMartVideo_ReferenceVideoRules(t *testing.T) {
+	a := NewAPIMartAdapter(ChannelConfig{BaseURL: "http://unused", APIKey: "k"})
+	video := model.ReferenceItem{Role: "reference_video", Label: "动作", URL: "https://tos.example/m.mp4"}
+
+	_, err := a.SubmitTask(context.Background(), videoTask("kling-v3", map[string]any{"reference_assets": []model.ReferenceItem{video}}))
+	assert.ErrorContains(t, err, "不支持参考视频")
+
+	_, err = a.SubmitTask(context.Background(), videoTask("kling-v3-omni", map[string]any{"reference_assets": []model.ReferenceItem{video, video}}))
+	assert.ErrorContains(t, err, "最多 1 个参考视频")
+
+	local := model.ReferenceItem{Role: "reference_video", Label: "动作", LocalPath: "m.mp4"}
+	_, err = a.SubmitTask(context.Background(), videoTask("kling-v3-omni", map[string]any{"reference_assets": []model.ReferenceItem{local}}))
+	assert.ErrorContains(t, err, "公网链接")
+}

@@ -10,12 +10,16 @@ import {
 } from '../../engine/channelModels.ts';
 import { requestedAspect, videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
 import { connectCards } from '../../engine/connections.ts';
+import { cardTag, refTag } from '../../engine/refTags.ts';
+import { UPLOAD_REF_LABELS, mediaKindOf, uploadRefKind } from '../../engine/uploadRefs.ts';
+import { protocolOf } from '../../engine/providers.ts';
 import { inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { useChannels } from '../../services/channels.ts';
 import { assetUrl } from '../../engine/assetPaths.ts';
 import { Button } from '../ui/Button.tsx';
 import { Menu } from '../ui/Menu.tsx';
-import { InputPort, LinkedPromptBox } from './CardPorts.tsx';
+import { InputPort, LinkedPromptBox, OutputPort } from './CardPorts.tsx';
+import { UploadPanel } from './UploadPanel.tsx';
 import {
   AutoTextarea,
   CardShell,
@@ -25,6 +29,7 @@ import {
   RunsBadge,
   StatusChip,
   SummaryRow,
+  TagBadge,
 } from './CardShell.tsx';
 import type { CardViewProps } from './cardProps.ts';
 
@@ -38,6 +43,8 @@ interface VideoCardViewProps extends CardViewProps {
   isSubmitting?: boolean;
   /** Generation cards: result cards still queued or running. */
   runsInProgress?: number;
+  /** Result cards: drag from the output port to use the video as a reference video. */
+  onStartConnect?: (e: React.MouseEvent<HTMLDivElement>) => void;
 }
 
 export const VideoCardView: React.FC<VideoCardViewProps> = ({
@@ -56,6 +63,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   onNotice,
   isSubmitting = false,
   runsInProgress = 0,
+  onStartConnect,
 }) => {
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -85,8 +93,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
     return true;
   };
 
-  const insertTag = (tagIndex: number) => {
-    const tag = `@图${tagIndex}`;
+  const insertTag = (tag: string) => {
     const el = promptRef.current;
     if (!el) return onUpdateCard(card.id, { prompt: `${card.prompt} ${tag}`.trim() });
     const { selectionStart: start, selectionEnd: end } = el;
@@ -108,7 +115,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   };
 
   const selectMention = (image: SpatialCard) => {
-    const tagged = `${card.prompt.slice(0, mentionCursor).replace(/@([^\s@]*)$/, `@图${image.tagIndex} `)}${card.prompt.slice(mentionCursor)}`;
+    const tagged = `${card.prompt.slice(0, mentionCursor).replace(/@([^\s@]*)$/, `${cardTag(image)} `)}${card.prompt.slice(mentionCursor)}`;
     const alreadyRef = refs.some((r) => r.cardId === image.id);
     if (alreadyRef || attach(image)) onUpdateCard(card.id, { prompt: tagged });
     setMentionQuery(null);
@@ -119,7 +126,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
     mentionQuery === null
       ? []
       : availableImageCards.filter(
-          (img) => mentionQuery === '' || `图${img.tagIndex}`.includes(mentionQuery) || img.title.toLowerCase().includes(mentionQuery.toLowerCase())
+          (img) => mentionQuery === '' || cardTag(img).slice(1).includes(mentionQuery) || img.title.toLowerCase().includes(mentionQuery.toLowerCase())
         );
 
   const player = (
@@ -169,18 +176,35 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       {/* Reference chips: click to insert the tag into the prompt */}
       {card.mode !== 'text_to_video' && (
         <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
-          <span className="text-slate-500">参考图</span>
-          {refs.map((ref) => (
+          <span className="text-slate-500">参考</span>
+          {refs.map((ref) => {
+            const src = availableImageCards.find((c) => c.id === ref.cardId);
+            // Uploads and videos send an uploaded copy; generated images go as they are.
+            const viaUpload = !!src && (src.type === 'upload' || mediaKindOf(src) === 'video');
+            const sent = src && viaUpload ? uploadRefKind(src, protocolOf(provider) ?? 'ark') : undefined;
+            return (
             <button
               key={ref.cardId}
               type="button"
-              onClick={() => insertTag(ref.tagIndex)}
-              title={`插入 @图${ref.tagIndex} 到提示词`}
-              className="font-mono px-1.5 py-px rounded-md border bg-pink-500/15 text-pink-300 border-pink-500/30 hover:bg-pink-500/25"
+              onClick={() => insertTag(refTag(ref))}
+              title={`插入 ${refTag(ref)} 到提示词${sent ? `（发送${UPLOAD_REF_LABELS[sent]}）` : src && viaUpload ? `（素材还没准备好，请在「${src.title}」上处理）` : ''}`}
+              className={`font-mono px-1.5 py-px rounded-md border ${
+                src?.type === 'upload'
+                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/30 hover:bg-amber-500/25'
+                  : src?.type === 'video'
+                  ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/25'
+                  : 'bg-pink-500/15 text-pink-300 border-pink-500/30 hover:bg-pink-500/25'
+              }`}
             >
-              @图{ref.tagIndex}
+              {refTag(ref)}
+              {viaUpload && (
+                <span className={`ml-1 font-sans ${sent ? 'text-slate-300' : 'text-rose-300'}`}>
+                  {sent ? UPLOAD_REF_LABELS[sent] : '未就绪'}
+                </span>
+              )}
             </button>
-          ))}
+            );
+          })}
           <button
             type="button"
             onClick={(e) => {
@@ -199,10 +223,10 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       {pickerAt && (
         <Menu
           at={pickerAt}
-          title={availableImageCards.length ? '选择画布上的图片卡片' : '画布上还没有图片卡片'}
+          title={availableImageCards.length ? '选择画布上的图片或视频素材' : '画布上还没有图片、视频结果或上传卡片'}
           onClose={() => setPickerAt(null)}
           items={availableImageCards.map((img) => ({
-            label: `@图${img.tagIndex}  ${img.title}`,
+            label: `${cardTag(img)}  ${img.title}`,
             hint: refs.some((r) => r.cardId === img.id) ? '已添加' : undefined,
             disabled: refs.some((r) => r.cardId === img.id),
             onSelect: () => void attach(img),
@@ -220,12 +244,12 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
             value={card.prompt}
             onChange={handlePromptChange}
             onBlur={() => setTimeout(() => setMentionQuery(null), 150)}
-            placeholder={card.mode === 'text_to_video' ? '描述镜头：画面、运镜、节奏…' : '描述镜头，输入 @ 引用参考图…'}
+            placeholder={card.mode === 'text_to_video' ? '描述镜头：画面、运镜、节奏…' : '描述镜头，输入 @ 引用参考素材…'}
           />
           {mentionQuery !== null && (
             <div className="absolute bottom-full left-0 mb-1.5 w-64 bg-canvas-surface border border-slate-700 rounded-xl p-1 shadow-2xl z-40">
               <div className="flex items-center gap-1 px-2 py-1 text-[11px] text-slate-400">
-                <AtSign className="w-3 h-3" /> 引用参考图
+                <AtSign className="w-3 h-3" /> 引用参考素材
               </div>
               {mentions.length > 0 ? (
                 mentions.map((img) => (
@@ -236,12 +260,16 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
                     onClick={() => selectMention(img)}
                     className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-xs hover:bg-slate-800"
                   >
-                    <span className="font-mono text-pink-300">@图{img.tagIndex}</span>
+                    <span
+                      className={`font-mono ${img.type === 'upload' ? 'text-amber-300' : img.type === 'video' ? 'text-indigo-300' : 'text-pink-300'}`}
+                    >
+                      {cardTag(img)}
+                    </span>
                     <span className="truncate text-slate-300">{img.title}</span>
                   </button>
                 ))
               ) : (
-                <div className="px-2 py-1.5 text-[11px] text-slate-500">没有匹配的图片卡片</div>
+                <div className="px-2 py-1.5 text-[11px] text-slate-500">没有匹配的素材卡片</div>
               )}
             </div>
           )}
@@ -263,11 +291,16 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   };
 
   if (card.role === 'result') {
-    // A finished output: nothing to configure, and nothing downstream takes video yet.
+    // A finished output: nothing to configure. Once uploaded it can feed another video card as a reference video.
     return (
-      <CardShell {...shell}>
+      <CardShell
+        {...shell}
+        badges={<TagBadge tagIndex={card.tagIndex} accent="indigo" noun="视频" />}
+        ports={onStartConnect && <OutputPort color="indigo" onStart={onStartConnect} />}
+      >
         {player}
         {summary}
+        {card.status === 'succeeded' && card.resultUrl && <UploadPanel card={card} onUpdateCard={onUpdateCard} accent="indigo" />}
         {card.errorMessage && <ErrorBox message={card.errorMessage} />}
       </CardShell>
     );

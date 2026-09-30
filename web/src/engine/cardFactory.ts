@@ -1,12 +1,13 @@
-import type { CardType, SpatialCard } from '../types/canvas.ts';
+import type { CardType, SpatialCard, UploadKind } from '../types/canvas.ts';
 import type { Point } from './matrix.ts';
+import { refNoun } from './refTags.ts';
 
-const CARD_WIDTH: Record<CardType, number> = { image: 340, video: 460, text: 340 };
+const CARD_WIDTH: Record<CardType, number> = { image: 340, video: 460, text: 340, upload: 300 };
 const CASCADE = 32;
 
-const TITLES: Record<CardType, string> = { image: '图片', video: '视频', text: '提示词助手' };
+const TITLES: Record<CardType, string> = { image: '图片', video: '视频', text: '提示词助手', upload: '上传' };
 
-/** Next free @图N: one past the highest tag, so deleted cards never cause duplicates. */
+/** Next free @图N / @视频N: one past the highest tag, so deleted cards never cause duplicates. */
 export function nextTagIndex(cards: SpatialCard[]): number {
   return cards.reduce((max, c) => Math.max(max, c.tagIndex ?? 0), 0) + 1;
 }
@@ -29,10 +30,11 @@ export function placeCard(at: Point, width: number, cards: SpatialCard[]): Point
 }
 
 /**
- * A new generation card of `type` centred on world point `at`. Generation cards
- * carry no @图N tag; image result cards get one.
+ * A new card of `type` centred on world point `at`: a generation card, or for
+ * `upload` a result card with no source. Generation cards carry no @图N tag;
+ * image and video result cards (uploads included) get one.
  */
-export function createCard(type: CardType, at: Point, cards: SpatialCard[]): SpatialCard {
+export function createCard(type: CardType, at: Point, cards: SpatialCard[], mediaKind: UploadKind = 'image'): SpatialCard {
   const width = CARD_WIDTH[type];
   const common = {
     id: newCardId(),
@@ -45,6 +47,11 @@ export function createCard(type: CardType, at: Point, cards: SpatialCard[]): Spa
     status: 'idle' as const,
     progress: 0,
   };
+  if (type === 'upload') {
+    const tagIndex = nextTagIndex(cards);
+    const title = `${mediaKind === 'video' ? '上传视频' : '上传图片'} ${tagIndex}`;
+    return { ...common, role: 'result', tagIndex, title, model: '', mediaKind };
+  }
   if (type === 'image') {
     return {
       ...common,
@@ -79,8 +86,8 @@ export function createCard(type: CardType, at: Point, cards: SpatialCard[]): Spa
 
 /** Default titles carry the tag number ("图片 3"); copies renumber those and mark custom ones. */
 function copyTitle(card: SpatialCard, newTag: number): string {
-  const auto = new RegExp(`^${TITLES[card.type]} \\d+$`);
-  return auto.test(card.title) ? `${TITLES[card.type]} ${newTag}` : `${card.title} 副本`;
+  const auto = /^(图片|视频|提示词助手|上传图片|上传视频) \d+$/;
+  return auto.test(card.title) ? `${card.title.replace(/ \d+$/, '')} ${newTag}` : `${card.title} 副本`;
 }
 
 /**
@@ -121,9 +128,9 @@ export function duplicateCards(source: SpatialCard[], at: Point, existing: Spati
     if (c.role === 'result') delete copy.taskId;
     // Rewrite @图N in the prompt for references that were remapped.
     if (c.references?.length) {
-      copy.prompt = c.prompt.replace(/@图(\d+)/g, (m, n) => {
-        const ref = c.references!.find((r) => r.tagIndex === Number(n));
-        return ref && idMap.has(ref.cardId) ? `@图${tagMap.get(ref.tagIndex)}` : m;
+      copy.prompt = c.prompt.replace(/@(图|视频)(\d+)/g, (m, noun, n) => {
+        const ref = c.references!.find((r) => r.tagIndex === Number(n) && refNoun(r.role) === noun);
+        return ref && idMap.has(ref.cardId) ? `@${noun}${tagMap.get(ref.tagIndex)}` : m;
       });
     }
     return copy;

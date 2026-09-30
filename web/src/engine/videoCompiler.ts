@@ -1,6 +1,9 @@
-import { resolveVideoModelDef, type SpatialCard, type ReferenceItem, type VideoTaskMode } from '../types/canvas.ts';
+import { maxReferenceVideos, resolveVideoModelDef, type SpatialCard, type ReferenceItem, type VideoTaskMode } from '../types/canvas.ts';
 import type { CreateTaskPayload } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
+import { refNoun, refTag } from './refTags.ts';
+import { uploadReference } from './uploadRefs.ts';
+import type { Protocol } from '../services/api.ts';
 
 export interface VideoCompilationInput {
   card: SpatialCard;
@@ -26,12 +29,15 @@ function isRemoteOrDataURI(str: string): boolean {
  */
 export function resolveReferenceAsset(
   ref: ReferenceItem,
-  allCards: SpatialCard[] = []
+  allCards: SpatialCard[] = [],
+  protocol: Protocol = 'ark'
 ): { url?: string; localPath?: string; remoteUrl?: string } {
   const srcCard = allCards.find((c) => c.id === ref.cardId);
   if (!srcCard) {
-    throw new Error(`Referenced image card @图${ref.tagIndex} was not found on the canvas`);
+    throw new Error(`Referenced card ${refTag(ref)} was not found on the canvas`);
   }
+  // Upload cards and video results send what was uploaded for them (asset id or link), else the saved image.
+  if (srcCard.type === 'upload' || srcCard.type === 'video') return uploadReference(srcCard, protocol);
 
   // The card's primary image asset
   const baseAsset = srcCard.outputAssets?.find(
@@ -60,7 +66,7 @@ export function resolveReferenceAsset(
   }
 
   throw new Error(
-    `Referenced image card @图${ref.tagIndex} ("${srcCard.title}") has not generated any output image yet. Please generate it first.`
+    `Referenced card ${refTag(ref)} ("${srcCard.title}") has no output yet. Please generate it first.`
   );
 }
 
@@ -72,7 +78,8 @@ export function inferVideoProvider(modelId: string): 'ark' | 'minimax' {
 /**
  * The mode, ratio and references a video card's task is actually sent with:
  * text-to-video drops references, first/last frame takes an adaptive ratio and
- * re-roles by order, all-modal makes every image a plain reference.
+ * re-roles images by order (videos cannot be frames), all-modal makes every
+ * image a plain reference and keeps videos as reference videos.
  */
 export function sentVideoSettings(card: SpatialCard): { mode: VideoTaskMode; ratio: string; references: ReferenceItem[] } {
   const mode: VideoTaskMode = card.mode ?? 'all_modal';
@@ -82,10 +89,16 @@ export function sentVideoSettings(card: SpatialCard): { mode: VideoTaskMode; rat
     return {
       mode,
       ratio: 'adaptive',
-      references: references.map((ref, idx) => ({ ...ref, role: idx === 0 ? 'first_frame' : 'last_frame' })),
+      references: references
+        .filter((ref) => ref.role !== 'reference_video')
+        .map((ref, idx) => ({ ...ref, role: idx === 0 ? 'first_frame' : 'last_frame' })),
     };
   }
-  return { mode, ratio: card.ratio ?? '16:9', references: references.map((ref) => ({ ...ref, role: 'reference_image' })) };
+  return {
+    mode,
+    ratio: card.ratio ?? '16:9',
+    references: references.map((ref) => ({ ...ref, role: ref.role === 'reference_video' ? ref.role : 'reference_image' })),
+  };
 }
 
 /**
@@ -112,7 +125,7 @@ export function compileVideoTaskPayload(
     throw new Error('Video generation requires a non-empty prompt');
   }
   if (mode === 'text_to_video') {
-    compiledPrompt = compiledPrompt.replace(/@?图\d+\s*/g, '').trim();
+    compiledPrompt = compiledPrompt.replace(/@?(图|视频)\d+\s*/g, '').trim();
   } else if (mode === 'first_last_frame') {
     if (references.length === 0) {
       throw new Error('first_last_frame mode requires at least 1 reference image');
@@ -128,6 +141,10 @@ export function compileVideoTaskPayload(
     );
   }
 
+  if (references.some((r) => r.role === 'reference_video') && maxReferenceVideos(protocol, card.model) === 0) {
+    throw new Error(`${card.model} 不支持参考视频，请断开视频连线或换用 Seedance、Kling Omni、MiniMax H3`);
+  }
+
   // 2. Resolve assets & renumber prompt from global @图N to sequential 图1, 图2, ...
   const compiledReferenceAssets: Array<{
     card_id: string;
@@ -139,9 +156,12 @@ export function compileVideoTaskPayload(
     remote_url?: string;
   }> = [];
 
-  references.forEach((ref, idx) => {
-    const cloudIndex = idx + 1;
-    const resolved = resolveReferenceAsset(ref, allCards);
+  // Images and videos are numbered separately: 图1, 图2, … and 视频1, …
+  const counters = { 图: 0, 视频: 0 };
+  references.forEach((ref) => {
+    const noun = refNoun(ref.role);
+    const cloudIndex = ++counters[noun];
+    const resolved = resolveReferenceAsset(ref, allCards, protocol);
 
     compiledReferenceAssets.push({
       card_id: ref.cardId,
@@ -153,11 +173,11 @@ export function compileVideoTaskPayload(
       remote_url: resolved.remoteUrl,
     });
 
-    const tagRegex = new RegExp(`@?图${ref.tagIndex}\\b`, 'g');
-    compiledPrompt = compiledPrompt.replace(tagRegex, `图${cloudIndex}`);
+    const tagRegex = new RegExp(`@?${noun}${ref.tagIndex}\\b`, 'g');
+    compiledPrompt = compiledPrompt.replace(tagRegex, `${noun}${cloudIndex}`);
   });
 
-  compiledPrompt = compiledPrompt.replace(/@图(\d+)/g, '图$1').trim();
+  compiledPrompt = compiledPrompt.replace(/@(图|视频)(\d+)/g, '$1$2').trim();
 
   const params: Record<string, unknown> = {
     resolution: card.resolution ?? (isMiniMax ? '1080P' : '720p'),

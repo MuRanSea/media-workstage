@@ -1,6 +1,10 @@
 import type { Protocol, ProviderId } from '../services/api.ts';
 
-export type CardType = 'image' | 'video' | 'text';
+export type CardType = 'image' | 'video' | 'text' | 'upload';
+/** What an upload card holds. */
+export type UploadKind = 'image' | 'video';
+/** Review state of an asset uploaded to a provider's asset library. */
+export type AssetStatus = 'Processing' | 'Active' | 'Failed';
 export type TextPreset = 'image_prompt' | 'video_prompt' | 'free';
 
 export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video';
@@ -25,13 +29,14 @@ export interface TaskAssetDto {
 export interface ReferenceItem {
   cardId: string;
   tagIndex: number;
-  role: 'reference_image' | 'first_frame' | 'last_frame';
+  role: 'reference_image' | 'reference_video' | 'first_frame' | 'last_frame';
   label: string;
 }
 
 /**
  * Generation card: holds a prompt, model and parameters and never an output.
- * Result card: holds exactly one output of a run. Cards saved before roles
+ * Result card: holds exactly one output of a run; an upload card is a result
+ * card with no source. Cards saved before roles
  * existed are migrated when a project opens (engine/migration.ts).
  */
 export type CardRole = 'generation' | 'result';
@@ -43,7 +48,7 @@ export interface ResultSnapshot {
   model: string;
   params: Record<string, string | number | boolean>;
   seed?: number;
-  /** Video runs: the reference images they were submitted with. */
+  /** Video runs: the reference images and videos they were submitted with. */
   references?: Pick<ReferenceItem, 'cardId' | 'tagIndex' | 'role' | 'label'>[];
 }
 
@@ -57,7 +62,7 @@ export interface SpatialCard {
   taskId?: string;
   type: CardType;
   title: string;
-  /** @图N; only image result cards carry one. */
+  /** @图N / @视频N; carried by image and video result cards (uploads included). */
   tagIndex?: number;
   x: number;
   y: number;
@@ -74,6 +79,22 @@ export interface SpatialCard {
 
   /** Image/video cards: a text card whose output replaces this card's prompt. */
   promptSourceId?: string;
+
+  // Upload card fields: the picked file lives in the project (resultUrl); the remote
+  // fields are what a provider's upload API returned for it.
+  mediaKind?: UploadKind;
+  uploadName?: string;
+  /** Provider whose upload API the file goes to. */
+  uploadProvider?: ProviderId;
+  /** Asset library id (referenced as asset://<id> once status is Active). */
+  assetId?: string;
+  assetStatus?: AssetStatus;
+  assetError?: string;
+  /** Download URL from the file upload API, valid until fileExpiresAt (unix seconds). */
+  fileUrl?: string;
+  fileExpiresAt?: number;
+  /** Which copy video cards send when this card is a reference; undefined = automatic. */
+  uploadRefMode?: 'asset' | 'url';
 
   // Text card (LLM) fields: prompt is the user's idea, textOutput the model's answer
   textPreset?: TextPreset;
@@ -300,6 +321,17 @@ export function resolveVideoModelDef(protocol: Protocol | undefined, modelId: st
     VIDEO_MODELS.find((m) => m.id === baseId) ??
     VIDEO_MODELS[0];
   return { ...base, id: modelId, name: modelId, tag: '' };
+}
+
+/** How many reference videos a model takes on a protocol; 0 when it takes none. */
+export function maxReferenceVideos(protocol: Protocol | undefined, modelId: string): number {
+  if (protocol === 'ark') return 10;
+  if (protocol === 'apimart') {
+    const m = modelId.toLowerCase();
+    if (m.includes('omni') || m.includes('-o1')) return 1;
+    if (m.startsWith('minimax-h3')) return 3;
+  }
+  return 0;
 }
 
 export function getModelMaxReferences(modelId: string): number {
