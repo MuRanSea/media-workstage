@@ -8,22 +8,18 @@ export function mediaKindOf(card: SpatialCard): 'image' | 'video' {
   return card.type === 'video' ? 'video' : card.type === 'upload' ? card.mediaKind ?? 'image' : 'image';
 }
 
-/** A finished generated image result card (the only kind whose upload buttons depend on where the file came from). */
 function isImageResult(card: SpatialCard): boolean {
   return card.type === 'image' && card.role === 'result';
 }
 
 /**
- * Whether a card offers "上传素材库 / 获取链接". Uploads and video results always do (they have
- * no public copy). A generated image does only when the provider gave no public URL for it
- * (Gemini and base64 replies exist only as a local file); an image that came with an
- * http(s) URL is sent by that URL as before.
+ * Whether a card offers "上传素材库 / 获取链接": every finished image or video result, like
+ * an upload card. What was generated decides it, not where the file came from: a
+ * provider's own image URL expires within a day and never gives an asset id.
  */
 export function offersUpload(card: SpatialCard): boolean {
-  if (card.type === 'upload' || card.type === 'video') return true;
-  if (!isImageResult(card) || card.status !== 'succeeded' || !card.resultUrl) return false;
-  const remote = card.outputAssets?.[0]?.remote_url;
-  return !(remote && /^https?:\/\//.test(remote));
+  if (card.type === 'upload') return true;
+  return card.role === 'result' && (card.type === 'image' || card.type === 'video') && card.status === 'succeeded' && !!card.resultUrl;
 }
 
 /** Whether a video card should send what was uploaded for this card instead of its saved file. */
@@ -78,8 +74,10 @@ export function uploadReference(card: SpatialCard, protocol: Protocol): { url?: 
   }
   if (choice === 'url') {
     const url = liveFileUrl(card);
-    if (!url) throw new Error(urlProblem(card));
-    return { url };
+    if (url) return { url };
+    // An image can still go as its saved file; the provider side gets it a fresh link.
+    if (card.fileUrl && mediaKindOf(card) === 'image' && card.resultUrl) return { localPath: card.resultUrl };
+    throw new Error(urlProblem(card));
   }
 
   const url = (supportsAssetId(protocol) ? assetUri(card) : undefined) ?? liveFileUrl(card);

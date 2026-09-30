@@ -11,6 +11,31 @@ import { inputClass, type Accent } from '../ui/accent.ts';
 import type { CardViewProps } from './cardProps.ts';
 
 const POLL_MS = 3000;
+const LAST_PROVIDER_KEY = 'mw.uploadProvider';
+
+// Every card uploads through the same platform, so a new card starts from the provider last used.
+function lastProvider(): string | undefined {
+  try {
+    return localStorage.getItem(LAST_PROVIDER_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function rememberProvider(id: string) {
+  try {
+    localStorage.setItem(LAST_PROVIDER_KEY, id);
+  } catch {
+    // Not remembering only costs a re-pick.
+  }
+}
+
+/** The name a file is stored under on the platform, keeping the saved file's extension. */
+function uploadNameOf(card: SpatialCard): string {
+  if (card.uploadName) return card.uploadName;
+  const ext = card.resultUrl?.match(/\.[a-z0-9]+$/i)?.[0] ?? (mediaKindOf(card) === 'video' ? '.mp4' : '.png');
+  return `${card.title}${ext}`;
+}
 
 type Busy = 'asset' | 'file' | null;
 
@@ -54,7 +79,9 @@ export const UploadPanel: React.FC<{
   const [busy, setBusy] = useState<Busy>(null);
 
   const providers = channels.filter((p) => p.is_configured);
-  const provider = card.uploadProvider && providers.some((p) => p.id === card.uploadProvider) ? card.uploadProvider : providers[0]?.id;
+  const configured = (id?: string) => (id && providers.some((p) => p.id === id) ? id : undefined);
+  // Ark first: only its platform gives asset ids (Seedance).
+  const provider = configured(card.uploadProvider) ?? configured(lastProvider()) ?? configured('ark') ?? providers[0]?.id;
   const fileExpired = !!card.fileUrl && !liveFileUrl(card);
   const noProvider = providers.length === 0;
 
@@ -65,7 +92,8 @@ export const UploadPanel: React.FC<{
     if (!projectId || !provider || !card.resultUrl) return;
     setBusy('asset');
     try {
-      const res = await apiUploadAsset(provider, projectId, card.resultUrl, card.uploadName ?? `${card.title}.${mediaKindOf(card) === 'video' ? 'mp4' : 'png'}`);
+      const res = await apiUploadAsset(provider, projectId, card.resultUrl, uploadNameOf(card));
+      rememberProvider(provider);
       onUpdateCard(card.id, {
         uploadProvider: provider,
         assetId: res.asset_id,
@@ -86,6 +114,7 @@ export const UploadPanel: React.FC<{
     setBusy('file');
     try {
       const res = await apiUploadFile(provider, projectId, card.resultUrl);
+      rememberProvider(provider);
       onUpdateCard(card.id, { uploadProvider: provider, fileUrl: res.file_url, fileExpiresAt: res.expires_at, errorMessage: undefined });
     } catch (err) {
       fail(err);
@@ -113,21 +142,27 @@ export const UploadPanel: React.FC<{
 
   return (
     <div className="space-y-2 rounded-xl border border-slate-800 bg-canvas-bg/60 p-2">
-      <select
-        value={provider ?? ''}
-        disabled={noProvider}
-        onMouseDown={(e) => e.stopPropagation()}
-        onChange={(e) => onUpdateCard(card.id, { uploadProvider: e.target.value })}
-        className={inputClass}
-        title="上传到哪个服务商"
-      >
-        {noProvider && <option value="">还没有配置好的服务商</option>}
-        {providers.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </select>
+      <label className="flex items-center gap-2 text-[11px] text-slate-400">
+        <span className="flex-shrink-0">上传到</span>
+        <select
+          value={provider ?? ''}
+          disabled={noProvider}
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={(e) => {
+            rememberProvider(e.target.value);
+            onUpdateCard(card.id, { uploadProvider: e.target.value });
+          }}
+          className={`${inputClass} flex-1 min-w-0`}
+          title="用哪个服务商的账号上传（素材库只在火山方舟可用）"
+        >
+          {noProvider && <option value="">还没有配置好的服务商</option>}
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <div className="grid grid-cols-2 gap-1.5">
         <Button
@@ -192,13 +227,6 @@ export const UploadPanel: React.FC<{
               { value: 'url', label: '链接', title: '所有模型都能用，7 天有效' },
             ]}
           />
-          <p className="text-[11px] leading-relaxed text-slate-500">
-            {card.uploadRefMode === 'asset'
-              ? '仅 Seedance 可用；连到其他模型会提示改选链接。'
-              : card.uploadRefMode === 'url'
-              ? '所有模型可用，链接 7 天内有效。'
-              : 'Seedance 用素材 ID（审核通过后），其余模型用链接。'}
-          </p>
         </div>
       )}
 

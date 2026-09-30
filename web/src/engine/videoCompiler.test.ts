@@ -112,7 +112,7 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
         { cardId: 'c-img-8', tagIndex: 8, role: 'reference_image', label: '草图' },
         [ungeneratedCard]
       )
-    ).toThrowError(/has not generated any output image yet/);
+    ).toThrowError(/has no output yet/);
   });
 
   it('renumbers arbitrary global tags (@图7, @图42) into sequential cloud tags (图1, 图2)', () => {
@@ -570,6 +570,6 @@ describe('references to image result cards', () => {
     const link = connectCards(running, videoGen);
     if (!link.ok) throw new Error(link.reason);
 
-    expect(() => compileCardVideoPayload({ ...videoGen, ...link.patch }, cards)).toThrowError(/has not generated/);
+    expect(() => compileCardVideoPayload({ ...videoGen, ...link.patch }, cards)).toThrowError(/has no output yet/);
   });
 });

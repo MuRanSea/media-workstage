@@ -132,6 +132,7 @@ export const UploadCardView: React.FC<UploadCardViewProps> = ({
               <img
                 src={previewUrl}
                 alt={card.title}
+                decoding="async"
                 className="w-full h-full object-contain"
                 onLoad={(e) => setLoadedAspect(e.currentTarget.naturalWidth / e.currentTarget.naturalHeight)}
               />

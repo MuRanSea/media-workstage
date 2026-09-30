@@ -139,6 +139,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
             <img
               src={displayUrl}
               alt={card.title}
+              decoding="async"
               className="w-full h-full object-contain"
               onLoad={(e) => setLoadedAspect(e.currentTarget.naturalWidth / e.currentTarget.naturalHeight)}
               onError={(e) => ((e.target as HTMLElement).style.visibility = 'hidden')}

@@ -11,7 +11,7 @@ import {
 import { requestedAspect, videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
 import { connectCards } from '../../engine/connections.ts';
 import { cardTag, refTag } from '../../engine/refTags.ts';
-import { UPLOAD_REF_LABELS, mediaKindOf, sendsUploadedCopy, uploadRefKind } from '../../engine/uploadRefs.ts';
+import { UPLOAD_REF_LABELS, mediaKindOf, offersUpload, sendsUploadedCopy, uploadRefKind } from '../../engine/uploadRefs.ts';
 import { protocolOf } from '../../engine/providers.ts';
 import { inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { useChannels } from '../../services/channels.ts';
@@ -300,7 +300,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       >
         {player}
         {summary}
-        {card.status === 'succeeded' && card.resultUrl && <UploadPanel card={card} onUpdateCard={onUpdateCard} accent="indigo" />}
+        {offersUpload(card) && <UploadPanel card={card} onUpdateCard={onUpdateCard} accent="indigo" />}
         {card.errorMessage && <ErrorBox message={card.errorMessage} />}
       </CardShell>
     );

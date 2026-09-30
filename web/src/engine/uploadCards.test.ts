@@ -310,13 +310,22 @@ describe('generated image results that need an upload', () => {
       ...patch,
     });
 
-  it('offers upload only for images the provider gave no public URL for', () => {
+  it('offers upload on every finished image or video result, whichever provider made it', () => {
     expect(offersUpload(imageResult())).toBe(true);
     const withUrl = imageResult({ outputAssets: [{ id: 'a', kind: 'image_base', local_path: 'x.png', remote_url: 'https://cdn/x.png' } as never] });
-    expect(offersUpload(withUrl)).toBe(false);
+    expect(offersUpload(withUrl)).toBe(true);
+    expect(offersUpload(videoResult())).toBe(true);
+    expect(offersUpload(uploadImage())).toBe(true);
     expect(offersUpload(imageResult({ status: 'running', resultUrl: undefined }))).toBe(false);
     expect(offersUpload(imageResult({ role: 'generation' }))).toBe(false);
-    expect(offersUpload(uploadImage())).toBe(true);
+    expect(offersUpload(video())).toBe(false);
+  });
+
+  it('sends an image as its saved file once its link expired', () => {
+    const expired = imageResult({ uploadRefMode: 'url', fileUrl: 'https://files/x.png', fileExpiresAt: Date.now() / 1000 - 10 });
+    expect(uploadReference(expired, 'apimart')).toEqual({ localPath: '/assets/images/t1/base.png' });
+    const expiredVideo = videoResult({ uploadRefMode: 'url', fileUrl: 'https://files/v.mp4', fileExpiresAt: Date.now() / 1000 - 10 });
+    expect(() => uploadReference(expiredVideo, 'apimart')).toThrowError(/已过期/);
   });
 
   it('sends the uploaded link, not base64, once an image result has one', () => {
