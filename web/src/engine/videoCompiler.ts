@@ -179,6 +179,28 @@ export function compileVideoTaskPayload(
 
   compiledPrompt = compiledPrompt.replace(/@(图|视频)(\d+)/g, '$1$2').trim();
 
+  // Asset-library items (Seedance, multi-reference): numbered after the connected cards of their kind.
+  const assetRefs = mode === 'all_modal' ? card.assetRefs ?? [] : [];
+  if (assetRefs.length) {
+    if (protocol !== 'ark') throw new Error('素材库参考只支持火山方舟的 Seedance 模型');
+    const counts = { image: counters.图, video: counters.视频, audio: 0 };
+    for (const asset of assetRefs) {
+      compiledReferenceAssets.push({
+        card_id: '',
+        tag_index: ++counts[asset.kind],
+        role: `reference_${asset.kind}`,
+        label: asset.assetId,
+        url: `asset://${asset.assetId}`,
+      });
+    }
+    const limits = { image: modelDef.maxRefs, video: maxReferenceVideos(protocol, card.model), audio: modelDef.maxAudioRefs ?? 0 };
+    for (const kind of ['image', 'video', 'audio'] as const) {
+      if (counts[kind] > limits[kind]) {
+        throw new Error(`Model ${card.model} supports at most ${limits[kind]} reference ${kind}s, got ${counts[kind]}`);
+      }
+    }
+  }
+
   const params: Record<string, unknown> = {
     resolution: card.resolution ?? (isMiniMax ? '1080P' : '720p'),
     duration: card.duration ?? (isMiniMax ? 6 : 5),

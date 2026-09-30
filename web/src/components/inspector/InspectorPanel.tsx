@@ -100,11 +100,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           <UploadInspector card={single} update={update} />
         ) : single?.role === 'result' ? (
           // Result cards show what they were generated with; nothing to edit.
-          <ResultSnapshotView card={single} />
+          <ResultSnapshotView card={single} sourceTitle={cards.find((c) => c.id === single.sourceId)?.title} />
         ) : (
           <>
             {single?.type === 'image' && (
-              <ImageInspector card={single} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
+              <ImageInspector card={single} cards={cards} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
             )}
             {single?.type === 'video' && (
               <VideoInspector card={single} cards={cards} update={update} linkedPromptText={linkedPromptFor(single)?.text} />

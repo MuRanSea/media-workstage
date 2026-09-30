@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type SpatialCard } from '../types/canvas.ts';
+import { type ResultActionDto, type SpatialCard } from '../types/canvas.ts';
 import { SpatialCanvas } from './SpatialCanvas.tsx';
 import { ProjectSwitcher } from './ProjectSwitcher.tsx';
 import {
@@ -19,7 +19,17 @@ import { withEffectivePrompt } from '../engine/connections.ts';
 import { getTextPreset } from '../engine/textPresets.ts';
 import { MISSING_PROVIDER_HINT, isProviderMissing } from '../engine/channelModels.ts';
 import { useChannels } from '../services/channels.ts';
-import { addPendingResult, applyTaskToCards, settleTextRun, type HeightOf, type TextRunOutcome } from '../engine/resultCards.ts';
+import {
+  actionKey,
+  actionLabel,
+  addOriginResult,
+  addPendingResult,
+  applyTaskToCards,
+  settleTextRun,
+  type HeightOf,
+  type TextRunOutcome,
+} from '../engine/resultCards.ts';
+import { compileActionPayload, compileDescribePayload, findDescribeProvider, isMidjourney } from '../engine/midjourney.ts';
 import type { BackendTaskResponse } from '../services/api.ts';
 import { cardsAwaitingTask, normalizeCards, normalizeViewport, restoredAwaitingTask } from '../engine/projectDoc.ts';
 import { setActiveProjectId } from '../engine/assetPaths.ts';
@@ -201,21 +211,18 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     try {
       // A connected text card supplies the prompt.
       const submitted = withEffectivePrompt(card, cards);
-      if (!submitted.prompt.trim()) throw new Error('请先填写提示词');
+      // A Midjourney Blend mixes its images and needs no prompt.
+      const blending = isMidjourney(submitted) && submitted.mjOperation === 'blend';
+      if (!blending && !submitted.prompt.trim()) throw new Error('请先填写提示词');
       const payload =
-        submitted.type === 'video' ? compileCardVideoPayload(submitted, cards) : compileCardImagePayload(submitted);
+        submitted.type === 'video' ? compileCardVideoPayload(submitted, cards) : compileCardImagePayload(submitted, cards);
       const accepted = await apiCreateTask({ ...payload, project_id: projectId });
       setCards((prev) =>
         addPendingResult(prev, submitted, accepted, measuredHeight).map((c) =>
           c.id === card.id && c.errorMessage ? { ...c, errorMessage: undefined } : c
         )
       );
-
-      // The task may have moved on before its result card existed.
-      const latest =
-        getBufferedTaskEvent(accepted.id)?.task ??
-        (accepted.status === 'queued' ? await apiGetTask(accepted.id).catch(() => undefined) : undefined);
-      if (latest) updateTaskCards(latest);
+      await catchUp(accepted);
     } catch (err) {
       setError((err as Error).message || '提交任务失败');
     } finally {
@@ -223,11 +230,69 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     }
   };
 
+  /** The task may have moved on before its result card existed. */
+  const catchUp = async (accepted: BackendTaskResponse) => {
+    const latest =
+      getBufferedTaskEvent(accepted.id)?.task ??
+      (accepted.status === 'queued' ? await apiGetTask(accepted.id).catch(() => undefined) : undefined);
+    if (latest) updateTaskCards(latest);
+  };
+
+  /**
+   * Runs an operation on the result card `sourceId` (a result action, or Describe).
+   * Like a generation, its output lands on a new result card once the backend accepts
+   * the task; a refusal before that is only reported.
+   */
+  const runOnResult = async (
+    sourceId: string,
+    key: string,
+    submit: (source: SpatialCard) => Promise<{ accepted: BackendTaskResponse; add: (cards: SpatialCard[], source: SpatialCard) => SpatialCard[] }>
+  ) => {
+    const source = cards.find((c) => c.id === sourceId);
+    if (!source || submittingRef.current.has(key)) return;
+    setSubmitting(key, true);
+    try {
+      const { accepted, add } = await submit(source);
+      // The source may have moved while the request was in flight.
+      setCards((prev) => add(prev, prev.find((c) => c.id === sourceId) ?? source));
+      await catchUp(accepted);
+    } catch (err) {
+      toast((err as Error).message || '提交任务失败', { tone: 'error' });
+    } finally {
+      setSubmitting(key, false);
+    }
+  };
+
+  const handleRunAction = (sourceId: string, action: ResultActionDto) =>
+    runOnResult(sourceId, actionKey(sourceId, action.id), async (source) => {
+      if (isProviderMissing(providers, source.provider)) throw new Error(MISSING_PROVIDER_HINT);
+      const label = actionLabel(action);
+      const accepted = await apiCreateTask({ ...compileActionPayload(source, action, label), project_id: projectId });
+      const runner = { type: 'image' as const, provider: source.provider, model: source.model };
+      return {
+        accepted,
+        add: (all, src) => addOriginResult(all, src, { operation: 'action', label, actionId: action.id }, runner, accepted, measuredHeight),
+      };
+    });
+
+  const handleDescribe = (sourceId: string) =>
+    runOnResult(sourceId, actionKey(sourceId, 'describe'), async (source) => {
+      const runner = findDescribeProvider(providers);
+      if (!runner) throw new Error('没有配置好的 Midjourney 服务商，无法反推提示词');
+      const accepted = await apiCreateTask({ ...compileDescribePayload(source, runner), project_id: projectId });
+      return {
+        accepted,
+        add: (all, src) => addOriginResult(all, src, { operation: 'describe', label: '反推' }, { type: 'text', ...runner }, accepted, measuredHeight),
+      };
+    });
+
   return (
     <SpatialCanvas
       cards={cards}
       setCards={setCards}
       onTriggerGenerate={handleTriggerGenerate}
+      onRunAction={(sourceId, action) => void handleRunAction(sourceId, action)}
+      onDescribe={(sourceId) => void handleDescribe(sourceId)}
       submittingIds={submittingIds}
       textRuns={textRuns}
       initialViewport={initialViewport}

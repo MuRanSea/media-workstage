@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, FileText, Film, Image as ImageIcon, Sparkles, Trash2, Upload } from 'lucide-react';
-import type { CardType, SpatialCard, UploadKind } from '../types/canvas.ts';
+import { Copy, FileText, Film, Image as ImageIcon, ScanText, Sparkles, Trash2, Upload } from 'lucide-react';
+import type { CardType, ResultActionDto, SpatialCard, UploadKind } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
 import { screenToWorld, type CanvasTransform, type Point } from '../engine/matrix.ts';
 import { connectCards, hasOutputPort, removeCards } from '../engine/connections.ts';
 import { createCard, duplicateCards } from '../engine/cardFactory.ts';
 import { useHistory } from '../engine/useHistory.ts';
 import { removeReferencePatch } from '../engine/cardParams.ts';
-import { runsInProgress } from '../engine/resultCards.ts';
+import { actionKey, runningActionIds, runsInProgress } from '../engine/resultCards.ts';
+import { findDescribeProvider, savedImageOf } from '../engine/midjourney.ts';
+import { useChannels } from '../services/channels.ts';
 import { refTag } from '../engine/refTags.ts';
 import { ImageCardView } from './cards/ImageCardView.tsx';
 import { VideoCardView } from './cards/VideoCardView.tsx';
@@ -27,7 +29,11 @@ interface SpatialCanvasProps {
   cards: SpatialCard[];
   setCards: React.Dispatch<React.SetStateAction<SpatialCard[]>>;
   onTriggerGenerate: (cardId: string) => void;
-  /** Generation cards whose submit request is in flight. */
+  /** Runs a result action (Midjourney U/V/reroll) on a result card. */
+  onRunAction?: (sourceId: string, action: ResultActionDto) => void;
+  /** Asks Midjourney for prompts matching an image card's picture. */
+  onDescribe?: (sourceId: string) => void;
+  /** Generation cards whose submit request is in flight, and `actionKey`s of result actions being submitted. */
   submittingIds?: ReadonlySet<string>;
   /** Prompt-assistant requests in flight, per generation card (not saved). */
   textRuns?: ReadonlyMap<string, number>;
@@ -44,6 +50,8 @@ interface SpatialCanvasProps {
 interface Ray {
   id: string;
   kind: 'reference' | 'prompt' | 'source';
+  /** Source lines of results made by an operation on another result: the operation ("U2", "反推"). */
+  sourceLabel?: string;
   /** Colour of the source card: pink image, indigo video, amber upload, emerald text; source lines are grey. */
   tone?: 'pink' | 'amber' | 'emerald' | 'indigo';
   pathData: string;
@@ -95,6 +103,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   cards,
   setCards,
   onTriggerGenerate,
+  onRunAction,
+  onDescribe,
   submittingIds,
   textRuns,
   initialViewport,
@@ -109,6 +119,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [viewer, setViewer] = useState<ViewerMedia | null>(null);
   const toast = useToast();
+  const channels = useChannels();
+  const describer = useMemo(() => findDescribeProvider(channels), [channels]);
 
   // --- Undo history ------------------------------------------------------------
   const { record, undo: undoHistory, redo: redoHistory, canUndo, canRedo } = useHistory();
@@ -306,11 +318,15 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       ...(card.role === 'generation'
         ? [{ label: '生成', icon: <Sparkles className="w-3.5 h-3.5" />, onSelect: () => onTriggerGenerate(card.id) }]
         : []),
+      // Any finished image can be described, when a Midjourney provider is configured.
+      ...(describer && onDescribe && card.role === 'result' && card.status === 'succeeded' && savedImageOf(card)
+        ? [{ label: 'Midjourney 反推提示词', icon: <ScanText className="w-3.5 h-3.5" />, onSelect: () => onDescribe(card.id) }]
+        : []),
       { label: '复制一份', icon: <Copy className="w-3.5 h-3.5" />, hint: 'Ctrl+D', onSelect: () => duplicate([card]) },
       'separator',
       { label: '删除', icon: <Trash2 className="w-3.5 h-3.5" />, hint: 'Delete', danger: true, onSelect: () => deleteCards([card.id]) },
     ],
-    [onTriggerGenerate, duplicate, deleteCards]
+    [onTriggerGenerate, onDescribe, describer, duplicate, deleteCards]
   );
 
   const addMenuAt = useCallback(
@@ -460,6 +476,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         rays.push({
           id: `source:${generation.id}->${card.id}`,
           kind: 'source',
+          sourceLabel: card.origin?.label,
           pathData: bezier(srcX, srcY, tgtX, tgtY),
           midX: (srcX + tgtX) / 2,
           midY: (srcY + tgtY) / 2,
@@ -490,6 +507,13 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     linkDrag && dragSource
       ? bezier(dragSource.x + dragSource.width, dragSource.y + PORT_Y, linkDrag.x, linkDrag.y)
       : null;
+
+  /** Result actions of `card` that are being submitted or have a run in progress. */
+  const busyActionsOf = (card: SpatialCard): ReadonlySet<string> => {
+    const busy = runningActionIds(cards, card.id);
+    for (const action of card.resultActions ?? []) if (submittingIds?.has(actionKey(card.id, action.id))) busy.add(action.id);
+    return busy;
+  };
 
   const linkedPromptFor = useCallback(
     (card: SpatialCard) => {
@@ -628,7 +652,21 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
             <g transform="translate(25000, 25000)">
               {connectionRays.map((ray) => {
                 if (ray.kind === 'source') {
-                  return <path key={ray.id} d={ray.pathData} fill="none" stroke="#94a3b8" strokeOpacity={0.5} strokeWidth="2" />;
+                  return (
+                    <g key={ray.id}>
+                      <path d={ray.pathData} fill="none" stroke="#94a3b8" strokeOpacity={0.5} strokeWidth="2" />
+                      {ray.sourceLabel && (
+                        <foreignObject x={ray.midX - 36} y={ray.midY - 11} width={72} height={22}>
+                          <div
+                            title={ray.sourceLabel}
+                            className="flex items-center justify-center w-full h-full px-1.5 bg-canvas-surface border border-slate-600 rounded-full text-[11px] font-mono text-slate-300"
+                          >
+                            <span className="truncate">{ray.sourceLabel}</span>
+                          </div>
+                        </foreignObject>
+                      )}
+                    </g>
+                  );
                 }
                 const color = RAY_COLORS[ray.tone ?? 'pink'];
                 return (
@@ -700,6 +738,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                     onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
                     isSubmitting={!!submittingIds?.has(card.id)}
                     runsInProgress={card.role === 'generation' ? runsInProgress(cards, card.id) : 0}
+                    onRunAction={onRunAction && card.role === 'result' ? (action) => onRunAction(card.id, action) : undefined}
+                    busyActionIds={card.resultActions?.length ? busyActionsOf(card) : undefined}
                   />
                 );
               }

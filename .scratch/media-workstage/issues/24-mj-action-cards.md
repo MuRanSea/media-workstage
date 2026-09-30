@@ -20,3 +20,5 @@
 UI：图片卡成功且有按钮时显示按钮条（U 行、V 行、其他），同一动作的派生卡生成中时该按钮禁用；点击后新建派生卡（一次撤销步骤）并立即生成——`handleTriggerGenerate(cardId, card?)` + `cardsRef` 解决同一帧新卡找不到的问题。派生连线为紫色虚线、标注动作名、不可断开。属性面板对派生卡只显示来源说明与请求 JSON。
 
 验证：`derivedCards.test.ts`（6）、`projectDoc.test.ts` +2、`cardFactory.test.ts` +1、`compiler.test.ts` +1；前端 92 个单测、`tsc` 通过。界面走查放到全部工单完成后统一进行。
+
+> 合并进 master 时改为产出结果卡，不再有派生卡，见 [ADR 0006](../../../docs/adr/0006-result-actions-yield-result-cards.md)。

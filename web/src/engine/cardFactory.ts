@@ -124,8 +124,11 @@ export function duplicateCards(source: SpatialCard[], at: Point, existing: Spati
       .map((r) => ({ ...r, cardId: idMap.get(r.cardId)!, tagIndex: tagMap.get(r.tagIndex) ?? r.tagIndex }));
     copy.promptSourceId = c.promptSourceId && idMap.has(c.promptSourceId) ? idMap.get(c.promptSourceId) : undefined;
     copy.sourceId = c.sourceId && idMap.has(c.sourceId) ? idMap.get(c.sourceId) : undefined;
-    // Task updates go to the original result card only.
-    if (c.role === 'result') delete copy.taskId;
+    // Task updates go to the original result card only; without the task its follow-ups cannot run.
+    if (c.role === 'result') {
+      delete copy.taskId;
+      delete copy.resultActions;
+    }
     // Rewrite @图N in the prompt for references that were remapped.
     if (c.references?.length) {
       copy.prompt = c.prompt.replace(/@(图|视频)(\d+)/g, (m, noun, n) => {

@@ -10,6 +10,11 @@ export type TextPreset = 'image_prompt' | 'video_prompt' | 'free';
 export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video';
 export type ImageTaskMode = 'single' | 'layer_decomp' | 'sequential';
 export type CanvasTool = 'select' | 'hand';
+export type MjSpeed = 'FAST' | 'RELAX' | 'TURBO';
+/** Midjourney: imagine from the prompt, or blend the reference images. */
+export type MjOperation = 'imagine' | 'blend';
+
+export const MJ_SPEED_LABELS: Record<MjSpeed, string> = { FAST: 'Fast', RELAX: 'Relax', TURBO: 'Turbo' };
 
 export interface TaskAssetDto {
   id: string;
@@ -24,6 +29,33 @@ export interface TaskAssetDto {
   local_path: string;
   file_size_bytes?: number;
   downloaded_at?: string;
+}
+
+/** A follow-up a provider offers on a finished result (Midjourney's U1–U4 / V1–V4 …). */
+export interface ResultActionDto {
+  /** The provider's own identifier, sent back to run the action. */
+  id: string;
+  label?: string;
+  emoji?: string;
+}
+
+/** How a result card came from another result card, rather than from a generation card's settings. */
+export interface ResultOrigin {
+  /** A result action (Midjourney U/V/reroll) or Midjourney Describe. */
+  operation: 'action' | 'describe';
+  /** Short name shown on the line from the source ("U2", "重绘", "反推"). */
+  label: string;
+  /** Result actions: the provider's action id. */
+  actionId?: string;
+}
+
+/** What an asset-library item is; decides its content slot and the name the prompt uses for it. */
+export type AssetKind = 'video' | 'image' | 'audio';
+
+/** An item already in the Ark asset library (素材库 & 虚拟人像库), sent to Seedance as asset://<assetId>. */
+export interface AssetRef {
+  assetId: string;
+  kind: AssetKind;
 }
 
 export interface ReferenceItem {
@@ -55,8 +87,10 @@ export interface ResultSnapshot {
 export interface SpatialCard {
   id: string;
   role: CardRole;
-  /** Result cards: the generation card whose run produced this card. */
+  /** Result cards: the generation card whose run produced this card, or the result card `origin` ran on. */
   sourceId?: string;
+  /** Result cards made by an operation on another result card. */
+  origin?: ResultOrigin;
   /** Result cards: the settings the run was submitted with. */
   snapshot?: ResultSnapshot;
   taskId?: string;
@@ -76,6 +110,8 @@ export interface SpatialCard {
   errorMessage?: string;
   resultUrl?: string;
   outputAssets?: TaskAssetDto[];
+  /** Result cards: follow-ups the finished result offers (Midjourney buttons). */
+  resultActions?: ResultActionDto[];
 
   /** Image/video cards: a text card whose output replaces this card's prompt. */
   promptSourceId?: string;
@@ -113,10 +149,17 @@ export interface SpatialCard {
   outputFormat?: 'mp4' | 'mov';
   promptOptimizer?: boolean;
   seed?: number;
+  /** Video cards, and Midjourney image cards (reference images to imagine or blend from). */
   references?: ReferenceItem[];
+  /** Seedance (Ark protocol), multi-reference mode: items already in the Ark asset library. */
+  assetRefs?: AssetRef[];
 
   // Image parameters for non-Seedream channels (ratio reuses imageRatioPreset)
   imageResolution?: '1K' | '2K' | '4K';
+  /** Midjourney speed mode; unset leaves it to the gateway. */
+  mjSpeed?: MjSpeed;
+  /** Midjourney: imagine from the prompt (default), or blend the reference images. */
+  mjOperation?: MjOperation;
 
   // Image specific parameters (Seedream 5.0 Series)
   imageMode?: ImageTaskMode;
@@ -142,6 +185,8 @@ export interface VideoModelDef {
   supportsAudio: boolean;
   supportsMov: boolean;
   maxRefs: number;
+  /** Reference audios the model takes in multi-reference mode (Ark asset library); none when omitted. */
+  maxAudioRefs?: number;
   /** Task modes the model accepts; all three when omitted. */
   modes?: VideoTaskMode[];
 }
@@ -171,7 +216,8 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'],
     supportsAudio: true,
     supportsMov: true,
-    maxRefs: 30
+    maxRefs: 30,
+    maxAudioRefs: 10
   },
   {
     id: 'doubao-seedance-2-0-260128',
@@ -183,7 +229,8 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'],
     supportsAudio: true,
     supportsMov: false,
-    maxRefs: 9
+    maxRefs: 9,
+    maxAudioRefs: 3
   },
   {
     id: 'MiniMax-H3',

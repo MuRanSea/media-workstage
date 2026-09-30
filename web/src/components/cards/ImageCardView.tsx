@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Image as ImageIcon, Maximize2, Sparkles } from 'lucide-react';
-import { IMAGE_MODELS } from '../../types/canvas.ts';
+import { Image as ImageIcon, Loader2, Maximize2, Sparkles } from 'lucide-react';
+import { IMAGE_MODELS, type ResultActionDto, type SpatialCard } from '../../types/canvas.ts';
 import {
   MISSING_PROVIDER_HINT,
   buildProviderGroups,
@@ -13,6 +13,9 @@ import { imageSizeSummary, previewAspect } from '../../engine/cardParams.ts';
 import { useChannels } from '../../services/channels.ts';
 import { assetStoredPath, assetUrl } from '../../engine/assetPaths.ts';
 import { offersUpload } from '../../engine/uploadRefs.ts';
+import { isMidjourney } from '../../engine/midjourney.ts';
+import { actionLabel, groupActions } from '../../engine/resultCards.ts';
+import { refTag } from '../../engine/refTags.ts';
 import { Button } from '../ui/Button.tsx';
 import { InputPort, OutputPort, LinkedPromptBox } from './CardPorts.tsx';
 import {
@@ -38,7 +41,47 @@ interface ImageCardViewProps extends CardViewProps {
   isSubmitting?: boolean;
   /** Generation cards: result cards still queued or running. */
   runsInProgress?: number;
+  /** Result cards: runs one of the result's follow-ups (Midjourney U/V/reroll). */
+  onRunAction?: (action: ResultActionDto) => void;
+  /** Result cards: follow-ups with a run in flight. */
+  busyActionIds?: ReadonlySet<string>;
 }
+
+/** A finished result's follow-ups: the U row, the V row, then the rest (reroll, zoom, pan …). */
+const ActionBar: React.FC<{ card: SpatialCard; onRun: (action: ResultActionDto) => void; busy?: ReadonlySet<string> }> = ({
+  card,
+  onRun,
+  busy,
+}) => {
+  const { upscale, variation, other } = groupActions(card.resultActions ?? []);
+  const rows = [upscale, variation, other].filter((row) => row.length);
+  return (
+    <div className="space-y-1">
+      {rows.map((row, i) => (
+        <div key={i} className="flex flex-wrap gap-1">
+          {row.map((action) => {
+            const running = busy?.has(action.id);
+            const label = actionLabel(action);
+            return (
+              <button
+                key={action.id}
+                type="button"
+                disabled={running}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => onRun(action)}
+                title={running ? `${label} 正在生成` : `${label}：生成一张新的结果卡`}
+                className="flex items-center gap-1 min-w-[2.25rem] justify-center px-1.5 py-0.5 rounded-md border border-slate-700 bg-slate-800/60 text-[11px] font-mono text-slate-200 hover:border-pink-500/60 hover:text-pink-200 disabled:opacity-50"
+              >
+                {running && <Loader2 className="w-3 h-3 animate-spin" />}
+                {action.emoji && action.label ? `${action.emoji} ${action.label}` : label}
+              </button>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+};
 
 export const ImageCardView: React.FC<ImageCardViewProps> = ({
   card,
@@ -55,6 +98,8 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
   onStartConnect,
   isSubmitting = false,
   runsInProgress = 0,
+  onRunAction,
+  busyActionIds,
 }) => {
   const [loadedAspect, setLoadedAspect] = useState<number>();
   const channels = useChannels();
@@ -69,7 +114,13 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
   // Result cards hold exactly one image.
   const displayUrl = assetUrl(card.resultUrl ?? assetStoredPath(card.outputAssets?.[0]));
 
-  const promptInput = linkedPrompt ? (
+  const mj = isMidjourney(card);
+  const blending = mj && card.mjOperation === 'blend';
+  const promptInput = blending ? (
+    <p className="rounded-xl border border-dashed border-pink-500/30 bg-pink-500/5 px-2.5 py-2 text-[11px] leading-relaxed text-pink-100/80">
+      Blend：把连入的 {card.references?.length ?? 0} 张图片混合成一张，不用提示词。
+    </p>
+  ) : linkedPrompt ? (
     <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
   ) : (
     <AutoTextarea
@@ -97,6 +148,16 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         ports={<InputPort />}
       >
         <SummaryRow model={modelLabel} spec={imageSizeSummary(card)} />
+        {mj && !!card.references?.length && (
+          <div className="flex items-center gap-1.5 flex-wrap text-[11px]" title="在属性面板里管理参考图">
+            <span className="text-slate-500">参考图</span>
+            {card.references.map((ref) => (
+              <span key={ref.cardId} className="font-mono px-1.5 py-px rounded-md border bg-pink-500/15 text-pink-300 border-pink-500/30">
+                {refTag(ref)}
+              </span>
+            ))}
+          </div>
+        )}
         {promptInput}
         {card.errorMessage && <ErrorBox message={card.errorMessage} />}
         <Button
@@ -159,6 +220,10 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
       </MediaFrame>
 
       <SummaryRow model={modelLabel} spec={imageSizeSummary(card)} />
+
+      {card.status === 'succeeded' && !!card.resultActions?.length && onRunAction && (
+        <ActionBar card={card} onRun={onRunAction} busy={busyActionIds} />
+      )}
 
       {offersUpload(card) && <UploadPanel card={card} onUpdateCard={onUpdateCard} accent="pink" />}
 

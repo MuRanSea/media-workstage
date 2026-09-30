@@ -3,7 +3,16 @@ import { X } from 'lucide-react';
 import type { SpatialCard, VideoTaskMode } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
-import { VIDEO_MODE_LABELS, removeReferencePatch, videoModePatch, videoModelDef, videoModelPatch } from '../../engine/cardParams.ts';
+import {
+  VIDEO_MODE_LABELS,
+  kindLimit,
+  referenceCount,
+  removeReferencePatch,
+  supportsAssetRefs,
+  videoModePatch,
+  videoModelDef,
+  videoModelPatch,
+} from '../../engine/cardParams.ts';
 import { compileCardVideoPayload, inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { refTag } from '../../engine/refTags.ts';
 import { UPLOAD_REF_LABELS, uploadRefKind } from '../../engine/uploadRefs.ts';
@@ -11,6 +20,7 @@ import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from '../cards/ProviderModelPicker.tsx';
 import { Field, Section, Segmented, Toggle, inputClass } from '../ui/index.ts';
 import { DevJson } from './DevJson.tsx';
+import { AssetRefList } from './AssetRefList.tsx';
 
 const ROLE_LABELS: Record<string, string> = {
   first_frame: '首帧',
@@ -115,6 +125,18 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
               })}
             </ul>
           )}
+        </Section>
+      )}
+
+      {supportsAssetRefs(card) && mode === 'all_modal' && (
+        <Section
+          title={`素材库 ${(card.assetRefs ?? []).length}`}
+        >
+          <p className="text-[11px] leading-relaxed text-slate-500">
+            图片 {referenceCount(card, 'image')}/{kindLimit(card, 'image', def)} · 视频 {referenceCount(card, 'video')}/{kindLimit(card, 'video', def)} · 音频{' '}
+            {referenceCount(card, 'audio')}/{kindLimit(card, 'audio', def)}（含连入的卡片）
+          </p>
+          <AssetRefList card={card} update={update} />
         </Section>
       )}
 

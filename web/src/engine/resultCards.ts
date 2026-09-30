@@ -1,4 +1,4 @@
-import type { ResultSnapshot, SpatialCard, TaskAssetDto } from '../types/canvas.ts';
+import type { ResultActionDto, ResultOrigin, ResultSnapshot, SpatialCard, TaskAssetDto } from '../types/canvas.ts';
 import type { BackendTaskResponse } from '../services/api.ts';
 import { applyTaskToCard, isTerminalStatus } from './taskSync.ts';
 import { newCardId, nextTagIndex } from './cardFactory.ts';
@@ -18,6 +18,8 @@ const IMAGE_PARAMS = [
   'imageFormat',
   'watermark',
   'background',
+  'mjSpeed',
+  'mjOperation',
 ] as const;
 
 /** Video settings a result card records; the ratio also shapes its preview. */
@@ -37,8 +39,10 @@ const PREVIEW_MAX_HEIGHT = 480;
 const SUMMARY_ROW = 30;
 /** Generation card body: prompt, summary row and the Generate button; video adds reference chips. */
 const GENERATION_BODY = { image: 150, video: 180, text: 150, upload: 0 } as const;
-/** Upload panel under an uploaded or generated video: provider, upload buttons and what was uploaded. */
+/** Upload panel under an uploaded or generated image or video: provider, upload buttons and what was uploaded. */
 const UPLOAD_PANEL = 110;
+/** One row of result action buttons (Midjourney's U row, V row, …). */
+const ACTION_ROW = 30;
 /** Text result card body: summary row and a few rows of editable text. */
 const TEXT_RESULT_BODY = 160;
 
@@ -49,7 +53,9 @@ export function estimateCardHeight(card: SpatialCard): number {
   // No preview on generation cards.
   if (card.role === 'generation') return HEADER + PADDING + GENERATION_BODY[card.type];
   if (card.type === 'text') return HEADER + PADDING + TEXT_RESULT_BODY;
-  return HEADER + PADDING + preview + (card.type === 'image' ? SUMMARY_ROW : SUMMARY_ROW + UPLOAD_PANEL);
+  const { upscale, variation, other } = groupActions(card.resultActions ?? []);
+  const actionRows = [upscale, variation, other].filter((row) => row.length).length;
+  return HEADER + PADDING + preview + SUMMARY_ROW + UPLOAD_PANEL + actionRows * ACTION_ROW;
 }
 
 /** Result cards take their id from the task that produced them. */
@@ -101,6 +107,10 @@ export function snapshotOf(submitted: SpatialCard): ResultSnapshot {
     params,
     seed: isVideo ? submitted.seed : submitted.seedImage,
   };
+  if (!isVideo && submitted.references?.length) {
+    // Midjourney reference images.
+    snapshot.references = submitted.references.map(({ cardId, tagIndex, role, label }) => ({ cardId, tagIndex, role, label }));
+  }
   if (isVideo) {
     // Record what the compiler sends, which the mode can rewrite.
     const sent = sentVideoSettings(submitted);
@@ -177,6 +187,84 @@ export function placeResult(
     GAP
   );
   return { ...draft, ...slot };
+}
+
+// --- Operations on a result card (Midjourney result actions and Describe) -----------
+
+/** Display name of a result action; Midjourney's reroll button carries only 🔄. */
+export function actionLabel(action: ResultActionDto): string {
+  if (action.label) return action.label;
+  if (action.emoji === '🔄') return '重绘';
+  return action.emoji || action.id;
+}
+
+export interface ActionGroups {
+  upscale: ResultActionDto[];
+  variation: ResultActionDto[];
+  other: ResultActionDto[];
+}
+
+/** Splits a grid's buttons into the U row, the V row and everything else, keeping order. */
+export function groupActions(actions: ResultActionDto[]): ActionGroups {
+  const groups: ActionGroups = { upscale: [], variation: [], other: [] };
+  for (const a of actions) {
+    if (/^U\d$/.test(a.label ?? '')) groups.upscale.push(a);
+    else if (/^V\d$/.test(a.label ?? '')) groups.variation.push(a);
+    else groups.other.push(a);
+  }
+  return groups;
+}
+
+/** How a result action being submitted is keyed among the cards with a request in flight. */
+export const actionKey = (sourceId: string, actionId: string) => `${sourceId}::${actionId}`;
+
+/** Actions on the result card `sourceId` with a run still queued or running. */
+export function runningActionIds(cards: SpatialCard[], sourceId: string): Set<string> {
+  const ids = new Set<string>();
+  for (const c of cards) {
+    if (c.sourceId === sourceId && c.origin?.actionId && (c.status === 'queued' || c.status === 'running')) ids.add(c.origin.actionId);
+  }
+  return ids;
+}
+
+/** What runs an operation: result actions run on the source's own provider; Describe on a Midjourney one. */
+export interface OriginRunner {
+  type: 'image' | 'text';
+  provider?: SpatialCard['provider'];
+  model: string;
+}
+
+/**
+ * Adds the result card for a task the backend just accepted from an operation on
+ * the result card `source`: a result action yields an image result, Describe a
+ * text one. It is linked to `source`, sits in the first free slot right of it and
+ * folds in the latest known task state. Idempotent per task.
+ */
+export function addOriginResult(
+  cards: SpatialCard[],
+  source: SpatialCard,
+  origin: ResultOrigin,
+  runner: OriginRunner,
+  task: BackendTaskResponse,
+  heightOf: HeightOf = () => undefined
+): SpatialCard[] {
+  if (cards.some((c) => c.role === 'result' && c.taskId === task.id)) return cards;
+
+  const submitted: SpatialCard = {
+    ...source,
+    type: runner.type,
+    provider: runner.provider,
+    model: runner.model,
+    prompt: runner.type === 'text' ? '' : source.prompt,
+    references: undefined,
+  };
+  const draft: SpatialCard = {
+    ...resultDraft(submitted, resultIdFor(task.id), `${source.title} · ${origin.label}`),
+    origin,
+    taskId: task.id,
+    tagIndex: runner.type === 'text' ? undefined : nextTagIndex(cards),
+  };
+  return settleResult([...cards, placeResult(cards, source, draft, heightOf)], draft.id, task, heightOf);
 }
 
 export type TextRunOutcome = { text: string } | { error: string };

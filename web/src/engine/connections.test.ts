@@ -58,7 +58,7 @@ describe('connectCards', () => {
       references: [{ cardId: 'x', tagIndex: 9, role: 'first_frame', label: 'x' }],
     });
     for (const [src, tgt, reason] of [
-      [img, { ...img, id: 'i2', role: 'generation' }, '图片卡片之间'],
+      [img, { ...img, id: 'i2', role: 'generation' }, '只有 Midjourney 图片卡片'],
       [text, { ...text, id: 't2', role: 'generation' }, '文本卡片之间'],
       [img, img, '不能连接到自己'],
       [img, text, '没有输入端口'],
@@ -127,7 +127,7 @@ describe('connecting result cards', () => {
 
   it('refuses every other pairing, and repeats, with a reason', () => {
     const cases: [SpatialCard, SpatialCard, string][] = [
-      [imgResult, genImg, '图片卡片之间'],
+      [imgResult, genImg, '只有 Midjourney 图片卡片'],
       [imgResult, genText, '没有输入端口'],
       [textResult, genText, '文本卡片之间'],
       [videoResult, genImg, '视频只能连接到视频卡片'],

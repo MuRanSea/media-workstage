@@ -1,6 +1,7 @@
-import { SEEDREAM_PIXEL_MAP, type SpatialCard } from '../types/canvas.ts';
+import { SEEDREAM_PIXEL_MAP, type MjOperation, type MjSpeed, type ReferenceItem, type SpatialCard } from '../types/canvas.ts';
 import type { CreateTaskPayload, ProviderId } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
+import { MJ_MAX_REFERENCES, MJ_MIN_BLEND_IMAGES, midjourneyReferences } from './midjourney.ts';
 
 export interface ImageCompilationInput {
   /** Provider running the model; defaults to 'ark'. Ark-protocol providers get Seedream rules. */
@@ -16,6 +17,11 @@ export interface ImageCompilationInput {
   watermark?: boolean;
   background?: 'opaque' | 'transparent';
   imageResolution?: '1K' | '2K' | '4K';
+  mjSpeed?: MjSpeed;
+  mjOperation?: MjOperation;
+  /** Midjourney reference images, resolved against `allCards`. */
+  references?: ReferenceItem[];
+  allCards?: SpatialCard[];
 }
 
 /**
@@ -88,23 +94,41 @@ export function compileImageTaskPayload(input: ImageCompilationInput): CreateTas
  * adapter maps aspect_ratio + resolution onto each protocol's own size parameters.
  */
 function compileChannelImagePayload(provider: ProviderId, input: ImageCompilationInput): CreateTaskPayload {
-  return {
+  const aspect_ratio = input.imageRatioPreset ?? '16:9';
+  const payload: CreateTaskPayload = {
     provider,
     model: input.model,
     task_type: 'image_generation',
     task_mode: 'single',
     prompt: input.prompt,
-    params: {
-      aspect_ratio: input.imageRatioPreset ?? '16:9',
-      resolution: input.imageResolution ?? '2K',
-    },
+    params: { aspect_ratio, resolution: input.imageResolution ?? '2K' },
   };
+  if (protocolOf(provider) !== 'midjourney') return payload;
+
+  // Midjourney has no resolution; its speed picks the proxy account.
+  payload.params = { aspect_ratio, ...(input.mjSpeed ? { speed: input.mjSpeed } : {}) };
+  const references = input.references ?? [];
+  if (references.length > MJ_MAX_REFERENCES) {
+    throw new Error(`Midjourney 最多 ${MJ_MAX_REFERENCES} 张参考图，当前 ${references.length} 张`);
+  }
+  if (references.length) payload.reference_assets = midjourneyReferences(references, input.allCards ?? []);
+  if (input.mjOperation === 'blend') {
+    if (references.length < MJ_MIN_BLEND_IMAGES) {
+      throw new Error(`Blend 需要连入 ${MJ_MIN_BLEND_IMAGES}–${MJ_MAX_REFERENCES} 张图片，当前 ${references.length} 张`);
+    }
+    // Blend takes no prompt; the backend still records one.
+    payload.task_mode = 'blend';
+    payload.prompt = input.prompt.trim() || 'Blend';
+  } else if (!input.prompt.trim()) {
+    throw new Error('请先填写提示词');
+  }
+  return payload;
 }
 
 /**
  * Convenience helper to compile directly from a SpatialCard.
  */
-export function compileCardImagePayload(card: SpatialCard): CreateTaskPayload {
+export function compileCardImagePayload(card: SpatialCard, allCards: SpatialCard[] = []): CreateTaskPayload {
   return compileImageTaskPayload({
     provider: card.provider,
     model: card.model,
@@ -118,5 +142,9 @@ export function compileCardImagePayload(card: SpatialCard): CreateTaskPayload {
     watermark: card.watermark,
     background: card.background,
     imageResolution: card.imageResolution,
+    mjSpeed: card.mjSpeed,
+    mjOperation: card.mjOperation,
+    references: card.references,
+    allCards,
   });
 }

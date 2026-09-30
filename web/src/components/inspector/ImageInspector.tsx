@@ -1,8 +1,11 @@
 import React, { useMemo } from 'react';
-import { IMAGE_MODELS, SEEDREAM_PIXEL_MAP, type SpatialCard } from '../../types/canvas.ts';
+import { X } from 'lucide-react';
+import { IMAGE_MODELS, MJ_SPEED_LABELS, SEEDREAM_PIXEL_MAP, type MjSpeed, type SpatialCard } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
-import { imageModelPatch } from '../../engine/cardParams.ts';
+import { imageModelPatch, removeReferencePatch } from '../../engine/cardParams.ts';
+import { MJ_MAX_REFERENCES, MJ_MIN_BLEND_IMAGES } from '../../engine/midjourney.ts';
+import { refTag } from '../../engine/refTags.ts';
 import { compileCardImagePayload } from '../../engine/compiler.ts';
 import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from '../cards/ProviderModelPicker.tsx';
@@ -11,19 +14,27 @@ import { DevJson } from './DevJson.tsx';
 
 const RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9'] as const;
 const RESOLUTIONS = ['1K', '2K', '4K'] as const;
+const MJ_SPEEDS: { value: MjSpeed | 'default'; label: string }[] = [
+  { value: 'default', label: '网关默认' },
+  ...(Object.keys(MJ_SPEED_LABELS) as MjSpeed[]).map((s) => ({ value: s, label: MJ_SPEED_LABELS[s] })),
+];
 
 interface Props {
   card: SpatialCard;
+  /** All cards, to name reference images and resolve their files in the JSON preview. */
+  cards: SpatialCard[];
   update: (patch: Partial<SpatialCard>) => void;
   /** Prompt supplied by a linked text card, for the JSON preview. */
   linkedPromptText?: string;
 }
 
-export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText }) => {
+export const ImageInspector: React.FC<Props> = ({ card, cards, update, linkedPromptText }) => {
   const channels = useChannels();
   const groups = useMemo(() => buildProviderGroups(channels, 'image'), [channels]);
   const provider = card.provider ?? 'ark';
   const isSeedream = protocolOf(provider) === 'ark';
+  const isMidjourney = protocolOf(provider) === 'midjourney';
+  const refs = card.references ?? [];
   const def = IMAGE_MODELS.find((m) => m.id === card.model) ?? IMAGE_MODELS[0];
   const ratio = card.imageRatioPreset ?? '16:9';
   const tier = card.imageTier ?? def.defaultTier;
@@ -44,7 +55,7 @@ export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText
         />
       </Section>
 
-      <Section title="尺寸">
+      <Section title={isMidjourney ? '比例与速度' : '尺寸'}>
         {isSeedream ? (
           <>
             <Field label="设定方式">
@@ -80,6 +91,15 @@ export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText
               </>
             )}
           </>
+        ) : isMidjourney ? (
+          <>
+            <Field label="比例" hint="作为 --ar 加到提示词后面；提示词里自己写了 --ar 时以提示词为准。">
+              <Segmented accent="pink" mono columns={4} value={ratio} onChange={(r) => update({ imageRatioPreset: r })} options={ratioOptions} />
+            </Field>
+            <Field label="速度" hint="选择代理里对应模式的账号；Relax 省额度但要排队。提示词里写了 --fast / --relax / --turbo 时以提示词为准。">
+              <Segmented accent="pink" value={card.mjSpeed ?? 'default'} onChange={(v) => update({ mjSpeed: v === 'default' ? undefined : v })} options={MJ_SPEEDS} />
+            </Field>
+          </>
         ) : (
           <>
             <Field label="清晰度">
@@ -91,6 +111,49 @@ export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText
           </>
         )}
       </Section>
+
+      {isMidjourney && (
+        <Section title={`参考图 ${refs.length}/${MJ_MAX_REFERENCES}`}>
+          <Field
+            label="生成方式"
+            hint={
+              card.mjOperation === 'blend'
+                ? `把连入的 ${MJ_MIN_BLEND_IMAGES}–${MJ_MAX_REFERENCES} 张图片混合成一张四宫格，不用提示词；比例只分竖、方、横三种。`
+                : '按提示词生成；连入的图片作为垫图。'
+            }
+          >
+            <Segmented
+              accent="pink"
+              value={card.mjOperation ?? 'imagine'}
+              onChange={(v) => update({ mjOperation: v === 'imagine' ? undefined : v })}
+              options={[
+                { value: 'imagine', label: '提示词生图' },
+                {
+                  value: 'blend',
+                  label: 'Blend 混合',
+                  disabled: refs.length < MJ_MIN_BLEND_IMAGES && card.mjOperation !== 'blend',
+                  title: `需要连入至少 ${MJ_MIN_BLEND_IMAGES} 张图片`,
+                },
+              ]}
+            />
+          </Field>
+          {refs.length === 0 ? (
+            <p className="text-[11px] leading-relaxed text-slate-500">从图片结果卡或上传的图片右侧的圆点拖线到这张卡片，作为垫图。</p>
+          ) : (
+            <ul className="space-y-1">
+              {refs.map((ref) => (
+                <li key={ref.cardId} className="flex items-center gap-2 rounded-lg bg-canvas-bg border border-canvas-border px-2 py-1.5 text-xs">
+                  <span className="font-mono text-pink-300">{refTag(ref)}</span>
+                  <span className="flex-1 min-w-0 truncate text-slate-300">{cards.find((c) => c.id === ref.cardId)?.title ?? ref.label}</span>
+                  <button type="button" title="移除" onClick={() => update(removeReferencePatch(card, ref.cardId))} className="p-0.5 text-slate-500 hover:text-rose-400">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      )}
 
       {isSeedream && (
         <Section title="生成方式">
@@ -133,7 +196,7 @@ export const ImageInspector: React.FC<Props> = ({ card, update, linkedPromptText
       )}
 
       <DevJson
-        compile={() => compileCardImagePayload(linkedPromptText ? { ...card, prompt: linkedPromptText } : card)}
+        compile={() => compileCardImagePayload(linkedPromptText ? { ...card, prompt: linkedPromptText } : card, cards)}
       />
     </>
   );

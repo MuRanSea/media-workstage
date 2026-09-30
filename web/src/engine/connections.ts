@@ -2,6 +2,7 @@ import { maxReferenceVideos, resolveVideoModelDef, type ReferenceItem, type Spat
 import { inferVideoProvider } from './videoCompiler.ts';
 import { protocolOf } from './providers.ts';
 import { refTag } from './refTags.ts';
+import { MJ_MAX_REFERENCES, isMidjourney } from './midjourney.ts';
 
 export type ConnectResult =
   | { ok: true; patch: Partial<SpatialCard> }
@@ -27,6 +28,7 @@ export function hasInputPort(card: SpatialCard): boolean {
  *   image → video       : the image becomes a reference (as "+ 引入" does)
  *   video → video       : the video becomes a reference video
  *   upload → video      : the uploaded image or video becomes a reference
+ *   image → Midjourney image card (uploads included): a reference image to imagine or blend from
  */
 export function connectCards(source: SpatialCard, target: SpatialCard): ConnectResult {
   if (source.id === target.id) return { ok: false, reason: '不能连接到自己' };
@@ -39,13 +41,18 @@ export function connectCards(source: SpatialCard, target: SpatialCard): ConnectR
     return { ok: true, patch: { promptSourceId: source.id } };
   }
 
+  const isImage = source.type === 'image' || (source.type === 'upload' && source.mediaKind !== 'video');
+  if (isImage && target.type === 'image') {
+    if (!isMidjourney(target)) return { ok: false, reason: '只有 Midjourney 图片卡片支持连入参考图' };
+    return attachImageToMidjourney(source, target);
+  }
+
   if (source.type === 'upload') {
-    if (target.type !== 'video') return { ok: false, reason: '上传的素材只能连接到视频卡片' };
+    if (target.type !== 'video') return { ok: false, reason: '上传的视频只能连接到视频卡片' };
     return source.mediaKind === 'video' ? attachVideoToVideo(source, target) : attachImageToVideo(source, target);
   }
 
   if (source.type === 'image') {
-    if (target.type === 'image') return { ok: false, reason: '图片卡片之间暂不支持连线（参考图生图尚未接入）' };
     if (target.type === 'text') return { ok: false, reason: '文本卡片没有输入端口' };
     return attachImageToVideo(source, target);
   }
@@ -88,6 +95,16 @@ function attachImageToVideo(image: SpatialCard, video: SpatialCard): ConnectResu
   const prompt = video.prompt.includes(tag) ? video.prompt : `${video.prompt} ${tag}`.trim();
 
   return { ok: true, patch: { mode, ratio, prompt, references: [...refs, newRef] } };
+}
+
+/** A Midjourney card takes up to 5 images; its prompt does not name them, so no tag is added. */
+function attachImageToMidjourney(image: SpatialCard, card: SpatialCard): ConnectResult {
+  const refs = card.references ?? [];
+  if (refs.some((r) => r.cardId === image.id)) return { ok: false, reason: '已经连接过了' };
+  if (refs.length >= MJ_MAX_REFERENCES) return { ok: false, reason: `Midjourney 最多 ${MJ_MAX_REFERENCES} 张参考图` };
+  if (image.tagIndex === undefined) return { ok: false, reason: '这张图片卡没有 @图 编号，无法引用' };
+  const newRef: ReferenceItem = { cardId: image.id, tagIndex: image.tagIndex, role: 'reference_image', label: image.title.slice(0, 10) };
+  return { ok: true, patch: { references: [...refs, newRef] } };
 }
 
 /** A reference video only goes to models that take one (Ark's Seedance) in the multi-reference mode. */

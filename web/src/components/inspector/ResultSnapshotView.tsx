@@ -1,5 +1,5 @@
 import React from 'react';
-import type { SpatialCard } from '../../types/canvas.ts';
+import { MJ_SPEED_LABELS, type SpatialCard } from '../../types/canvas.ts';
 import { compileCardImagePayload } from '../../engine/compiler.ts';
 import { VIDEO_MODE_LABELS } from '../../engine/cardParams.ts';
 import { TEXT_PRESETS } from '../../engine/textPresets.ts';
@@ -23,6 +23,8 @@ const PARAM_LABELS: Record<string, string> = {
   ratio: '比例',
   generateAudio: '生成音频',
   textPreset: '预设',
+  mjSpeed: '速度',
+  mjOperation: 'Midjourney',
 };
 
 const REFERENCE_ROLE_LABELS: Record<string, string> = {
@@ -42,6 +44,9 @@ const VALUE_LABELS: Record<string, string> = {
   jpeg: 'JPEG',
   png: 'PNG',
   adaptive: '自适应',
+  imagine: '提示词生图',
+  blend: 'Blend 混合',
+  ...MJ_SPEED_LABELS,
   ...Object.fromEntries(Object.entries(VIDEO_MODE_LABELS).map(([mode, { label }]) => [mode, label])),
 };
 
@@ -60,9 +65,18 @@ const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, ch
 );
 
 /** What a result card was generated with: read-only, whatever its generation card says now. */
-export const ResultSnapshotView: React.FC<{ card: SpatialCard }> = ({ card }) => {
+export const ResultSnapshotView: React.FC<{ card: SpatialCard; sourceTitle?: string }> = ({ card, sourceTitle }) => {
   const channels = useChannels();
   const snapshot = card.snapshot;
+  const origin = card.origin && (
+    <Section title="来源">
+      <p className="text-xs leading-relaxed text-slate-300">
+        对「{sourceTitle ?? '已删除的卡片'}」
+        {card.origin.operation === 'describe' ? '的图片执行 Midjourney 反推' : <>执行 <span className="font-mono text-pink-300">{card.origin.label}</span></>}
+        ，服务商与模型沿用{card.origin.operation === 'describe' ? '已配置的 Midjourney' : '来源卡片'}。
+      </p>
+    </Section>
+  );
   if (!snapshot) {
     return (
       <Section title="生成参数">
@@ -75,6 +89,7 @@ export const ResultSnapshotView: React.FC<{ card: SpatialCard }> = ({ card }) =>
 
   return (
     <>
+      {origin}
       <Section title={isText ? '想法' : '提示词'}>
         <p className="rounded-xl bg-canvas-bg border border-canvas-border px-2.5 py-1.5 text-xs leading-relaxed text-slate-300 whitespace-pre-wrap break-words select-text">
           {snapshot.prompt || <span className="text-slate-500">（空）</span>}
@@ -102,8 +117,9 @@ export const ResultSnapshotView: React.FC<{ card: SpatialCard }> = ({ card }) =>
       ) : null}
       <DevJson
         compile={() =>
-          // Video payloads need the referenced cards' assets, which may be gone: show the raw snapshot.
-          card.type !== 'image' ? snapshot : compileCardImagePayload({
+          // Video payloads and reference images need the referenced cards, which may be gone, and an
+          // operation on another result ran with its own request: show the raw record.
+          card.type !== 'image' || card.origin || snapshot.references?.length ? { origin: card.origin, snapshot } : compileCardImagePayload({
             ...card,
             ...snapshot.params,
             prompt: snapshot.prompt,

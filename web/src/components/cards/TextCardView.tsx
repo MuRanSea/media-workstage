@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, Copy, FileText, Link2, Sparkles } from 'lucide-react';
+import { Check, Copy, FileText, Link2, Loader2, Sparkles } from 'lucide-react';
 import { MISSING_PROVIDER_HINT, buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { getTextPreset } from '../../engine/textPresets.ts';
 import { useChannels } from '../../services/channels.ts';
@@ -119,17 +119,27 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
 
   if (card.role === 'result') {
     const snapshotPreset = getTextPreset(card.snapshot?.params.textPreset as TextPreset | undefined);
+    // Midjourney Describe runs as a task: its text arrives when the task finishes.
+    const describing = card.origin?.operation === 'describe';
+    const pending = card.status === 'queued' || card.status === 'running';
     return (
       <CardShell
         {...shellProps}
         badges={linkedBadge}
-        ports={onStartConnect && <OutputPort color="emerald" onStart={onStartConnect} />}
+        ports={onStartConnect && !pending && <OutputPort color="emerald" onStart={onStartConnect} />}
       >
         <SummaryRow
-          model={snapshotPreset.label}
+          model={describing ? 'Midjourney 反推' : snapshotPreset.label}
           spec={findModelOption(providerGroups, card.snapshot?.provider ?? provider, card.snapshot?.model ?? card.model)?.label ?? card.snapshot?.model ?? card.model}
         />
-        {outputEditor}
+        {pending ? (
+          <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-900/60 bg-emerald-950/20 py-6 text-xs text-emerald-200/80">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> 正在反推提示词…
+          </div>
+        ) : !describing || card.status === 'succeeded' ? (
+          outputEditor
+        ) : null}
+        {card.errorMessage && <ErrorBox message={card.errorMessage} />}
       </CardShell>
     );
   }

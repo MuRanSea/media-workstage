@@ -8,7 +8,7 @@ import {
   isModelReady,
   isProviderMissing,
 } from '../../engine/channelModels.ts';
-import { requestedAspect, videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
+import { assetPromptName, requestedAspect, videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
 import { connectCards } from '../../engine/connections.ts';
 import { cardTag, refTag } from '../../engine/refTags.ts';
 import { UPLOAD_REF_LABELS, mediaKindOf, offersUpload, sendsUploadedCopy, uploadRefKind } from '../../engine/uploadRefs.ts';
@@ -205,6 +205,21 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
             </button>
             );
           })}
+          {card.mode !== 'first_last_frame' &&
+            card.assetRefs?.map((asset) => {
+              const name = assetPromptName(card, asset);
+              return (
+                <button
+                  key={asset.assetId}
+                  type="button"
+                  onClick={() => insertTag(name)}
+                  title={`素材库 ${asset.assetId}：插入「${name}」到提示词`}
+                  className="font-mono px-1.5 py-px rounded-md border bg-violet-500/15 text-violet-300 border-violet-500/30 hover:bg-violet-500/25"
+                >
+                  {name}
+                </button>
+              );
+            })}
           <button
             type="button"
             onClick={(e) => {
