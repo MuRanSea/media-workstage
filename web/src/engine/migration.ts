@@ -23,13 +23,23 @@ import { assetStoredPath } from './assetPaths.ts';
  * project twice gives the same cards, and migrated cards (which have a role) pass
  * through untouched apart from dropping saved reference addresses. Video results
  * saved before they could be referenced get an @视频N.
+ *
+ * Cards saved by the Midjourney branch before it was merged (feat/mj-full) carry
+ * two fields of their own: a grid's buttons (`resultActions`) move to the result
+ * card holding the grid, and reference videos (`videoReferences`) join the card's
+ * references as the video result cards they now are.
  */
 
 /** A reference as older versions saved it, with the image address it had when linked. */
 type SavedReference = ReferenceItem & { url?: string; localPath?: string };
 
 /** A card as project.json holds it: without a role when saved before roles existed. */
-export type SavedCard = Omit<SpatialCard, 'role' | 'references'> & { role?: CardRole; references?: SavedReference[] };
+export type SavedCard = Omit<SpatialCard, 'role' | 'references'> & {
+  role?: CardRole;
+  references?: SavedReference[];
+  /** feat/mj-full: other video cards used as reference videos. */
+  videoReferences?: SavedReference[];
+};
 
 /** Card types this migration splits into generation and result cards; anything else passes through as saved. */
 const MIGRATABLE = new Set<string>(['image', 'video', 'text']);
@@ -38,7 +48,7 @@ const MIGRATABLE = new Set<string>(['image', 'video', 'text']);
 const SPAWN_FIELDS = ['spawnedTaskId', 'resultOfCardId'] as const;
 
 /** Run and output fields a generation card no longer holds. */
-const RUN_FIELDS = ['taskId', 'resultUrl', 'outputAssets', 'errorMessage', 'textOutput', 'tagIndex'] as const;
+const RUN_FIELDS = ['taskId', 'resultUrl', 'outputAssets', 'errorMessage', 'textOutput', 'tagIndex', 'resultActions'] as const;
 
 const FAILED = new Set<SpatialCard['status']>(['failed', 'cancelled', 'expired']);
 
@@ -83,6 +93,10 @@ interface Split {
  * know pass through as saved, so saving the project never loses them.
  */
 export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
+  return adoptMidjourneyBranchFields(migrateRoles(saved));
+}
+
+function migrateRoles(saved: SavedCard[]): SpatialCard[] {
   // Legacy cards read as cards with a role still missing; only fields they share with new cards are used.
   const cards = saved as SpatialCard[];
   if (!saved.some((c) => isLegacy(c) || isLegacyUpload(c) || isUntaggedVideo(c) || hasSavedAddress(c))) return cards;
@@ -141,6 +155,8 @@ export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
         // An output shown while a newer run was going (or failed) came from an earlier task, named by its assets.
         const taskId = card.status === 'succeeded' && i === 0 ? card.taskId ?? asset.task_id : asset.task_id;
         if (taskId) draft.taskId = taskId;
+        // The grid's buttons belong to the task that made it.
+        if (i === 0 && card.status === 'succeeded' && card.resultActions?.length) draft.resultActions = card.resultActions;
         split.outputs.push(draft);
       });
       if (!assets.length) split.outputs.push({ ...first, tagIndex: nextTag(), resultUrl: card.resultUrl });
@@ -250,6 +266,50 @@ export function migrateLegacyCards(saved: SavedCard[]): SpatialCard[] {
     for (const run of split.runs) next = [...next, placeResult(next, generation, withLinks(run))];
   }
   return next;
+}
+
+/**
+ * Moves the Midjourney branch's own fields onto the cards that hold them now. A
+ * generation card's grid buttons go to its result card (the one its migration made);
+ * reference videos become references to the video result cards, keeping their
+ * @视频N in the prompt.
+ */
+function adoptMidjourneyBranchFields(cards: SpatialCard[]): SpatialCard[] {
+  type Branch = SpatialCard & { videoReferences?: SavedReference[] };
+  const branch = cards as Branch[];
+  if (!branch.some((c) => (c.role === 'generation' && c.resultActions) || c.videoReferences)) return cards;
+
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  /** A reference to a card now points at the result card holding what it showed. */
+  const holder = (id: string) => {
+    const card = byId.get(id);
+    return card?.role === 'generation' ? byId.get(outputId(id)) : card;
+  };
+  const actionsFor = new Map<string, SpatialCard['resultActions']>();
+  for (const c of cards) {
+    const result = c.role === 'generation' && c.resultActions ? byId.get(outputId(c.id)) : undefined;
+    if (result && !result.resultActions) actionsFor.set(result.id, c.resultActions);
+  }
+
+  return branch.map((c) => {
+    if (!(c.role === 'generation' && c.resultActions) && !c.videoReferences && !actionsFor.has(c.id)) return c;
+    const { videoReferences, ...card } = c;
+    if (card.role === 'generation') delete card.resultActions;
+    if (actionsFor.has(card.id)) card.resultActions = actionsFor.get(card.id);
+    if (videoReferences?.length) {
+      const refs = [...(card.references ?? [])];
+      let prompt = card.prompt;
+      for (const old of videoReferences) {
+        const target = holder(old.cardId);
+        if (!target || target.tagIndex === undefined || refs.some((r) => r.cardId === target.id)) continue;
+        refs.push({ cardId: target.id, tagIndex: target.tagIndex, role: 'reference_video', label: old.label });
+        prompt = prompt.replace(new RegExp(`@视频${old.tagIndex}\\b`, 'g'), `@视频${target.tagIndex}`);
+      }
+      card.references = refs;
+      card.prompt = prompt;
+    }
+    return card;
+  });
 }
 
 /** `card` without the fields the first upload-card version kept; the same card when it has none. */

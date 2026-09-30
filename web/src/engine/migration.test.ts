@@ -573,3 +573,37 @@ describe('migrateLegacyCards: failed cards', () => {
     expect(byId(cards, 'vid').references).toEqual([]);
   });
 });
+
+describe('fields of the Midjourney branch (feat/mj-full)', () => {
+  const buttons = [{ id: 'MJ::JOB::upsample::1::h', label: 'U1' }];
+
+  it('moves a legacy grid card\'s buttons to the result card holding the grid', () => {
+    const grid = legacy({ provider: 'midjourney', model: 'mj_imagine', status: 'succeeded', taskId: 't1', resultUrl: '/assets/images/t1/base.png', outputAssets: [asset('t1')], resultActions: buttons });
+    const [generation, result] = migrateLegacyCards([grid]);
+    expect(generation).toMatchObject({ role: 'generation' });
+    expect(generation.resultActions).toBeUndefined();
+    expect(result).toMatchObject({ role: 'result', sourceId: 'img', taskId: 't1', resultActions: buttons });
+  });
+
+  it('moves buttons a migrated generation card kept to its result card', () => {
+    const generation = { ...legacy({}), role: 'generation', resultActions: buttons } as SavedCard;
+    const result = { ...legacy({ id: 'img-result', status: 'succeeded', taskId: 't1' }), role: 'result', sourceId: 'img' } as SavedCard;
+    const [g, r] = migrateLegacyCards([generation, result]);
+    expect(g.resultActions).toBeUndefined();
+    expect(r.resultActions).toEqual(buttons);
+  });
+
+  it('turns reference videos into references to the video result cards', () => {
+    const clipGen = { ...legacy({ id: 'clip', type: 'video', title: '视频 2', tagIndex: undefined }), role: 'generation' } as SavedCard;
+    const clip = { ...legacy({ id: 'clip-result', type: 'video', tagIndex: 15, status: 'succeeded' }), role: 'result', sourceId: 'clip' } as SavedCard;
+    const video = {
+      ...legacy({ id: 'v', type: 'video', tagIndex: undefined, prompt: '参考 @视频9 的运镜', references: [] }),
+      role: 'generation',
+      videoReferences: [{ cardId: 'clip', tagIndex: 9, role: 'reference_video', label: '视频 2' }],
+    } as SavedCard;
+    const migrated = migrateLegacyCards([clipGen, clip, video]).find((c) => c.id === 'v')!;
+    expect(migrated.references).toEqual([{ cardId: 'clip-result', tagIndex: 15, role: 'reference_video', label: '视频 2' }]);
+    expect(migrated.prompt).toBe('参考 @视频15 的运镜');
+    expect('videoReferences' in migrated).toBe(false);
+  });
+});
