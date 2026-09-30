@@ -12,6 +12,7 @@ import { protocolOf } from '../../engine/providers.ts';
 import { imageSizeSummary, previewAspect } from '../../engine/cardParams.ts';
 import { useChannels } from '../../services/channels.ts';
 import { assetStoredPath, assetUrl } from '../../engine/assetPaths.ts';
+import { offersUpload } from '../../engine/uploadRefs.ts';
 import { Button } from '../ui/Button.tsx';
 import { InputPort, OutputPort, LinkedPromptBox } from './CardPorts.tsx';
 import {
@@ -25,6 +26,7 @@ import {
   SummaryRow,
   TagBadge,
 } from './CardShell.tsx';
+import { UploadPanel } from './UploadPanel.tsx';
 import type { CardViewProps } from './cardProps.ts';
 
 interface ImageCardViewProps extends CardViewProps {
@@ -156,6 +158,8 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
       </MediaFrame>
 
       <SummaryRow model={modelLabel} spec={imageSizeSummary(card)} />
+
+      {offersUpload(card) && <UploadPanel card={card} onUpdateCard={onUpdateCard} accent="pink" />}
 
       {card.errorMessage && <ErrorBox message={card.errorMessage} />}
     </CardShell>

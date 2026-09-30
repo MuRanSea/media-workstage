@@ -4,7 +4,7 @@ import { compileCardVideoPayload } from './videoCompiler.ts';
 import { videoModePatch, videoModelPatch } from './cardParams.ts';
 import { createCard, duplicateCards } from './cardFactory.ts';
 import { refTag } from './refTags.ts';
-import { uploadReference, uploadRefKind } from './uploadRefs.ts';
+import { offersUpload, uploadReference, uploadRefKind } from './uploadRefs.ts';
 import { migrateLegacyCards, type SavedCard } from './migration.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 
@@ -292,5 +292,42 @@ describe('opening projects saved by the first upload-card version', () => {
     const cards = migrateLegacyCards([videoResult({ tagIndex: undefined }), uploadImage({ tagIndex: 7 })]);
     expect(cards[0].tagIndex).toBe(8);
     expect(migrateLegacyCards(cards)).toBe(cards);
+  });
+});
+
+describe('generated image results that need an upload', () => {
+  const imageResult = (patch: Partial<SpatialCard> = {}) =>
+    card({
+      id: 'i1',
+      type: 'image',
+      role: 'result',
+      sourceId: 'g1',
+      tagIndex: 3,
+      title: '图 1 #1',
+      status: 'succeeded',
+      resultUrl: '/assets/images/t1/base.png',
+      outputAssets: [{ id: 'a', kind: 'image_base', local_path: 'images/t1/base.png', remote_url: 'inline://t1/0' } as never],
+      ...patch,
+    });
+
+  it('offers upload only for images the provider gave no public URL for', () => {
+    expect(offersUpload(imageResult())).toBe(true);
+    const withUrl = imageResult({ outputAssets: [{ id: 'a', kind: 'image_base', local_path: 'x.png', remote_url: 'https://cdn/x.png' } as never] });
+    expect(offersUpload(withUrl)).toBe(false);
+    expect(offersUpload(imageResult({ status: 'running', resultUrl: undefined }))).toBe(false);
+    expect(offersUpload(imageResult({ role: 'generation' }))).toBe(false);
+    expect(offersUpload(uploadImage())).toBe(true);
+  });
+
+  it('sends the uploaded link, not base64, once an image result has one', () => {
+    const res = imageResult({ fileUrl: 'https://files/x.png', fileExpiresAt: Date.now() / 1000 + 3600 });
+    const payload = compileCardVideoPayload(video({ prompt: '让 @图3 动起来', references: [{ cardId: 'i1', tagIndex: 3, role: 'reference_image', label: '' }] }), [res]);
+    expect(payload.reference_assets?.[0]).toMatchObject({ url: 'https://files/x.png' });
+    expect(payload.reference_assets?.[0].local_path).toBeUndefined();
+  });
+
+  it('keeps sending the saved file for an image result that was never uploaded', () => {
+    const payload = compileCardVideoPayload(video({ prompt: '让 @图3 动起来', references: [{ cardId: 'i1', tagIndex: 3, role: 'reference_image', label: '' }] }), [imageResult()]);
+    expect(payload.reference_assets?.[0].local_path).toContain('images/t1/base.png');
   });
 });

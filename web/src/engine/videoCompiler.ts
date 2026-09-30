@@ -2,7 +2,7 @@ import { maxReferenceVideos, resolveVideoModelDef, type SpatialCard, type Refere
 import type { CreateTaskPayload } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
 import { refNoun, refTag } from './refTags.ts';
-import { uploadReference } from './uploadRefs.ts';
+import { sendsUploadedCopy, uploadReference } from './uploadRefs.ts';
 import type { Protocol } from '../services/api.ts';
 
 export interface VideoCompilationInput {
@@ -36,8 +36,8 @@ export function resolveReferenceAsset(
   if (!srcCard) {
     throw new Error(`Referenced card ${refTag(ref)} was not found on the canvas`);
   }
-  // Upload cards and video results send what was uploaded for them (asset id or link), else the saved image.
-  if (srcCard.type === 'upload' || srcCard.type === 'video') return uploadReference(srcCard, protocol);
+  // Upload cards, video results and images the user uploaded send that copy (asset id or link), else the saved image.
+  if (sendsUploadedCopy(srcCard)) return uploadReference(srcCard, protocol);
 
   // The card's primary image asset
   const baseAsset = srcCard.outputAssets?.find(

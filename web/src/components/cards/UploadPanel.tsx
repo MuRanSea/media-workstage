@@ -65,7 +65,7 @@ export const UploadPanel: React.FC<{
     if (!projectId || !provider || !card.resultUrl) return;
     setBusy('asset');
     try {
-      const res = await apiUploadAsset(provider, projectId, card.resultUrl, card.uploadName ?? `${card.title}.mp4`);
+      const res = await apiUploadAsset(provider, projectId, card.resultUrl, card.uploadName ?? `${card.title}.${mediaKindOf(card) === 'video' ? 'mp4' : 'png'}`);
       onUpdateCard(card.id, {
         uploadProvider: provider,
         assetId: res.asset_id,

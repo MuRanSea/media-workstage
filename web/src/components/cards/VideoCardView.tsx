@@ -11,7 +11,7 @@ import {
 import { requestedAspect, videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
 import { connectCards } from '../../engine/connections.ts';
 import { cardTag, refTag } from '../../engine/refTags.ts';
-import { UPLOAD_REF_LABELS, mediaKindOf, uploadRefKind } from '../../engine/uploadRefs.ts';
+import { UPLOAD_REF_LABELS, mediaKindOf, sendsUploadedCopy, uploadRefKind } from '../../engine/uploadRefs.ts';
 import { protocolOf } from '../../engine/providers.ts';
 import { inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { useChannels } from '../../services/channels.ts';
@@ -180,7 +180,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
           {refs.map((ref) => {
             const src = availableImageCards.find((c) => c.id === ref.cardId);
             // Uploads and videos send an uploaded copy; generated images go as they are.
-            const viaUpload = !!src && (src.type === 'upload' || mediaKindOf(src) === 'video');
+            const viaUpload = !!src && (sendsUploadedCopy(src) || mediaKindOf(src) === 'video');
             const sent = src && viaUpload ? uploadRefKind(src, protocolOf(provider) ?? 'ark') : undefined;
             return (
             <button

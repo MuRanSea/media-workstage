@@ -8,6 +8,30 @@ export function mediaKindOf(card: SpatialCard): 'image' | 'video' {
   return card.type === 'video' ? 'video' : card.type === 'upload' ? card.mediaKind ?? 'image' : 'image';
 }
 
+/** A finished generated image result card (the only kind whose upload buttons depend on where the file came from). */
+function isImageResult(card: SpatialCard): boolean {
+  return card.type === 'image' && card.role === 'result';
+}
+
+/**
+ * Whether a card offers "上传素材库 / 获取链接". Uploads and video results always do (they have
+ * no public copy). A generated image does only when the provider gave no public URL for it
+ * (Gemini and base64 replies exist only as a local file); an image that came with an
+ * http(s) URL is sent by that URL as before.
+ */
+export function offersUpload(card: SpatialCard): boolean {
+  if (card.type === 'upload' || card.type === 'video') return true;
+  if (!isImageResult(card) || card.status !== 'succeeded' || !card.resultUrl) return false;
+  const remote = card.outputAssets?.[0]?.remote_url;
+  return !(remote && /^https?:\/\//.test(remote));
+}
+
+/** Whether a video card should send what was uploaded for this card instead of its saved file. */
+export function sendsUploadedCopy(card: SpatialCard): boolean {
+  if (card.type === 'upload' || card.type === 'video') return true;
+  return isImageResult(card) && !!(card.assetId || card.fileUrl || card.uploadRefMode);
+}
+
 /** An asset reference (asset://<id>) is only usable once the platform approved it. */
 export function assetUri(card: SpatialCard): string | undefined {
   return card.assetId && card.assetStatus === 'Active' ? `asset://${card.assetId}` : undefined;
