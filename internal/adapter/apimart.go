@@ -21,7 +21,13 @@ type APIMartAdapter struct {
 	channelImageBase
 	// Set once the endpoint answers 404/405 (relays that do not forward /uploads/images).
 	uploadUnsupported atomic.Bool
+	// The relay platform's own file store, tried when /uploads/images is missing.
+	files platformFiles
 }
+
+// apimartInlineLimit keeps base64 reference images, all together, under the 4 MiB
+// that APIMart relays accept per media request ("media request exceeds 4 MiB").
+const apimartInlineLimit = 3 << 20
 
 func NewAPIMartAdapter(cfg ChannelConfig) *APIMartAdapter {
 	return &APIMartAdapter{channelImageBase: newChannelImageBase("apimart", "https://api.apimart.ai/v1", cfg)}

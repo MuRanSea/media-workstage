@@ -7,9 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"image"
+	"image/color"
+	"image/png"
+	"math/rand/v2"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"media-workstage/internal/model"
 
@@ -23,6 +29,10 @@ type fakeAPIMart struct {
 	submitted    map[string]any
 	uploadStatus int // 0 accepts uploads; e.g. 404 mimics a relay without the endpoint
 	videoBody    string
+	// The relay platform's file store (/api/files/upload): 0 serves 404 like a plain APIMart
+	// origin; 200 hands out links.
+	filesStatus  int
+	filesUploads int
 }
 
 func newFakeAPIMart(t *testing.T) *fakeAPIMart {
@@ -46,6 +56,23 @@ func newFakeAPIMart(t *testing.T) *fakeAPIMart {
 			_, _ = io.WriteString(w, `{"code":200,"data":[{"status":"submitted","task_id":"task_vid"}]}`)
 		case "/v1/tasks/task_vid":
 			_, _ = io.WriteString(w, f.videoBody)
+		case "/api/files/upload":
+			if f.filesStatus == 0 {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if f.filesStatus != http.StatusOK {
+				w.WriteHeader(f.filesStatus)
+				_, _ = io.WriteString(w, `{"success":false,"error":{"code":"GatewayAccessDenied","message":"Asset access denied"}}`)
+				return
+			}
+			require.NoError(t, r.ParseMultipartForm(32<<20))
+			_, hdr, err := r.FormFile("file")
+			require.NoError(t, err)
+			f.filesUploads++
+			_, _ = io.WriteString(w, `{"success":true,"data":{"file_url":"https://tos.example.com/`+hdr.Filename+`","expires_at":`+
+				strconv.FormatInt(time.Now().Add(7*24*time.Hour).Unix(), 10)+`}}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -257,4 +284,97 @@ func TestAPIMartVideo_ReferenceVideoRules(t *testing.T) {
 	local := model.ReferenceItem{Role: "reference_video", Label: "动作", LocalPath: "m.mp4"}
 	_, err = a.SubmitTask(context.Background(), videoTask("kling-v3-omni", map[string]any{"reference_assets": []model.ReferenceItem{local}}))
 	assert.ErrorContains(t, err, "公网链接")
+}
+
+// A relay without /uploads/images but with its own file store (「获取链接」) gets links
+// from the store, and a second run reuses them instead of uploading again.
+func TestAPIMartReferenceUsesPlatformFileStore(t *testing.T) {
+	f := newFakeAPIMart(t)
+	f.uploadStatus = http.StatusNotFound
+	f.filesStatus = http.StatusOK
+	a := NewAPIMartAdapter(ChannelConfig{BaseURL: f.srv.URL + "/apimart/v1", APIKey: "k"})
+	img := localPNG(t, "gemini.png")
+	task := videoTask("kling-v3", map[string]any{
+		"ratio":            "adaptive",
+		"reference_assets": []model.ReferenceItem{{Role: "first_frame", LocalPath: img}},
+	})
+	f.srv.Config.Handler = rewritePrefix("/apimart", f.srv.Config.Handler)
+
+	for range 2 {
+		_, err := a.SubmitTask(context.Background(), task)
+		require.NoError(t, err)
+		assert.Equal(t, []any{"https://tos.example.com/gemini.png"}, f.submitted["image_urls"])
+	}
+	assert.Equal(t, 1, f.filesUploads, "the link is reused while it is valid")
+}
+
+// When nothing can host the image, a big one is shrunk to fit APIMart's inline limit
+// instead of failing with "media request exceeds 4 MiB".
+func TestAPIMartReferenceShrinksLargeInlineImage(t *testing.T) {
+	f := newFakeAPIMart(t)
+	f.uploadStatus = http.StatusNotFound
+	a := NewAPIMartAdapter(ChannelConfig{BaseURL: f.srv.URL + "/v1", APIKey: "k"})
+	big := noisePNG(t, 1600, 1200)
+	info, err := os.Stat(big)
+	require.NoError(t, err)
+	require.Greater(t, info.Size(), int64(apimartInlineLimit), "the fixture must be over the limit")
+
+	_, err = a.SubmitTask(context.Background(), videoTask("kling-v3", map[string]any{
+		"ratio":            "adaptive",
+		"reference_assets": []model.ReferenceItem{{Role: "first_frame", LocalPath: big}},
+	}))
+	require.NoError(t, err)
+	u := f.submitted["image_urls"].([]any)[0].(string)
+	assert.True(t, strings.HasPrefix(u, "data:image/jpeg;base64,"))
+	assert.LessOrEqual(t, len(u), apimartInlineLimit)
+}
+
+// A file store that refuses the key does not block generation when the image fits inline.
+func TestAPIMartReferenceFileStoreErrorFallsBackToInline(t *testing.T) {
+	f := newFakeAPIMart(t)
+	f.uploadStatus = http.StatusNotFound
+	f.filesStatus = http.StatusForbidden
+	a := NewAPIMartAdapter(ChannelConfig{BaseURL: f.srv.URL + "/v1", APIKey: "k"})
+	_, err := a.SubmitTask(context.Background(), videoTask("kling-v3", map[string]any{
+		"ratio":            "adaptive",
+		"reference_assets": []model.ReferenceItem{{Role: "first_frame", LocalPath: localPNG(t, "s.png")}},
+	}))
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(f.submitted["image_urls"].([]any)[0].(string), "data:image/png;base64,"))
+}
+
+func TestEncodeImageWithinKeepsSmallFilesUntouched(t *testing.T) {
+	p := localPNG(t, "small.png")
+	uri, err := EncodeImageWithin(p, 1<<20)
+	require.NoError(t, err)
+	assert.Equal(t, dataURI("image/png", pngBytes), uri)
+}
+
+// noisePNG writes an incompressible PNG, so it is several MiB.
+func noisePNG(t *testing.T, w, h int) string {
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	rng := rand.New(rand.NewPCG(1, 2))
+	for i := range img.Pix {
+		img.Pix[i] = uint8(rng.UintN(256))
+	}
+	for y := range h {
+		for x := range w {
+			c := img.NRGBAAt(x, y)
+			img.SetNRGBA(x, y, color.NRGBA{R: c.R, G: c.G, B: c.B, A: 255})
+		}
+	}
+	p := filepath.Join(t.TempDir(), "big.png")
+	out, err := os.Create(p)
+	require.NoError(t, err)
+	require.NoError(t, png.Encode(out, img))
+	require.NoError(t, out.Close())
+	return p
+}
+
+// rewritePrefix serves /<prefix>/v1/... like /v1/..., for relays that mount APIMart under a path.
+func rewritePrefix(prefix string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
+		next.ServeHTTP(w, r)
+	})
 }

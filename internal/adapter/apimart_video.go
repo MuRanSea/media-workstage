@@ -123,7 +123,7 @@ func (a *APIMartAdapter) submitVideo(ctx context.Context, task *model.MediaTask)
 
 	urls := make([]string, len(refs))
 	for i, ref := range refs {
-		u, err := a.referenceURL(ctx, ref)
+		u, err := a.referenceURL(ctx, ref, apimartInlineLimit/len(refs))
 		if err != nil {
 			return "", err
 		}
@@ -252,9 +252,10 @@ func referenceVideoURL(ref model.ReferenceItem) (string, error) {
 }
 
 // referenceURL turns a reference image into something APIMart accepts. APIMart wants
-// public URLs, so local files are uploaded; relays that do not forward the upload
-// endpoint fall back to the image's original public URL, then to base64.
-func (a *APIMartAdapter) referenceURL(ctx context.Context, ref model.ReferenceItem) (string, error) {
+// public URLs, so a local file is uploaded: to /uploads/images, else to the relay
+// platform's file store. Without either it falls back to the image's original public
+// URL, then to base64 shrunk to inlineLimit bytes.
+func (a *APIMartAdapter) referenceURL(ctx context.Context, ref model.ReferenceItem, inlineLimit int) (string, error) {
 	if strings.HasPrefix(ref.URL, "http://") || strings.HasPrefix(ref.URL, "https://") || strings.HasPrefix(ref.URL, "data:") {
 		return ref.URL, nil
 	}
@@ -280,10 +281,19 @@ func (a *APIMartAdapter) referenceURL(ctx context.Context, ref model.ReferenceIt
 		}
 		a.uploadUnsupported.Store(true)
 	}
+	baseURL, apiKey := a.credentials()
+	u, filesErr := a.files.link(ctx, a.client, baseURL, apiKey, ref.LocalPath)
+	if filesErr == nil {
+		return u, nil
+	}
 	if publicURL != "" {
 		return publicURL, nil
 	}
-	return EncodeLocalAssetToBase64(ref.LocalPath)
+	inline, err := EncodeImageWithin(ref.LocalPath, inlineLimit)
+	if err != nil && !errors.Is(filesErr, errPlatformFilesUnsupported) {
+		return "", fmt.Errorf("参考图 %s 自动获取链接失败（%v），也无法内联发送: %w", ref.Label, filesErr, err)
+	}
+	return inline, err
 }
 
 // uploadImage sends a local image to POST /uploads/images and returns its public URL.
