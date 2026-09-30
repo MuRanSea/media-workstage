@@ -11,6 +11,7 @@ bin/
 node_modules/
 .vite/
 .npm/
+*.tsbuildinfo
 
 # Environment Variables & Secrets
 .env
