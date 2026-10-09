@@ -12,6 +12,7 @@ import {
 import {
   isRectIntersecting,
   getMarqueeRect,
+  getCardsBoundingBox,
   alignCards,
   autoArrangeGrid,
   type AlignmentType,
@@ -19,6 +20,7 @@ import {
 import type { CanvasTool, SpatialCard } from '../types/canvas.ts';
 import type { CardHeightOf } from './layout.ts';
 import { sameIds } from './culling.ts';
+import { snapBox, SNAP_THRESHOLD_PX, type SnapGuide } from './snapping.ts';
 
 interface UseSpatialCanvasProps {
   cards: SpatialCard[];
@@ -69,6 +71,10 @@ export function useSpatialCanvas({
   const initialCardPositionsRef = useRef<Map<string, Point>>(new Map());
   // A drag records its undo step on the first actual move, so plain clicks add none.
   const dragRecordedRef = useRef(false);
+  // Snapping: the dragged cards' box when the drag began, and the cards it can snap to.
+  const dragBoxRef = useRef<Rect | null>(null);
+  const snapTargetsRef = useRef<Rect[]>([]);
+  const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
 
   const startPanRef = useRef<Point>({ x: 0, y: 0 });
   const mousePosRef = useRef<Point>({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
@@ -317,8 +323,18 @@ export function useSpatialCanvas({
           transform,
           origin
         );
-        const dx = currentWorld.x - dragStartWorldRef.current.x;
-        const dy = currentWorld.y - dragStartWorldRef.current.y;
+        let dx = currentWorld.x - dragStartWorldRef.current.x;
+        let dy = currentWorld.y - dragStartWorldRef.current.y;
+        // Snap the dragged box to other cards' edges and centres; Alt drags freely.
+        let guides: SnapGuide[] = [];
+        const box = dragBoxRef.current;
+        if (box && !e.altKey && (dx !== 0 || dy !== 0)) {
+          const snap = snapBox({ ...box, x: box.x + dx, y: box.y + dy }, snapTargetsRef.current, SNAP_THRESHOLD_PX / transform.zoom);
+          dx += snap.dx;
+          dy += snap.dy;
+          guides = snap.guides;
+        }
+        setSnapGuides((prev) => (prev.length === 0 && guides.length === 0 ? prev : guides));
         if (!dragRecordedRef.current && (dx !== 0 || dy !== 0)) {
           dragRecordedRef.current = true;
           onBeforeEdit?.();
@@ -356,6 +372,7 @@ export function useSpatialCanvas({
     setMarqueeStartScreen(null);
     setMarqueeCurrentScreen(null);
     setIsDraggingCards(false);
+    setSnapGuides([]);
   }, []);
 
   // Shift/Ctrl toggles a card in the selection; a plain click selects it alone
@@ -403,14 +420,23 @@ export function useSpatialCanvas({
       dragStartWorldRef.current = worldMouse;
 
       const initialPositions = new Map<string, Point>();
+      const moving: Rect[] = [];
+      const others: Rect[] = [];
       for (const c of cards) {
+        const r = { x: c.x, y: c.y, width: c.width, height: heightOf(c) };
         if (nextSelectedIds.has(c.id)) {
           initialPositions.set(c.id, { x: c.x, y: c.y });
+          moving.push(r);
+        } else {
+          others.push(r);
         }
       }
       initialCardPositionsRef.current = initialPositions;
+      // A group snaps as one box: its bounding box.
+      dragBoxRef.current = getCardsBoundingBox(moving.map((r, i) => ({ id: String(i), ...r })));
+      snapTargetsRef.current = others;
     },
-    [activeTool, nextSelection, transform, containerRef, cards]
+    [activeTool, nextSelection, transform, containerRef, cards, heightOf]
   );
 
   // Multi-card layout commands
@@ -445,6 +471,8 @@ export function useSpatialCanvas({
     selectedCardIds,
     setSelectedCardIds,
     marqueeScreenBox,
+    /** Alignment lines to draw while a drag is snapped (world coordinates). */
+    snapGuides,
     isDraggingCards,
     zoomIn,
     zoomOut,

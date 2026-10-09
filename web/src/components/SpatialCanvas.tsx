@@ -168,6 +168,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     selectedCardIds,
     setSelectedCardIds,
     marqueeScreenBox,
+    snapGuides,
     zoomIn,
     zoomOut,
     resetZoom100,
@@ -809,6 +810,20 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                   </g>
                 );
               })}
+
+              {/* Alignment lines while a dragged card is snapped */}
+              {snapGuides.map((g, i) => (
+                <line
+                  key={i}
+                  x1={g.axis === 'x' ? g.at : g.from}
+                  y1={g.axis === 'x' ? g.from : g.at}
+                  x2={g.axis === 'x' ? g.at : g.to}
+                  y2={g.axis === 'x' ? g.to : g.at}
+                  style={{ stroke: 'rgb(var(--c-pink-400))' }}
+                  strokeWidth={1 / transform.zoom}
+                  strokeDasharray={`${4 / transform.zoom} ${3 / transform.zoom}`}
+                />
+              ))}
 
               {/* Line following the cursor while connecting */}
               {dragPath && (
