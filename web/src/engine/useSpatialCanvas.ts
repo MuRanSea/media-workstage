@@ -5,8 +5,9 @@ import {
   type Rect,
   calculateZoomAtPoint,
   calculateFitView,
-  calculateFocusSelection,
+  calculateFocusRects,
   screenToWorld,
+  wheelZoomFactor,
 } from './matrix.ts';
 import {
   isRectIntersecting,
@@ -133,26 +134,17 @@ export function useSpatialCanvas({
       const container = containerRef.current;
       if (!container) return;
 
-      const targetId = cardId ?? (selectedCardIds.size > 0 ? Array.from(selectedCardIds)[0] : null);
-      if (!targetId) return;
-
-      const target = cards.find((c) => c.id === targetId);
-      if (!target) return;
+      const ids = cardId ? new Set([cardId]) : selectedCardIds;
+      const rects: Rect[] = cards
+        .filter((c) => ids.has(c.id))
+        .map((c) => ({ x: c.x, y: c.y, width: c.width, height: heightOf(c) }));
 
       const viewport = {
         width: container.clientWidth,
         height: container.clientHeight,
       };
-
-      const rect: Rect = {
-        x: target.x,
-        y: target.y,
-        width: target.width,
-        height: heightOf(target),
-      };
-
-      const nextTransform = calculateFocusSelection(rect, viewport, 1.0);
-      setTransform(nextTransform);
+      const nextTransform = calculateFocusRects(rects, viewport);
+      if (nextTransform) setTransform(nextTransform);
     },
     [cards, selectedCardIds, containerRef, heightOf]
   );
@@ -167,7 +159,7 @@ export function useSpatialCanvas({
       mousePosRef.current = { x: e.clientX, y: e.clientY };
 
       if (e.ctrlKey || e.metaKey) {
-        const factor = e.deltaY < 0 ? 1.06 : 0.94;
+        const factor = wheelZoomFactor(e.deltaY, e.deltaMode);
         zoomAtPoint((z) => z * factor, e.clientX, e.clientY);
       } else {
         const deltaX = e.shiftKey ? e.deltaY : e.deltaX;

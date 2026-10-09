@@ -6,7 +6,7 @@ const GROUPS: { title: string; items: [string, string][] }[] = [
     title: '添加与编辑',
     items: [
       ['双击空白处 / 右键', '在光标处添加卡片'],
-      ['Delete', '删除选中的卡片'],
+      ['Delete / Backspace', '删除选中的卡片'],
       ['Ctrl+Z', '撤销'],
       ['Ctrl+Shift+Z / Ctrl+Y', '重做'],
       ['Ctrl+C / Ctrl+V', '复制 / 粘贴到光标处'],
@@ -25,6 +25,7 @@ const GROUPS: { title: string; items: [string, string][] }[] = [
       ['Shift+点击 / 框选', '多选'],
       ['0', '显示全部卡片'],
       ['1', '缩放到 100%'],
+      ['+ / -', '放大 / 缩小'],
       ['F', '聚焦选中的卡片'],
       ['Esc', '取消选择'],
     ],

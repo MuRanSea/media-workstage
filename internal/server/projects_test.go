@@ -70,6 +70,14 @@ func TestProjectsAPI_CreateSaveConflictRenameDelete(t *testing.T) {
 	assert.Equal(t, 1.5, got.Viewport.Zoom)
 	assert.JSONEq(t, `[{"id":"c1","type":"image","x":1,"y":2}]`, string(got.Cards))
 
+	// Panning saves the viewport alone and leaves the revision for the next card save.
+	w = sendJSON(r, http.MethodPut, "/api/projects/"+created.ID+"/viewport", map[string]float64{"zoom": 0.5, "panX": 1, "panY": 2})
+	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+	w = sendJSON(r, http.MethodGet, "/api/projects/"+created.ID, nil)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, int64(2), got.Revision)
+	assert.Equal(t, 0.5, got.Viewport.Zoom)
+
 	w = sendJSON(r, http.MethodPatch, "/api/projects/"+created.ID, map[string]string{"name": "新名字"})
 	require.Equal(t, http.StatusOK, w.Code)
 

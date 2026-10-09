@@ -100,6 +100,28 @@ func TestStore_SaveBumpsRevisionAndDetectsConflict(t *testing.T) {
 	}
 }
 
+func TestStore_SaveViewportKeepsRevision(t *testing.T) {
+	s := newTestStore(t)
+	doc, _ := s.Create("p")
+	if err := s.SaveViewport(doc.ID, Viewport{Zoom: 0.5, PanX: -3, PanY: 4}); err != nil {
+		t.Fatalf("SaveViewport: %v", err)
+	}
+	got, _ := s.Get(doc.ID)
+	if got.Revision != doc.Revision || !got.UpdatedAt.Equal(doc.UpdatedAt) {
+		t.Fatalf("viewport save changed revision or update time: %+v", got)
+	}
+	if got.Viewport != (Viewport{Zoom: 0.5, PanX: -3, PanY: 4}) {
+		t.Fatalf("viewport not stored: %+v", got.Viewport)
+	}
+	// A tab that only panned still saves its cards on the original revision.
+	if _, err := s.Save(doc.ID, doc.Revision, got.Viewport, json.RawMessage(`[]`)); err != nil {
+		t.Fatalf("Save after viewport save: %v", err)
+	}
+	if err := s.SaveViewport("missing", Viewport{}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
 func TestStore_RenameKeepsFolderAndRevision(t *testing.T) {
 	s := newTestStore(t)
 	doc, _ := s.Create("old")

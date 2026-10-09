@@ -85,6 +85,11 @@ export function apiSaveProject(
   return request(projectPath(id), { method: 'PUT', body: JSON.stringify(body), keepalive: opts.keepalive });
 }
 
+/** Saves where the canvas is looking; needs no revision and does not change it. */
+export function apiSaveViewport(id: string, viewport: ProjectViewport, opts: { keepalive?: boolean } = {}): Promise<void> {
+  return request(`${projectPath(id)}/viewport`, { method: 'PUT', body: JSON.stringify(viewport), keepalive: opts.keepalive });
+}
+
 export function apiRenameProject(id: string, name: string): Promise<{ id: string; name: string }> {
   return request(projectPath(id), { method: 'PATCH', body: JSON.stringify({ name }) });
 }

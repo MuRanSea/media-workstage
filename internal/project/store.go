@@ -197,6 +197,25 @@ func (s *Store) Save(id string, baseRevision int64, viewport Viewport, cards jso
 	return doc, nil
 }
 
+// SaveViewport stores where the canvas was looking. The viewport is not part
+// of the content another tab could overwrite, so it needs no base revision and
+// leaves the revision and update time alone: panning in one tab never makes
+// another tab's next save conflict.
+func (s *Store) SaveViewport(id string, viewport Viewport) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir, err := s.dirLocked(id)
+	if err != nil {
+		return err
+	}
+	doc, err := readDocument(dir)
+	if err != nil {
+		return err
+	}
+	doc.Viewport = viewport
+	return writeDocument(dir, doc)
+}
+
 // Rename changes the display name. The folder keeps its name so paths of
 // in-flight downloads stay valid. The revision is left alone so an open
 // canvas can keep autosaving.

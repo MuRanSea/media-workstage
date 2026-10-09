@@ -37,6 +37,7 @@ func (s *Server) registerProjectRoutes(api *gin.RouterGroup) {
 	projects.POST("", s.sameOriginOnlyMiddleware(), s.handleCreateProject)
 	projects.GET("/:id", s.handleGetProject)
 	projects.PUT("/:id", s.sameOriginOnlyMiddleware(), s.handleSaveProject)
+	projects.PUT("/:id/viewport", s.sameOriginOnlyMiddleware(), s.handleSaveViewport)
 	projects.PATCH("/:id", s.sameOriginOnlyMiddleware(), s.handleRenameProject)
 	projects.DELETE("/:id", s.sameOriginOnlyMiddleware(), s.handleDeleteProject)
 	projects.POST("/:id/reveal", s.sameOriginOnlyMiddleware(), s.handleRevealProject)
@@ -114,6 +115,19 @@ func (s *Server) handleSaveProject(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"revision": doc.Revision, "updatedAt": doc.UpdatedAt})
+}
+
+func (s *Server) handleSaveViewport(c *gin.Context) {
+	var viewport project.Viewport
+	if err := c.ShouldBindJSON(&viewport); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.projects.SaveViewport(c.Param("id"), viewport); err != nil {
+		respondProjectError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (s *Server) handleRenameProject(c *gin.Context) {

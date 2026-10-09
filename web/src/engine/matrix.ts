@@ -21,6 +21,30 @@ export interface ViewportSize {
   height: number;
 }
 
+/** Zoom range of the canvas: wheel, keys, fit view and a loaded project's viewport all stay inside it. */
+export const MIN_ZOOM = 0.1;
+export const MAX_ZOOM = 2.5;
+
+/** Fit view never enlarges a few cards past this. */
+const FIT_MAX_ZOOM = 1.2;
+
+/** Zoom change per wheel pixel; a notch of a mouse wheel (~100px) zooms by about 14%. */
+const WHEEL_ZOOM_PER_PIXEL = 0.0015;
+/** Largest zoom step one wheel event may take, either way. */
+const WHEEL_ZOOM_MAX_STEP = 1.25;
+/** Pixels per line, for wheels that report in lines (Firefox). */
+const WHEEL_LINE_PIXELS = 16;
+
+/**
+ * Factor a Ctrl/pinch wheel event zooms by, proportional to how far the wheel
+ * moved: a trackpad pinch sends many small deltas, a mouse wheel few large
+ * ones, and both should zoom at a similar pace.
+ */
+export function wheelZoomFactor(deltaY: number, deltaMode = 0): number {
+  const pixels = deltaMode === 1 ? deltaY * WHEEL_LINE_PIXELS : deltaMode === 2 ? deltaY * 800 : deltaY;
+  return clamp(Math.exp(-pixels * WHEEL_ZOOM_PER_PIXEL), 1 / WHEEL_ZOOM_MAX_STEP, WHEEL_ZOOM_MAX_STEP);
+}
+
 /**
  * Clamps a number between min and max bounds.
  */
@@ -71,8 +95,8 @@ export function calculateZoomAtPoint(
   targetZoom: number,
   screenPoint: Point,
   containerOrigin: Point = { x: 0, y: 0 },
-  minZoom = 0.25,
-  maxZoom = 2.5
+  minZoom = MIN_ZOOM,
+  maxZoom = MAX_ZOOM
 ): CanvasTransform {
   const nextZoom = clamp(targetZoom, minZoom, maxZoom);
   if (nextZoom === current.zoom) {
@@ -104,8 +128,8 @@ export function calculateFitView(
   rects: Rect[],
   viewport: ViewportSize,
   padding = 120,
-  minZoom = 0.35,
-  maxZoom = 1.2
+  minZoom = MIN_ZOOM,
+  maxZoom = FIT_MAX_ZOOM
 ): CanvasTransform {
   if (rects.length === 0 || viewport.width <= 0 || viewport.height <= 0) {
     return { zoom: 1, panX: 0, panY: 0 };
@@ -150,8 +174,8 @@ export function calculateFocusSelection(
   rect: Rect,
   viewport: ViewportSize,
   targetZoom = 1.0,
-  minZoom = 0.25,
-  maxZoom = 2.5
+  minZoom = MIN_ZOOM,
+  maxZoom = MAX_ZOOM
 ): CanvasTransform {
   const zoom = clamp(targetZoom, minZoom, maxZoom);
   const centerX = rect.x + rect.width / 2;
@@ -165,4 +189,22 @@ export function calculateFocusSelection(
     panX: targetPanX,
     panY: targetPanY,
   };
+}
+
+/**
+ * Centres a selection: at 100% when it fits there, zoomed out just enough to
+ * show all of it otherwise.
+ */
+export function calculateFocusRects(rects: Rect[], viewport: ViewportSize, padding = 80): CanvasTransform | null {
+  if (rects.length === 0) return null;
+  const minX = Math.min(...rects.map((r) => r.x));
+  const minY = Math.min(...rects.map((r) => r.y));
+  const maxX = Math.max(...rects.map((r) => r.x + r.width));
+  const maxY = Math.max(...rects.map((r) => r.y + r.height));
+  const box: Rect = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  const fits = Math.min(
+    Math.max(100, viewport.width - padding * 2) / Math.max(1, box.width),
+    Math.max(100, viewport.height - padding * 2) / Math.max(1, box.height)
+  );
+  return calculateFocusSelection(box, viewport, Math.min(1, fits));
 }
