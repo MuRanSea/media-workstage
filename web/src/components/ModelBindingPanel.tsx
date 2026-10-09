@@ -246,7 +246,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
                 type="button"
                 onClick={() => setFilter(key)}
                 className={`px-1.5 py-0.5 rounded whitespace-nowrap ${
-                  filter === key ? 'bg-slate-700 text-white font-semibold' : 'text-slate-400 hover:text-slate-200'
+                  filter === key ? 'bg-slate-700 text-slate-50 font-semibold' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
                 {label}
@@ -266,7 +266,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
               type="button"
               onClick={toggleAllVisible}
               disabled={visibleBindable.length === 0}
-              className="px-1.5 py-0.5 rounded text-slate-300 hover:text-white disabled:opacity-40 whitespace-nowrap"
+              className="px-1.5 py-0.5 rounded text-slate-300 hover:text-slate-50 disabled:opacity-40 whitespace-nowrap"
             >
               {allVisibleBound ? '取消全选' : '全选'}
             </button>

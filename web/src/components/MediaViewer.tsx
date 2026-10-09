@@ -24,7 +24,7 @@ export const MediaViewer: React.FC<{ media: ViewerMedia; onClose: () => void }> 
   const fileName = media.url.split('/').pop()?.split('?')[0] || (media.kind === 'video' ? 'video.mp4' : 'image.png');
 
   return (
-    <div className="fixed inset-0 z-[65] flex flex-col bg-black/90 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div data-theme="dark" className="fixed inset-0 z-[65] flex flex-col bg-black/90 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="flex items-center gap-2 px-4 h-14 flex-shrink-0 text-slate-200">
         <span className="flex-1 min-w-0 truncate text-sm font-medium">{media.title}</span>
         <a

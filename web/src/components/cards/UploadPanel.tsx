@@ -58,7 +58,7 @@ const CopyButton: React.FC<{ text: string }> = ({ text }) => {
           setTimeout(() => setCopied(false), 1500);
         })
       }
-      className="flex-shrink-0 text-slate-500 hover:text-white"
+      className="flex-shrink-0 text-slate-500 hover:text-slate-50"
     >
       {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
     </button>

@@ -13,7 +13,7 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 
 const VARIANTS: Record<Exclude<Variant, 'primary'>, string> = {
   secondary: 'bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 border border-slate-700',
-  ghost: 'text-slate-300 hover:text-white hover:bg-slate-800/70',
+  ghost: 'text-slate-300 hover:text-slate-50 hover:bg-slate-800/70',
   danger: 'bg-rose-600 hover:bg-rose-500 text-white',
 };
 
@@ -72,7 +72,7 @@ export const IconButton: React.FC<IconButtonProps> = ({
         ? 'bg-indigo-600 text-white'
         : danger
           ? 'text-slate-400 hover:text-rose-400 hover:bg-slate-800'
-          : 'text-slate-400 hover:text-white hover:bg-slate-800'
+          : 'text-slate-400 hover:text-slate-50 hover:bg-slate-800'
     } ${className}`}
     {...rest}
   >

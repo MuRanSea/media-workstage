@@ -82,7 +82,7 @@ export const ProviderModelPicker: React.FC<ProviderModelPickerProps> = ({
       {open && (
         <div
           onWheel={(e) => e.stopPropagation()}
-          className="bg-[#161925] border border-slate-700 rounded-xl p-1.5 shadow-2xl z-30 space-y-0.5 max-h-64 overflow-y-auto"
+          className="bg-canvas-card border border-slate-700 rounded-xl p-1.5 shadow-2xl z-30 space-y-0.5 max-h-64 overflow-y-auto"
         >
           {open === 'provider' &&
             groups.map((g) => (

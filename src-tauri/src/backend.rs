@@ -125,7 +125,9 @@ fn launch(app: &AppHandle, paths: &Paths, dirs: &Dirs, log: Option<&Arc<LogFile>
         .arg(&dirs.data)
         .arg("--projects")
         .arg(&dirs.projects)
-        .args(["--port", "0", "--no-browser"])
+        .arg("--port")
+        .arg(pick_port(paths).to_string())
+        .arg("--no-browser")
         .env("GIN_MODE", "release")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -153,6 +155,7 @@ fn launch(app: &AppHandle, paths: &Paths, dirs: &Dirs, log: Option<&Arc<LogFile>
     loop {
         if let Ok(port) = port_rx.recv_timeout(Duration::from_millis(100)) {
             *app.state::<Backend>().child.lock().unwrap() = Some(child);
+            let _ = std::fs::write(last_port_file(paths), port.to_string());
             return Ok(port);
         }
         if let Ok(Some(status)) = child.try_wait() {
@@ -198,6 +201,24 @@ fn pipe<R: Read + Send + 'static>(
             }
         }
     });
+}
+
+/// The page's origin includes the port, and so does its localStorage (theme,
+/// last-used provider). Reuse the last port when it is free so those survive a
+/// restart; otherwise let the backend take any free port.
+fn pick_port(paths: &Paths) -> u16 {
+    let last = std::fs::read_to_string(last_port_file(paths))
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
+        .filter(|&p| p != 0);
+    match last {
+        Some(port) if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() => port,
+        _ => 0,
+    }
+}
+
+fn last_port_file(paths: &Paths) -> PathBuf {
+    paths.default_data.join("last-port")
 }
 
 fn wait_for_exit(app: &AppHandle) -> Option<i32> {

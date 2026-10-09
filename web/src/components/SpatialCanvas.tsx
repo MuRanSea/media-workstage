@@ -77,10 +77,10 @@ interface ContextMenuState {
 }
 
 const RAY_COLORS = {
-  pink: { stroke: '#f472b6', pill: 'border-pink-500/60 text-pink-300' },
-  amber: { stroke: '#fbbf24', pill: 'border-amber-500/60 text-amber-300' },
-  indigo: { stroke: '#818cf8', pill: 'border-indigo-500/60 text-indigo-300' },
-  emerald: { stroke: '#34d399', pill: 'border-emerald-500/60 text-emerald-300' },
+  pink: { stroke: 'rgb(var(--c-pink-400))', pill: 'border-pink-500/60 text-pink-300' },
+  amber: { stroke: 'rgb(var(--c-amber-400))', pill: 'border-amber-500/60 text-amber-300' },
+  indigo: { stroke: 'rgb(var(--c-indigo-400))', pill: 'border-indigo-500/60 text-indigo-300' },
+  emerald: { stroke: 'rgb(var(--c-emerald-400))', pill: 'border-emerald-500/60 text-emerald-300' },
 } as const;
 
 const RAY_TONE = { image: 'pink', video: 'indigo', upload: 'amber', text: 'emerald' } as const;
@@ -634,7 +634,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           linkDrag ? 'cursor-crosshair' : activeTool === 'hand' || isPanning ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
         }`}
         style={{
-          backgroundImage: `radial-gradient(circle at 1px 1px, rgba(148, 163, 184, 0.12) 1px, transparent 0)`,
+          backgroundImage: `radial-gradient(circle at 1px 1px, rgb(var(--c-slate-400) / 0.18) 1px, transparent 0)`,
           backgroundSize: `${gridPatternSize}px ${gridPatternSize}px`,
           backgroundPosition: `${gridOffsetX}px ${gridOffsetY}px`,
         }}
@@ -654,7 +654,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                 if (ray.kind === 'source') {
                   return (
                     <g key={ray.id}>
-                      <path d={ray.pathData} fill="none" stroke="#94a3b8" strokeOpacity={0.5} strokeWidth="2" />
+                      <path d={ray.pathData} fill="none" style={{ stroke: 'rgb(var(--c-slate-400))' }} strokeOpacity={0.5} strokeWidth="2" />
                       {ray.sourceLabel && (
                         <foreignObject x={ray.midX - 36} y={ray.midY - 11} width={72} height={22}>
                           <div
@@ -671,7 +671,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                 const color = RAY_COLORS[ray.tone ?? 'pink'];
                 return (
                   <g key={ray.id}>
-                    <path d={ray.pathData} fill="none" stroke={color.stroke} strokeOpacity={0.7} strokeWidth="2" />
+                    <path d={ray.pathData} fill="none" style={{ stroke: color.stroke }} strokeOpacity={0.7} strokeWidth="2" />
                     {/* Label pill at curve center; its × disconnects */}
                     <foreignObject x={ray.midX - 36} y={ray.midY - 12} width={72} height={24}>
                       <div
@@ -695,7 +695,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
               {/* Line following the cursor while connecting */}
               {dragPath && (
-                <path d={dragPath} fill="none" stroke={RAY_COLORS[RAY_TONE[dragSource?.type ?? 'image']].stroke} strokeWidth="2" strokeDasharray="6 4" />
+                <path d={dragPath} fill="none" style={{ stroke: RAY_COLORS[RAY_TONE[dragSource?.type ?? 'image']].stroke }} strokeWidth="2" strokeDasharray="6 4" />
               )}
             </g>
           </svg>

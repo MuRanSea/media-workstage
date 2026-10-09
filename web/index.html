@@ -3,12 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <!-- Painted before the stylesheet loads, so the desktop window never flashes white. -->
-    <style>html, body { background: #08090f; }</style>
+    <!-- Theme and background are settled before the stylesheet loads, so the page
+         never flashes the wrong color (see src/services/theme.ts). -->
+    <script>
+      (function () {
+        var choice = null;
+        try { choice = localStorage.getItem('mw-theme'); } catch (e) {}
+        var light = choice === 'light' || (choice !== 'dark' && matchMedia('(prefers-color-scheme: light)').matches);
+        document.documentElement.dataset.theme = light ? 'light' : 'dark';
+      })();
+    </script>
+    <style>html { background: #08090f; } html[data-theme='light'] { background: #f3f4f8; }</style>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <title>Media Workstage - 本地空间无限画布媒体工作台</title>
   </head>
-  <body class="bg-[#08090f] text-slate-100 overflow-hidden select-none">
+  <body class="bg-canvas-bg text-slate-100 overflow-hidden select-none">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -104,7 +104,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
             setDraft(name);
             setEditing(true);
           }}
-          className="min-w-0 max-w-[14rem] truncate text-xs font-semibold text-slate-100 hover:text-white"
+          className="min-w-0 max-w-[14rem] truncate text-xs font-semibold text-slate-100 hover:text-slate-50"
         >
           {name}
         </button>
@@ -117,7 +117,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
             title="切换工程"
             onClick={toggle}
             className={`flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-md transition ${
-              open ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              open ? 'bg-slate-800 text-slate-50' : 'text-slate-400 hover:text-slate-50 hover:bg-slate-800'
             }`}
           >
             <ChevronDown className="w-4 h-4" />

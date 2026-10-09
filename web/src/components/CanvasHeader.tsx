@@ -2,7 +2,7 @@ import React from 'react';
 import { FileText, Film, Image as ImageIcon, Plus, Settings, Sparkles, Upload } from 'lucide-react';
 import type { CardType, UploadKind } from '../types/canvas.ts';
 import { navigate } from '../services/router.ts';
-import { IconButton, MenuButton, type MenuEntry } from './ui/index.ts';
+import { IconButton, MenuButton, ThemeToggle, type MenuEntry } from './ui/index.ts';
 
 interface CanvasHeaderProps {
   onAdd: (type: CardType, mediaKind?: UploadKind) => void;
@@ -49,6 +49,7 @@ export const CanvasHeader: React.FC<CanvasHeaderProps> = ({ onAdd, onOpenSetting
           </button>
         )}
       </MenuButton>
+      <ThemeToggle />
       <IconButton title="服务商设置" onClick={onOpenSettings}>
         <Settings className="w-4 h-4" />
       </IconButton>

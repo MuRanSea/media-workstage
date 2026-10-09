@@ -5,7 +5,7 @@ import { navigate, projectHref } from '../services/router.ts';
 import { assetUrl } from '../engine/assetPaths.ts';
 import { SettingsModal } from './SettingsModal.tsx';
 import { useProjectActions } from './useProjectActions.ts';
-import { Button, IconButton, MenuButton, useToast } from './ui/index.ts';
+import { Button, IconButton, MenuButton, ThemeToggle, useToast } from './ui/index.ts';
 
 function formatTime(iso: string): string {
   const d = new Date(iso);
@@ -55,6 +55,7 @@ export const ProjectListPage: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            <ThemeToggle />
             <IconButton title="服务商设置" onClick={() => setSettingsOpen(true)}>
               <Settings className="w-4 h-4" />
             </IconButton>
