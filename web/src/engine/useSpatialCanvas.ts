@@ -16,11 +16,14 @@ import {
   type AlignmentType,
 } from './layout.ts';
 import type { CanvasTool, SpatialCard } from '../types/canvas.ts';
+import type { CardHeightOf } from './layout.ts';
 
 interface UseSpatialCanvasProps {
   cards: SpatialCard[];
   setCards: React.Dispatch<React.SetStateAction<SpatialCard[]>>;
   containerRef: React.RefObject<HTMLDivElement | null>;
+  /** A card's rendered height: measured when on screen, estimated otherwise. */
+  heightOf: CardHeightOf<SpatialCard>;
   initialZoom?: number;
   initialPanX?: number;
   initialPanY?: number;
@@ -34,6 +37,7 @@ export function useSpatialCanvas({
   cards,
   setCards,
   containerRef,
+  heightOf,
   initialZoom = 0.85,
   initialPanX = 60,
   initialPanY = 40,
@@ -117,12 +121,12 @@ export function useSpatialCanvas({
       x: c.x,
       y: c.y,
       width: c.width,
-      height: 380,
+      height: heightOf(c),
     }));
 
     const nextTransform = calculateFitView(cardRects, viewport, 140);
     setTransform(nextTransform);
-  }, [cards, containerRef]);
+  }, [cards, containerRef, heightOf]);
 
   const focusSelection = useCallback(
     (cardId?: string) => {
@@ -144,13 +148,13 @@ export function useSpatialCanvas({
         x: target.x,
         y: target.y,
         width: target.width,
-        height: 380,
+        height: heightOf(target),
       };
 
       const nextTransform = calculateFocusSelection(rect, viewport, 1.0);
       setTransform(nextTransform);
     },
-    [cards, selectedCardIds, containerRef]
+    [cards, selectedCardIds, containerRef, heightOf]
   );
 
   // Wheel listener
@@ -305,7 +309,7 @@ export function useSpatialCanvas({
             x: card.x,
             y: card.y,
             width: card.width,
-            height: 380,
+            height: heightOf(card),
           };
           if (isRectIntersecting(cardBox, marqueeWorldBox)) {
             newSelected.add(card.id);
@@ -345,6 +349,7 @@ export function useSpatialCanvas({
       transform,
       containerRef,
       cards,
+      heightOf,
       selectedCardIds,
       setCards,
       onBeforeEdit,
@@ -418,17 +423,17 @@ export function useSpatialCanvas({
   const alignSelected = useCallback(
     (alignment: AlignmentType) => {
       onBeforeEdit?.();
-      setCards((prev) => alignCards(prev, selectedCardIds, alignment));
+      setCards((prev) => alignCards(prev, selectedCardIds, alignment, heightOf));
     },
-    [selectedCardIds, setCards, onBeforeEdit]
+    [selectedCardIds, setCards, onBeforeEdit, heightOf]
   );
 
   const arrangeSelectedGrid = useCallback(
     (gap = 40, columns = 3) => {
       onBeforeEdit?.();
-      setCards((prev) => autoArrangeGrid(prev, selectedCardIds, gap, columns));
+      setCards((prev) => autoArrangeGrid(prev, selectedCardIds, gap, columns, heightOf));
     },
-    [selectedCardIds, setCards, onBeforeEdit]
+    [selectedCardIds, setCards, onBeforeEdit, heightOf]
   );
 
   // Calculate screen-space marquee box for rendering

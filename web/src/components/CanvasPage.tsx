@@ -34,10 +34,8 @@ import type { BackendTaskResponse, GenerateTextPayload } from '../services/api.t
 import { cardsAwaitingTask, normalizeCards, normalizeViewport, restoredAwaitingTask } from '../engine/projectDoc.ts';
 import { setActiveProjectId } from '../engine/assetPaths.ts';
 import { useAutosave } from '../engine/useAutosave.ts';
-
-/** A card's rendered height (unaffected by canvas zoom), when it is on screen. */
-const measuredHeight: HeightOf = (card) =>
-  document.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(card.id)}"]`)?.offsetHeight;
+import { createCardMetrics } from '../engine/cardMetrics.ts';
+import { CardMetricsContext } from './cards/CardMetricsContext.tsx';
 
 /** Loads a project, then mounts its canvas. */
 export function CanvasPage({ projectId }: { projectId: string }) {
@@ -93,9 +91,13 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     document.title = `${name} · Media Workstage`;
   }, [name]);
 
+  // Cards on screen report their rendered height here; new result cards are placed clear of them.
+  const [metrics] = useState(createCardMetrics);
+  const measuredHeight = useCallback<HeightOf>((card) => metrics.get(card.id), [metrics]);
+
   const updateTaskCards = useCallback((task: BackendTaskResponse) => {
     setCards((prev) => applyTaskToCards(prev, task, measuredHeight));
-  }, []);
+  }, [measuredHeight]);
 
   // Generation cards whose submit request is in flight: a double click must not submit twice.
   // The ref guards synchronously; the state disables the button.
@@ -287,9 +289,11 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     });
 
   return (
+    <CardMetricsContext.Provider value={metrics}>
     <SpatialCanvas
       cards={cards}
       setCards={setCards}
+      metrics={metrics}
       onTriggerGenerate={handleTriggerGenerate}
       onRunAction={(sourceId, action) => void handleRunAction(sourceId, action)}
       onDescribe={(sourceId) => void handleDescribe(sourceId)}
@@ -309,5 +313,6 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
         />
       }
     />
+    </CardMetricsContext.Provider>
   );
 }

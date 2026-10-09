@@ -8,6 +8,14 @@ export interface LayoutCard {
   height?: number;
 }
 
+/** Height assumed for a card that carries none and has no measurement; callers on the canvas pass real heights. */
+export const DEFAULT_CARD_HEIGHT = 380;
+
+/** A card's rendered height. */
+export type CardHeightOf<T> = (card: T) => number;
+
+const ownHeight = (card: LayoutCard) => card.height ?? DEFAULT_CARD_HEIGHT;
+
 /**
  * Checks whether two 2D axis-aligned bounding boxes intersect.
  */
@@ -34,7 +42,7 @@ export function getMarqueeRect(p1: Point, p2: Point): Rect {
 /**
  * Computes bounding box encompassing all specified cards.
  */
-export function getCardsBoundingBox(cards: LayoutCard[]): Rect | null {
+export function getCardsBoundingBox<T extends LayoutCard>(cards: T[], heightOf: CardHeightOf<T> = ownHeight): Rect | null {
   if (cards.length === 0) return null;
 
   let minX = Infinity;
@@ -43,7 +51,7 @@ export function getCardsBoundingBox(cards: LayoutCard[]): Rect | null {
   let maxY = -Infinity;
 
   for (const c of cards) {
-    const h = c.height ?? 380;
+    const h = heightOf(c);
     minX = Math.min(minX, c.x);
     maxX = Math.max(maxX, c.x + c.width);
     minY = Math.min(minY, c.y);
@@ -72,18 +80,19 @@ export type AlignmentType =
 export function alignCards<T extends LayoutCard>(
   cards: T[],
   selectedIds: Set<string>,
-  alignment: AlignmentType
+  alignment: AlignmentType,
+  heightOf: CardHeightOf<T> = ownHeight
 ): T[] {
   if (selectedIds.size <= 1) return cards;
 
   const selectedCards = cards.filter((c) => selectedIds.has(c.id));
-  const bbox = getCardsBoundingBox(selectedCards);
+  const bbox = getCardsBoundingBox(selectedCards, heightOf);
   if (!bbox) return cards;
 
   return cards.map((card) => {
     if (!selectedIds.has(card.id)) return card;
 
-    const cardHeight = card.height ?? 380;
+    const cardHeight = heightOf(card);
     let nextX = card.x;
     let nextY = card.y;
 
@@ -119,12 +128,13 @@ export function autoArrangeGrid<T extends LayoutCard>(
   cards: T[],
   selectedIds: Set<string>,
   gap = 40,
-  columns = 3
+  columns = 3,
+  heightOf: CardHeightOf<T> = ownHeight
 ): T[] {
   if (selectedIds.size <= 1) return cards;
 
   const selectedCards = cards.filter((c) => selectedIds.has(c.id));
-  const bbox = getCardsBoundingBox(selectedCards);
+  const bbox = getCardsBoundingBox(selectedCards, heightOf);
   if (!bbox) return cards;
 
   const startX = bbox.x;
@@ -140,7 +150,7 @@ export function autoArrangeGrid<T extends LayoutCard>(
   // Determine uniform grid cell bounds
   for (const c of selectedCards) {
     maxColWidth = Math.max(maxColWidth, c.width);
-    maxRowHeight = Math.max(maxRowHeight, c.height ?? 380);
+    maxRowHeight = Math.max(maxRowHeight, heightOf(c));
   }
 
   for (const card of selectedCards) {
@@ -193,8 +203,8 @@ export function firstFreeSlotBelow(
   // Each blocked try moves below a card, so this ends after at most cards.length steps.
   for (;;) {
     const slot: Rect = { x: x - gap, y: y - gap, width: size.width + 2 * gap, height: size.height + 2 * gap };
-    const blockers = cards.filter((c) => isRectIntersecting(slot, { x: c.x, y: c.y, width: c.width, height: c.height ?? 380 }));
+    const blockers = cards.filter((c) => isRectIntersecting(slot, { x: c.x, y: c.y, width: c.width, height: ownHeight(c) }));
     if (blockers.length === 0) return { x, y };
-    y = Math.max(...blockers.map((c) => c.y + (c.height ?? 380))) + gap;
+    y = Math.max(...blockers.map((c) => c.y + ownHeight(c))) + gap;
   }
 }

@@ -4,6 +4,7 @@ import type { SpatialCard } from '../../types/canvas.ts';
 import { ACCENT, type Accent } from '../ui/accent.ts';
 import { MenuButton, type MenuEntry } from '../ui/Menu.tsx';
 import { connectHintRing, type ConnectHint } from './CardPorts.tsx';
+import { useReportCardHeight } from './CardMetricsContext.tsx';
 
 interface CardShellProps {
   card: SpatialCard;
@@ -41,6 +42,8 @@ export const CardShell: React.FC<CardShellProps> = ({
 }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(card.title);
+  const frameRef = useRef<HTMLDivElement>(null);
+  useReportCardHeight(card.id, frameRef);
 
   const commit = () => {
     setEditing(false);
@@ -51,6 +54,7 @@ export const CardShell: React.FC<CardShellProps> = ({
 
   return (
     <div
+      ref={frameRef}
       data-card-id={card.id}
       onMouseDown={onSelect}
       style={{ transform: `translate3d(${card.x}px, ${card.y}px, 0)`, width: `${card.width}px` }}

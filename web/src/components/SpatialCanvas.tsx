@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Copy, FileText, Film, Image as ImageIcon, ScanText, Sparkles, Trash2, Upload } from 'lucide-react';
 import type { CardType, ResultActionDto, SpatialCard, UploadKind } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
+import { cardHeight, type CardMetrics } from '../engine/cardMetrics.ts';
 import { screenToWorld, type CanvasTransform, type Point } from '../engine/matrix.ts';
 import { connectCards, hasOutputPort, removeCards } from '../engine/connections.ts';
 import { createCard, duplicateCards } from '../engine/cardFactory.ts';
@@ -28,6 +29,8 @@ import { Menu, useToast, type MenuEntry } from './ui/index.ts';
 interface SpatialCanvasProps {
   cards: SpatialCard[];
   setCards: React.Dispatch<React.SetStateAction<SpatialCard[]>>;
+  /** Rendered heights the cards report. */
+  metrics: CardMetrics;
   onTriggerGenerate: (cardId: string) => void;
   /** Runs a result action (Midjourney U/V/reroll) on a result card. */
   onRunAction?: (sourceId: string, action: ResultActionDto) => void;
@@ -111,6 +114,7 @@ const COALESCE_MS = 1000;
 export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   cards,
   setCards,
+  metrics,
   onTriggerGenerate,
   onRunAction,
   onDescribe,
@@ -122,6 +126,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   onRestore,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const heightOf = useCallback((card: SpatialCard) => cardHeight(metrics, card), [metrics]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [linkDrag, setLinkDrag] = useState<LinkDrag | null>(null);
@@ -176,6 +181,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     cards,
     setCards,
     containerRef,
+    heightOf,
     initialZoom: initialViewport?.zoom,
     initialPanX: initialViewport?.panX,
     initialPanY: initialViewport?.panY,
