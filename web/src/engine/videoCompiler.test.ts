@@ -516,6 +516,47 @@ describe('APIMart Kling video compilation', () => {
       )
     ).toThrowError(/at most 1 reference/);
   });
+
+  const clip = {
+    id: 'up1',
+    role: 'result',
+    type: 'upload',
+    mediaKind: 'video',
+    title: '原视频',
+    tagIndex: 1,
+    x: 0,
+    y: 0,
+    width: 340,
+    prompt: '',
+    model: '',
+    status: 'succeeded',
+    progress: 100,
+    resultUrl: 'assets/uploads/clip.mp4',
+    fileUrl: 'https://tos.example/clip.mp4',
+  } as SpatialCard;
+  const videoRef = { cardId: 'up1', tagIndex: 1, role: 'reference_video', label: '原视频' } as const;
+
+  it('tells Kling Omni what its reference video is for: an edit unless the card says otherwise', () => {
+    const omni = klingCard({ model: 'kling-v3-omni', mode: 'all_modal', prompt: '@视频1 换成冬天', references: [{ ...videoRef }] });
+    const edit = compileCardVideoPayload(omni, [clip]);
+    expect(edit.prompt).toBe('视频1 换成冬天');
+    expect(edit.reference_assets?.[0]).toMatchObject({ role: 'reference_video', url: 'https://tos.example/clip.mp4' });
+    expect(edit.params).toMatchObject({ video_refer_type: 'base' });
+
+    const feature = compileCardVideoPayload({ ...omni, videoReferType: 'feature' }, [clip]);
+    expect(feature.params).toMatchObject({ video_refer_type: 'feature' });
+  });
+
+  it('sends no reference-video use without a reference video, or to models that take none', () => {
+    const noVideo = compileCardVideoPayload(klingCard({ model: 'kling-v3-omni', mode: 'text_to_video', prompt: '下雪' }), []);
+    expect(noVideo.params).not.toHaveProperty('video_refer_type');
+
+    const h3 = compileCardVideoPayload(
+      klingCard({ model: 'MiniMax-H3', resolution: '2K', mode: 'all_modal', prompt: '@视频1 换成冬天', references: [{ ...videoRef }] }),
+      [clip]
+    );
+    expect(h3.params).not.toHaveProperty('video_refer_type');
+  });
 });
 
 describe('references to image result cards', () => {

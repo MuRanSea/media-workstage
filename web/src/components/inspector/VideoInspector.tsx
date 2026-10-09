@@ -1,10 +1,11 @@
 import React, { useMemo } from 'react';
 import { X } from 'lucide-react';
-import type { SpatialCard, VideoTaskMode } from '../../types/canvas.ts';
+import { takesVideoReferType, type SpatialCard, type VideoReferType, type VideoTaskMode } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
 import {
   VIDEO_MODE_LABELS,
+  VIDEO_REFER_TYPE_LABELS,
   kindLimit,
   referenceCount,
   removeReferencePatch,
@@ -45,6 +46,11 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
   const refs = card.references ?? [];
   const maxRefs = mode === 'first_last_frame' ? Math.min(2, def.maxRefs) : def.maxRefs;
   const supports = (m: VideoTaskMode) => !def.modes || def.modes.includes(m);
+  // Kling Omni asks what its reference video is for; an edit keeps the video's length and shape. Neither has sound.
+  const referType: VideoReferType | undefined =
+    takesVideoReferType(protocolOf(provider), card.model) && mode === 'all_modal' && refs.some((r) => r.role === 'reference_video')
+      ? card.videoReferType ?? 'base'
+      : undefined;
 
   return (
     <>
@@ -73,6 +79,15 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
             }))}
           />
         </Field>
+        {referType && (
+          <Field label="参考视频用途" hint={VIDEO_REFER_TYPE_LABELS[referType].hint}>
+            <Segmented
+              value={referType}
+              onChange={(t) => update({ videoReferType: t })}
+              options={(Object.keys(VIDEO_REFER_TYPE_LABELS) as VideoReferType[]).map((t) => ({ value: t, label: VIDEO_REFER_TYPE_LABELS[t].label }))}
+            />
+          </Field>
+        )}
       </Section>
 
       <Section title="规格">
@@ -80,16 +95,22 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
           <Segmented mono value={card.resolution ?? def.resolutions[0]} onChange={(r) => update({ resolution: r })} options={def.resolutions.map((r) => ({ value: r, label: r }))} />
         </Field>
         <Field label="时长">
-          <Segmented
-            mono
-            value={card.duration ?? def.durations[0]}
-            onChange={(d) => update({ duration: d })}
-            options={def.durations.map((d) => ({ value: d, label: d === -1 ? '自适应' : `${d}s` }))}
-          />
+          {referType === 'base' ? (
+            <p className="text-xs text-slate-400">编辑视频时，时长跟随原视频。</p>
+          ) : (
+            <Segmented
+              mono
+              value={card.duration ?? def.durations[0]}
+              onChange={(d) => update({ duration: d })}
+              options={def.durations.map((d) => ({ value: d, label: d === -1 ? '自适应' : `${d}s` }))}
+            />
+          )}
         </Field>
         <Field label="比例">
           {mode === 'first_last_frame' ? (
             <p className="text-xs text-slate-400">首尾帧模式下比例跟随首帧图片。</p>
+          ) : referType === 'base' ? (
+            <p className="text-xs text-slate-400">编辑视频时，比例跟随原视频。</p>
           ) : (
             <Segmented mono columns={4} value={card.ratio ?? def.ratios[0]} onChange={(r) => update({ ratio: r })} options={def.ratios.map((r) => ({ value: r, label: r === 'adaptive' ? '自适应' : r }))} />
           )}
@@ -141,7 +162,7 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
       )}
 
       <Section title="其他">
-        {def.supportsAudio && <Toggle label="生成音频" checked={!!card.generateAudio} onChange={(v) => update({ generateAudio: v })} />}
+        {!referType && def.supportsAudio && <Toggle label="生成音频" checked={!!card.generateAudio} onChange={(v) => update({ generateAudio: v })} />}
         {protocolOf(provider) === 'minimax' && (
           <Toggle label="自动优化提示词" hint="由 MiniMax 改写提示词后再生成" checked={!!card.promptOptimizer} onChange={(v) => update({ promptOptimizer: v })} />
         )}

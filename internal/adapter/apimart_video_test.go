@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -248,20 +249,58 @@ func TestAPIMartVideoPoll_ReadsVideosInEitherURLShape(t *testing.T) {
 	assert.Equal(t, 30*60, int(NewAPIMartAdapter(ChannelConfig{}).PollTimeout(videoTask("kling-v3", nil)).Seconds()))
 }
 
-// A reference video goes to video_urls as a public URL, never into the image list.
-func TestAPIMartVideo_ReferenceVideoUsesVideoURLs(t *testing.T) {
+// Kling Omni takes its reference video in video_list (default: the video to edit, never
+// keeping its sound, which relays reject); MiniMax-H3 takes plain URLs in video_urls.
+// Neither puts it in the image list.
+func TestAPIMartVideo_ReferenceVideo(t *testing.T) {
 	f := newFakeAPIMart(t)
 	a := NewAPIMartAdapter(ChannelConfig{BaseURL: f.srv.URL + "/v1", APIKey: "k"})
 	video := model.ReferenceItem{Role: "reference_video", Label: "动作", URL: "https://tos.example/m.mp4?sig=1"}
 
-	_, err := a.SubmitTask(context.Background(), videoTask("kling-v3-omni", map[string]any{
+	edit := videoTask("kling-v3-omni", map[string]any{
 		"generate_audio":   true,
+		"duration":         5,
+		"ratio":            "16:9",
 		"reference_assets": []model.ReferenceItem{{Role: "reference_image", URL: "https://x/a.png"}, video},
-	}))
+	})
+	edit.Prompt = "视频1 里的猫换成 图1"
+	_, err := a.SubmitTask(context.Background(), edit)
 	require.NoError(t, err)
-	assert.Equal(t, []any{"https://tos.example/m.mp4?sig=1"}, f.submitted["video_urls"])
-	assert.Len(t, f.submitted["image_with_roles"], 1)
-	assert.NotContains(t, f.submitted, "audio", "Kling rejects generated audio with a reference video")
+	assert.Equal(t, []any{map[string]any{
+		"video_url":           "https://tos.example/m.mp4?sig=1",
+		"refer_type":          "base",
+		"keep_original_sound": "no",
+	}}, f.submitted["video_list"])
+	assert.NotContains(t, f.submitted, "video_urls")
+	// Only <<<image_N>>> is a prompt reference; the one video is named in words.
+	assert.Equal(t, "参考视频 里的猫换成 <<<image_1>>>", f.submitted["prompt"])
+	assert.Equal(t, []any{map[string]any{"url": "https://x/a.png", "role": "reference"}}, f.submitted["image_with_roles"])
+	assert.NotContains(t, f.submitted, "audio", "a reference video rules out any audio field")
+	assert.NotContains(t, f.submitted, "multi_shot", "base and feature each need their own default")
+	// An edited video keeps the source's length and shape.
+	assert.NotContains(t, f.submitted, "duration")
+	assert.NotContains(t, f.submitted, "aspect_ratio")
+
+	// A feature reference takes at most one image, as the first frame in image_urls.
+	feature := videoTask("kling-v3-omni", map[string]any{
+		"duration":         5,
+		"ratio":            "9:16",
+		"video_refer_type": "feature",
+		"reference_assets": []model.ReferenceItem{{Role: "reference_image", URL: "https://x/a.png"}, video},
+	})
+	feature.Prompt = "图1 里的人按 视频1 的动作走路"
+	_, err = a.SubmitTask(context.Background(), feature)
+	require.NoError(t, err)
+	assert.Equal(t, []any{map[string]any{
+		"video_url":           "https://tos.example/m.mp4?sig=1",
+		"refer_type":          "feature",
+		"keep_original_sound": "no",
+	}}, f.submitted["video_list"])
+	assert.Equal(t, []any{"https://x/a.png"}, f.submitted["image_urls"])
+	assert.NotContains(t, f.submitted, "image_with_roles")
+	assert.Equal(t, "<<<image_1>>> 里的人按 参考视频 的动作走路", f.submitted["prompt"])
+	assert.EqualValues(t, 5, f.submitted["duration"])
+	assert.Equal(t, "9:16", f.submitted["aspect_ratio"])
 
 	_, err = a.SubmitTask(context.Background(), videoTask("MiniMax-H3", map[string]any{
 		"reference_assets": []model.ReferenceItem{video},
@@ -274,12 +313,25 @@ func TestAPIMartVideo_ReferenceVideoUsesVideoURLs(t *testing.T) {
 func TestAPIMartVideo_ReferenceVideoRules(t *testing.T) {
 	a := NewAPIMartAdapter(ChannelConfig{BaseURL: "http://unused", APIKey: "k"})
 	video := model.ReferenceItem{Role: "reference_video", Label: "动作", URL: "https://tos.example/m.mp4"}
+	images := func(n int) []model.ReferenceItem {
+		refs := []model.ReferenceItem{video}
+		for i := range n {
+			refs = append(refs, model.ReferenceItem{Role: "reference_image", URL: fmt.Sprintf("https://x/%d.png", i)})
+		}
+		return refs
+	}
 
 	_, err := a.SubmitTask(context.Background(), videoTask("kling-v3", map[string]any{"reference_assets": []model.ReferenceItem{video}}))
 	assert.ErrorContains(t, err, "不支持参考视频")
 
 	_, err = a.SubmitTask(context.Background(), videoTask("kling-v3-omni", map[string]any{"reference_assets": []model.ReferenceItem{video, video}}))
 	assert.ErrorContains(t, err, "最多 1 个参考视频")
+
+	_, err = a.SubmitTask(context.Background(), videoTask("kling-v3-omni", map[string]any{"reference_assets": images(5)}))
+	assert.ErrorContains(t, err, "最多 4 张参考图")
+
+	_, err = a.SubmitTask(context.Background(), videoTask("kling-v3-omni", map[string]any{"video_refer_type": "feature", "reference_assets": images(2)}))
+	assert.ErrorContains(t, err, "最多带 1 张图")
 
 	local := model.ReferenceItem{Role: "reference_video", Label: "动作", LocalPath: "m.mp4"}
 	_, err = a.SubmitTask(context.Background(), videoTask("kling-v3-omni", map[string]any{"reference_assets": []model.ReferenceItem{local}}))

@@ -148,6 +148,8 @@ export interface SpatialCard {
   generateAudio?: boolean;
   outputFormat?: 'mp4' | 'mov';
   promptOptimizer?: boolean;
+  /** Kling Omni (APIMart): what the reference video is for; unset = base (edit it). */
+  videoReferType?: VideoReferType;
   seed?: number;
   /** Video cards, and Midjourney image cards (reference images to imagine or blend from). */
   references?: ReferenceItem[];
@@ -370,14 +372,23 @@ export function resolveVideoModelDef(protocol: Protocol | undefined, modelId: st
   return { ...base, id: modelId, name: modelId, tag: '' };
 }
 
+/**
+ * What Kling Omni does with its reference video: `base` edits that video (it keeps its
+ * length and shape), `feature` borrows its motion, camera or style for a new one.
+ */
+export type VideoReferType = 'base' | 'feature';
+
+/** Whether a model is Kling Omni on APIMart, which asks what its reference video is for. */
+export function takesVideoReferType(protocol: Protocol | undefined, modelId: string): boolean {
+  const m = modelId.toLowerCase();
+  return protocol === 'apimart' && m.startsWith('kling') && (m.includes('omni') || m.includes('-o1'));
+}
+
 /** How many reference videos a model takes on a protocol; 0 when it takes none. */
 export function maxReferenceVideos(protocol: Protocol | undefined, modelId: string): number {
   if (protocol === 'ark') return 10;
-  if (protocol === 'apimart') {
-    const m = modelId.toLowerCase();
-    if (m.includes('omni') || m.includes('-o1')) return 1;
-    if (m.startsWith('minimax-h3')) return 3;
-  }
+  if (takesVideoReferType(protocol, modelId)) return 1;
+  if (protocol === 'apimart' && modelId.toLowerCase().startsWith('minimax-h3')) return 3;
   return 0;
 }
 

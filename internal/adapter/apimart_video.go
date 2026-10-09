@@ -27,6 +27,9 @@ type apimartVideoParams struct {
 	GenerateAudio   *bool                 `json:"generate_audio"`
 	Watermark       *bool                 `json:"watermark"`
 	ReferenceAssets []model.ReferenceItem `json:"reference_assets"`
+	// Kling Omni: what the reference video is for, "base" (the video to edit, default) or
+	// "feature" (a reference for motion, camera or style).
+	VideoReferType string `json:"video_refer_type"`
 }
 
 // videoFamily groups APIMart video models by how they take their parameters and images.
@@ -69,11 +72,22 @@ func klingMode(resolution string) string {
 	}
 }
 
-var promptImageRef = regexp.MustCompile(`图(\d+)`)
+var (
+	promptImageRef = regexp.MustCompile(`图(\d+)`)
+	promptVideoRef = regexp.MustCompile(`视频\d+`)
+)
 
 type apimartRoleImage struct {
 	URL  string `json:"url"`
 	Role string `json:"role"`
+}
+
+// apimartOmniVideo is one entry of Kling Omni's video_list. Relays only take
+// keep_original_sound "no", so the source's sound is never kept.
+type apimartOmniVideo struct {
+	URL               string `json:"video_url"`
+	ReferType         string `json:"refer_type"`
+	KeepOriginalSound string `json:"keep_original_sound"`
 }
 
 func (a *APIMartAdapter) submitVideo(ctx context.Context, task *model.MediaTask) (string, error) {
@@ -106,6 +120,13 @@ func (a *APIMartAdapter) submitVideo(ctx context.Context, task *model.MediaTask)
 		}
 		if len(videoRefs) > limit {
 			return "", fmt.Errorf("%s 最多 %d 个参考视频", task.Model, limit)
+		}
+		// With a reference video Kling Omni takes up to 4 images, or one first frame for a feature reference.
+		if family == klingOmni && params.VideoReferType == "feature" && len(refs) > 1 {
+			return "", fmt.Errorf("%s 参考特征时最多带 1 张图（作为首帧）", task.Model)
+		}
+		if family == klingOmni && len(refs) > 4 {
+			return "", fmt.Errorf("%s 带参考视频时最多 4 张参考图", task.Model)
 		}
 	}
 	if family != klingOmni && family != minimaxH3 {
@@ -140,14 +161,24 @@ func (a *APIMartAdapter) submitVideo(ctx context.Context, task *model.MediaTask)
 	}
 
 	body := map[string]any{"model": task.Model, "prompt": task.Prompt}
+	// An edited video (Kling Omni's default use of a reference video) keeps the source's
+	// length and shape, so neither is sent.
+	featureVideo := family == klingOmni && len(videoURLs) > 0 && params.VideoReferType == "feature"
+	editsVideo := family == klingOmni && len(videoURLs) > 0 && !featureVideo
 	if len(videoURLs) > 0 {
-		body["video_urls"] = videoURLs
+		if family == klingOmni {
+			body["video_list"] = omniVideoList(videoURLs, featureVideo)
+			// Omni's prompt only references images; its one video is named in words.
+			body["prompt"] = promptVideoRef.ReplaceAllString(task.Prompt, "参考视频")
+		} else {
+			body["video_urls"] = videoURLs
+		}
 	}
-	if params.Duration > 0 {
+	if params.Duration > 0 && !editsVideo {
 		body["duration"] = params.Duration
 	}
 	aspect := params.Ratio
-	if aspect == "adaptive" {
+	if aspect == "adaptive" || editsVideo {
 		aspect = ""
 	}
 	audio := params.GenerateAudio != nil && *params.GenerateAudio
@@ -180,7 +211,11 @@ func (a *APIMartAdapter) submitVideo(ctx context.Context, task *model.MediaTask)
 		if aspect != "" {
 			body["aspect_ratio"] = aspect
 		}
-		if len(urls) > 0 {
+		if featureVideo && len(urls) > 0 {
+			// A feature reference's one image goes in image_urls, where it becomes the first frame.
+			body["image_urls"] = urls
+			body["prompt"] = promptImageRef.ReplaceAllString(body["prompt"].(string), "<<<image_$1>>>")
+		} else if len(urls) > 0 {
 			images := make([]apimartRoleImage, len(urls))
 			for i, u := range urls {
 				role := "reference"
@@ -192,7 +227,7 @@ func (a *APIMartAdapter) submitVideo(ctx context.Context, task *model.MediaTask)
 			}
 			body["image_with_roles"] = images
 			// The card compiles mentions to 图1, 图2… in reference order; Omni wants <<<image_N>>>.
-			body["prompt"] = promptImageRef.ReplaceAllString(task.Prompt, "<<<image_$1>>>")
+			body["prompt"] = promptImageRef.ReplaceAllString(body["prompt"].(string), "<<<image_$1>>>")
 		}
 		// kling-video-o1 has no audio switch.
 		if audio && !strings.Contains(strings.ToLower(task.Model), "-o1") {
@@ -240,6 +275,19 @@ func (a *APIMartAdapter) submitVideo(ctx context.Context, task *model.MediaTask)
 		return "", fmt.Errorf("failed to marshal apimart video request: %w", err)
 	}
 	return a.postTask(ctx, "/videos/generations", raw)
+}
+
+// omniVideoList builds Kling Omni's video_list: videos to edit, or feature references.
+func omniVideoList(urls []string, feature bool) []apimartOmniVideo {
+	referType := "base"
+	if feature {
+		referType = "feature"
+	}
+	list := make([]apimartOmniVideo, len(urls))
+	for i, u := range urls {
+		list[i] = apimartOmniVideo{URL: u, ReferType: referType, KeepOriginalSound: "no"}
+	}
+	return list
 }
 
 // referenceVideoURL returns the public URL of a reference video. APIMart cannot take a

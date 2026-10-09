@@ -7,6 +7,7 @@ import {
   resolveVideoModelDef,
   type SpatialCard,
   type VideoModelDef,
+  type VideoReferType,
   type VideoTaskMode,
 } from '../types/canvas.ts';
 import type { ModelOption } from './channelModels.ts';
@@ -185,6 +186,11 @@ export const VIDEO_MODE_LABELS: Record<VideoTaskMode, { label: string; hint: str
   all_modal: { label: '多图参考', hint: '引用多张图片，在提示词里用 @图N 说明各自用途' },
   first_last_frame: { label: '首尾帧', hint: '第 1 张作为首帧，第 2 张（可选）作为尾帧，比例跟随首帧' },
   text_to_video: { label: '纯文字', hint: '只根据提示词生成，不使用参考图' },
+};
+
+export const VIDEO_REFER_TYPE_LABELS: Record<VideoReferType, { label: string; hint: string }> = {
+  base: { label: '编辑这段视频', hint: '在原视频上按提示词修改，时长和比例跟随原视频；最多再带 4 张参考图，生成结果不带声音' },
+  feature: { label: '参考特征', hint: '借用原视频的运镜、动作或风格生成新视频；最多带 1 张图作为首帧，生成结果不带声音' },
 };
 
 // --- Asset library (Ark 素材库) -------------------------------------------------

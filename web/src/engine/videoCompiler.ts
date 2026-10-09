@@ -1,4 +1,4 @@
-import { maxReferenceVideos, resolveVideoModelDef, type SpatialCard, type ReferenceItem, type VideoTaskMode } from '../types/canvas.ts';
+import { maxReferenceVideos, resolveVideoModelDef, takesVideoReferType, type SpatialCard, type ReferenceItem, type VideoTaskMode } from '../types/canvas.ts';
 import type { CreateTaskPayload } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
 import { refNoun, refTag } from './refTags.ts';
@@ -214,6 +214,9 @@ export function compileVideoTaskPayload(
     params.watermark = card.watermark ?? false;
   } else {
     params.prompt_optimizer = card.promptOptimizer ?? false;
+  }
+  if (takesVideoReferType(protocol, card.model) && references.some((r) => r.role === 'reference_video')) {
+    params.video_refer_type = card.videoReferType ?? 'base';
   }
 
   return {
