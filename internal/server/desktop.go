@@ -2,6 +2,8 @@ package server
 
 import (
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"media-workstage/internal/desktop"
@@ -47,6 +49,8 @@ func (s *Server) handleSaveDesktopSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	req.DataDir = cleanDir(req.DataDir)
+	req.ProjectsDir = cleanDir(req.ProjectsDir)
 	for _, dir := range []string{req.DataDir, req.ProjectsDir} {
 		if err := desktop.CheckDir(dir); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -83,4 +87,14 @@ func (s *Server) handleOpenLogs(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// cleanDir normalizes a typed path (C:/x/ becomes C:\x on Windows); empty stays
+// empty, meaning the default.
+func cleanDir(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Clean(dir)
 }
