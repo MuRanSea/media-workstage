@@ -546,7 +546,7 @@ func (m *MiniMaxAdapter) downloadFromURL(ctx context.Context, downloadURL string
 		return fmt.Errorf("failed to create download request: %w", err)
 	}
 
-	resp, err := m.client.Do(req)
+	resp, err := downloadClient(m.client).Do(req)
 	if err != nil {
 		return fmt.Errorf("download request failed from %s: %w", downloadURL, err)
 	}

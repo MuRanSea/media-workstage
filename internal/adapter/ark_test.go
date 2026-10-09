@@ -500,6 +500,39 @@ func TestArkAdapter_VideoTaskFlow(t *testing.T) {
 	}
 }
 
+// Unlabelled first/last frame images go in order, whether or not the prompt is empty.
+func TestArkAdapter_FirstLastFrameRolesWithoutPrompt(t *testing.T) {
+	var captured struct {
+		Content []struct {
+			Type string `json:"type"`
+			Role string `json:"role"`
+		} `json:"content"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&captured)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id": "cgt-frames"}`))
+	}))
+	defer server.Close()
+
+	a := NewArkAdapter(ArkConfig{BaseURL: server.URL, APIKey: "test-api-key"})
+	_, err := a.SubmitTask(context.Background(), &model.MediaTask{
+		ID:       "task-frames",
+		Model:    "doubao-seedance-2-5-260628",
+		TaskType: "video_generation",
+		TaskMode: "first_last_frame",
+		ParamsJSON: `{"reference_assets": [
+			{"url": "https://example.com/open.png"},
+			{"url": "https://example.com/close.png"}]}`,
+	})
+	if err != nil {
+		t.Fatalf("submit failed: %v", err)
+	}
+	if len(captured.Content) != 2 || captured.Content[0].Role != "first_frame" || captured.Content[1].Role != "last_frame" {
+		t.Errorf("expected first_frame then last_frame, got %+v", captured.Content)
+	}
+}
+
 func TestArkAdapter_ImageTaskFlow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -666,6 +699,36 @@ func TestArkAdapter_DownloadAsset(t *testing.T) {
 	content2, err := os.ReadFile(targetPath2)
 	if err != nil || string(content2) != "FAKE_DATA_URI_PAYLOAD" {
 		t.Fatalf("unexpected data URI decoded content: %s, err: %v", string(content2), err)
+	}
+}
+
+// slowFileServer serves a file whose body takes longer than apiTimeout to arrive, like
+// a long video over a slow link.
+func slowFileServer(t *testing.T, apiTimeout time.Duration) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Write([]byte("FIRST_HALF_"))
+		w.(http.Flusher).Flush()
+		time.Sleep(3 * apiTimeout)
+		w.Write([]byte("SECOND_HALF"))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// A result download is not cut off by the API calls' timeout.
+func TestArkAdapter_DownloadOutlastsAPITimeout(t *testing.T) {
+	const apiTimeout = 100 * time.Millisecond
+	server := slowFileServer(t, apiTimeout)
+	a := NewArkAdapter(ArkConfig{HTTPClient: &http.Client{Timeout: apiTimeout}})
+
+	target := filepath.Join(t.TempDir(), "videos", "task1", "output.mp4")
+	if err := a.DownloadAsset(context.Background(), server.URL+"/output.mp4", target); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if content, _ := os.ReadFile(target); string(content) != "FIRST_HALF_SECOND_HALF" {
+		t.Errorf("unexpected content %q", content)
 	}
 }
 
