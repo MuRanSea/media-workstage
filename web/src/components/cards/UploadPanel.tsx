@@ -2,33 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { Check, Copy, Link2, Loader2, Upload } from 'lucide-react';
 import type { SpatialCard } from '../../types/canvas.ts';
 import { apiAssetStatus, apiUploadAsset, apiUploadFile } from '../../services/uploads.ts';
-import { useChannels } from '../../services/channels.ts';
+import { useUploadPlatform } from '../../services/uploadPlatform.ts';
 import { getActiveProjectId } from '../../engine/assetPaths.ts';
 import { liveFileUrl, mediaKindOf } from '../../engine/uploadRefs.ts';
 import { Button } from '../ui/Button.tsx';
 import { Segmented } from '../ui/Segmented.tsx';
-import { inputClass, type Accent } from '../ui/accent.ts';
+import type { Accent } from '../ui/accent.ts';
 import type { CardViewProps } from './cardProps.ts';
 
 const POLL_MS = 3000;
-const LAST_PROVIDER_KEY = 'mw.uploadProvider';
-
-// Every card uploads through the same platform, so a new card starts from the provider last used.
-function lastProvider(): string | undefined {
-  try {
-    return localStorage.getItem(LAST_PROVIDER_KEY) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function rememberProvider(id: string) {
-  try {
-    localStorage.setItem(LAST_PROVIDER_KEY, id);
-  } catch {
-    // Not remembering only costs a re-pick.
-  }
-}
 
 /** The name a file is stored under on the platform, keeping the saved file's extension. */
 function uploadNameOf(card: SpatialCard): string {
@@ -66,8 +48,8 @@ const CopyButton: React.FC<{ text: string }> = ({ text }) => {
 };
 
 /**
- * Uploads a card's saved file (an upload card's pick or a video result) to a
- * provider's asset library or file store, and picks which copy video cards
+ * Uploads a card's saved file (an upload card's pick or a video result) to the
+ * Upload Platform's asset library or file store, and picks which copy video cards
  * send when they reference the card.
  */
 export const UploadPanel: React.FC<{
@@ -75,27 +57,21 @@ export const UploadPanel: React.FC<{
   onUpdateCard: CardViewProps['onUpdateCard'];
   accent?: Accent;
 }> = ({ card, onUpdateCard, accent = 'amber' }) => {
-  const channels = useChannels();
+  const platform = useUploadPlatform();
   const [busy, setBusy] = useState<Busy>(null);
 
-  const providers = channels.filter((p) => p.is_configured);
-  const configured = (id?: string) => (id && providers.some((p) => p.id === id) ? id : undefined);
-  // Ark first: only its platform gives asset ids (Seedance).
-  const provider = configured(card.uploadProvider) ?? configured(lastProvider()) ?? configured('ark') ?? providers[0]?.id;
   const fileExpired = !!card.fileUrl && !liveFileUrl(card);
-  const noProvider = providers.length === 0;
+  const notReady = !platform?.is_configured;
 
   const fail = (err: unknown) => onUpdateCard(card.id, { errorMessage: (err as Error).message || '上传失败' }, { history: false });
 
   const uploadAsset = async () => {
     const projectId = getActiveProjectId();
-    if (!projectId || !provider || !card.resultUrl) return;
+    if (!projectId || !card.resultUrl) return;
     setBusy('asset');
     try {
-      const res = await apiUploadAsset(provider, projectId, card.resultUrl, uploadNameOf(card));
-      rememberProvider(provider);
+      const res = await apiUploadAsset(projectId, card.resultUrl, uploadNameOf(card));
       onUpdateCard(card.id, {
-        uploadProvider: provider,
         assetId: res.asset_id,
         assetStatus: res.status,
         assetError: res.error_message,
@@ -110,12 +86,11 @@ export const UploadPanel: React.FC<{
 
   const uploadFile = async () => {
     const projectId = getActiveProjectId();
-    if (!projectId || !provider || !card.resultUrl) return;
+    if (!projectId || !card.resultUrl) return;
     setBusy('file');
     try {
-      const res = await apiUploadFile(provider, projectId, card.resultUrl);
-      rememberProvider(provider);
-      onUpdateCard(card.id, { uploadProvider: provider, fileUrl: res.file_url, fileExpiresAt: res.expires_at, errorMessage: undefined });
+      const res = await apiUploadFile(projectId, card.resultUrl);
+      onUpdateCard(card.id, { fileUrl: res.file_url, fileExpiresAt: res.expires_at, errorMessage: undefined });
     } catch (err) {
       fail(err);
     } finally {
@@ -124,12 +99,11 @@ export const UploadPanel: React.FC<{
   };
 
   // Poll the review until the asset is usable or rejected.
-  const assetProvider = card.uploadProvider;
   useEffect(() => {
-    if (!card.assetId || card.assetStatus !== 'Processing' || !assetProvider) return;
+    if (!card.assetId || card.assetStatus !== 'Processing') return;
     const id = card.assetId;
     const timer = setInterval(() => {
-      apiAssetStatus(assetProvider, id)
+      apiAssetStatus(id)
         .then((res) => {
           if (res.status !== 'Processing') {
             onUpdateCard(card.id, { assetStatus: res.status, assetError: res.error_message }, { history: false });
@@ -138,36 +112,18 @@ export const UploadPanel: React.FC<{
         .catch(() => undefined);
     }, POLL_MS);
     return () => clearInterval(timer);
-  }, [card.id, card.assetId, card.assetStatus, assetProvider, onUpdateCard]);
+  }, [card.id, card.assetId, card.assetStatus, onUpdateCard]);
 
   return (
     <div className="space-y-2 rounded-xl border border-slate-800 bg-canvas-bg/60 p-2">
-      <label className="flex items-center gap-2 text-[11px] text-slate-400">
-        <span className="flex-shrink-0">上传到</span>
-        <select
-          value={provider ?? ''}
-          disabled={noProvider}
-          onMouseDown={(e) => e.stopPropagation()}
-          onChange={(e) => {
-            rememberProvider(e.target.value);
-            onUpdateCard(card.id, { uploadProvider: e.target.value });
-          }}
-          className={`${inputClass} flex-1 min-w-0`}
-          title="用哪个服务商的账号上传（素材库只在火山方舟可用）"
-        >
-          {noProvider && <option value="">还没有配置好的服务商</option>}
-          {providers.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      {platform && !platform.is_configured && (
+        <p className="text-[11px] leading-relaxed text-amber-300">还没有配置上传平台：请在「设置 → 上传平台」填写 API Key</p>
+      )}
 
       <div className="grid grid-cols-2 gap-1.5">
         <Button
           size="sm"
-          disabled={noProvider || busy !== null}
+          disabled={notReady || busy !== null}
           onClick={() => void uploadAsset()}
           icon={busy === 'asset' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
           title="上传到素材库，得到素材 ID（asset://…）"
@@ -176,7 +132,7 @@ export const UploadPanel: React.FC<{
         </Button>
         <Button
           size="sm"
-          disabled={noProvider || busy !== null}
+          disabled={notReady || busy !== null}
           onClick={() => void uploadFile()}
           icon={busy === 'file' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />}
           title="上传到文件存储，得到 7 天有效的下载链接"

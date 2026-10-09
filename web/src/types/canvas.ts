@@ -117,11 +117,10 @@ export interface SpatialCard {
   promptSourceId?: string;
 
   // Upload card fields: the picked file lives in the project (resultUrl); the remote
-  // fields are what a provider's upload API returned for it.
+  // fields are what the Upload Platform returned for it. Older projects may still carry
+  // an unused uploadProvider: uploads no longer go through a provider (ADR 0008).
   mediaKind?: UploadKind;
   uploadName?: string;
-  /** Provider whose upload API the file goes to. */
-  uploadProvider?: ProviderId;
   /** Asset library id (referenced as asset://<id> once status is Active). */
   assetId?: string;
   assetStatus?: AssetStatus;

@@ -14,6 +14,7 @@ import {
   Plus,
   Tag,
   HardDrive,
+  UploadCloud,
 } from 'lucide-react';
 import {
   apiDeleteProvider,
@@ -28,6 +29,7 @@ import { runsMockedWithoutKey } from '../engine/channelModels.ts';
 import { isNameTaken } from '../engine/providers.ts';
 import { AddProviderPane } from './AddProviderPane.tsx';
 import { DesktopSettingsPane } from './DesktopSettingsPane.tsx';
+import { UploadPlatformPane } from './UploadPlatformPane.tsx';
 import { apiGetDesktop, type DesktopInfo } from '../services/desktop.ts';
 import { ModelBindingPanel } from './ModelBindingPanel.tsx';
 import { PROTOCOL_META } from './protocolMeta.ts';
@@ -73,9 +75,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<ProviderId>('ark');
-  // The right pane shows a provider, the add-provider form, or (desktop app only)
-  // the storage settings.
-  const [side, setSide] = useState<'provider' | 'add' | 'storage'>('provider');
+  // The right pane shows a provider, the add-provider form, the Upload Platform, or
+  // (desktop app only) the storage settings.
+  const [side, setSide] = useState<'provider' | 'add' | 'upload' | 'storage'>('provider');
   const adding = side === 'add';
   const [desktop, setDesktop] = useState<DesktopInfo>({ enabled: false });
   const providers = useChannels();
@@ -305,9 +307,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       <div className="relative w-full max-w-3xl max-h-[calc(100vh-2rem)] flex flex-col bg-canvas-surface border border-slate-700/80 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden">
         <div className="flex items-center justify-between px-5 h-14 border-b border-canvas-border flex-shrink-0">
           <div>
-            <h2 className="text-sm font-semibold text-slate-100">{side === 'storage' ? '存储与日志' : '服务商设置'}</h2>
+            <h2 className="text-sm font-semibold text-slate-100">
+              {side === 'storage' ? '存储与日志' : side === 'upload' ? '上传平台' : '服务商设置'}
+            </h2>
             <p className="text-[11px] text-slate-500">
-              {side === 'storage' ? '数据、工程与日志放在哪里' : '填写各家服务的 API Key，并选择卡片里可以用的模型'}
+              {side === 'storage'
+                ? '数据、工程与日志放在哪里'
+                : side === 'upload'
+                ? '素材库与文件链接用哪个平台账号'
+                : '填写各家服务的 API Key，并选择卡片里可以用的模型'}
             </p>
           </div>
           <IconButton title="关闭" onClick={() => void requestClose()}>
@@ -362,11 +370,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Plus className="w-4 h-4 flex-shrink-0" />
               <span className="flex-1 truncate">添加服务商</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setSide('upload')}
+              className={`flex items-center gap-2 px-2.5 py-1.5 sm:mt-3 rounded-lg text-left whitespace-nowrap transition ${
+                side === 'upload'
+                  ? 'bg-slate-800 text-slate-100 font-semibold'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <UploadCloud className="w-4 h-4 flex-shrink-0" />
+              <span className="flex-1 truncate">上传平台</span>
+            </button>
             {desktop.enabled && (
               <button
                 type="button"
                 onClick={() => setSide('storage')}
-                className={`flex items-center gap-2 px-2.5 py-1.5 sm:mt-3 rounded-lg text-left whitespace-nowrap transition ${
+                className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left whitespace-nowrap transition ${
                   side === 'storage'
                     ? 'bg-slate-800 text-slate-100 font-semibold'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -380,6 +400,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {side === 'storage' && desktop.enabled ? (
             <DesktopSettingsPane info={desktop} />
+          ) : side === 'upload' ? (
+            <UploadPlatformPane />
           ) : adding ? (
             <AddProviderPane
               providers={providers}

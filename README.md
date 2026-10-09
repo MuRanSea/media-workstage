@@ -10,7 +10,7 @@
 - **生成卡与结果卡**：生成卡只保存提示词、模型和参数，可以反复运行；每次运行都会产出新的结果卡。图像结果卡带 `@图N` 标签，视频结果卡带 `@视频N` 标签，连线到视频卡后可以作为参考素材，并在提示词中用标签引用（见 [ADR 0005](docs/adr/0005-generation-and-result-cards.md)）。
 - **多服务商**：内置火山方舟（Seedance 视频、Seedream 图像）、MiniMax 海螺、可灵、Midjourney（MJ Proxy 协议）、Google Gemini、OpenAI、APIMart，也可以添加自定义的 OpenAI 兼容服务商（见 [ADR 0004](docs/adr/0004-providers-as-protocol-instances.md)）。
 - **Midjourney 结果动作**：U1–U4、V1–V4、重绘、Blend、Describe，执行后都产出新的结果卡（见 [ADR 0006](docs/adr/0006-result-actions-yield-result-cards.md)）。
-- **上传卡**：把本地图片或视频放到画布上，可以上传到服务商的素材库或文件存储，作为视频生成的参考。
+- **上传卡**：把本地图片或视频放到画布上，可以上传到上传平台（Heighliner 平台业务 API，在设置的「上传平台」页单独配置）的素材库或文件存储，作为视频生成的参考。
 - **后台任务**：SQLite 持久化任务队列，按服务商限流轮询，通过 SSE 实时推送进度；应用重启后会恢复未完成的任务（见 [ADR 0002](docs/adr/0002-task-queue-and-sqlite-persistence.md)）。
 - **工程文件夹**：每个工程是一个独立文件夹，包含 `project.json` 和 `assets/`，可以整体复制或移动（见 [ADR 0003](docs/adr/0003-project-folders-persistence.md)）。
 - 浅色和深色主题。

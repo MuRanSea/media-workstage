@@ -74,7 +74,11 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   _Avoid_: MJ model version (`--v` / `--niji` stay prompt parameters)
 
 - **Upload Card (上传卡片)**:
-  A Result Card with no source holding a user-picked image or video (`type: 'upload'`, `mediaKind`). The file is saved into the project (`assets/uploads/`) and can be sent to a Provider's platform for a **Platform Asset ID** (素材库 `asset://<id>`, usable once review turns `Active`, Seedance only) and/or a **File URL** (7-day download link). Wired to a video card it becomes a reference: images as `reference_image` (`@图N`), videos as `reference_video` (`@视频N`, multi-reference mode, on models that take reference videos). A video reference must be uploaded first; images fall back to the saved file. A video Result Card uploads and wires in the same way.
+  A Result Card with no source holding a user-picked image or video (`type: 'upload'`, `mediaKind`). The file is saved into the project (`assets/uploads/`) and can be sent to the **Upload Platform** for a **Platform Asset ID** (素材库 `asset://<id>`, usable once review turns `Active`, Seedance only) and/or a **File URL** (7-day download link). Wired to a video card it becomes a reference: images as `reference_image` (`@图N`), videos as `reference_video` (`@视频N`, multi-reference mode, on models that take reference videos). A video reference must be uploaded first; images fall back to the saved file. A video Result Card uploads and wires in the same way.
+
+- **Upload Platform (上传平台)**:
+  Where Upload Cards and video Result Cards send their files: the Heighliner platform's own business API (asset library `/api/volcengine/assets/*`, file store `/api/files/upload`), configured on its own page in Settings with an address and an API Key. It is not a Provider and no Provider's settings are used for uploads (ADR 0008).
+  _Avoid_: uploading "to a provider"
 
 - **Result action (结果动作)**:
   A follow-up a provider offers on a finished task's result, such as Midjourney's U1–U4 / V1–V4 / reroll buttons. Stored on the task (`result_actions`) with the provider's own ID and shown as buttons on the Result Card. Running one submits a new task whose params name the source task and the action (the server checks the source task offered it) and yields a new Result Card sourced from the Result Card it ran on, its line labelled with the action ("U2", "重绘").
