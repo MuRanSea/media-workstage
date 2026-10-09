@@ -138,8 +138,31 @@ func isAllowedOrigin(origin string, reqHost string) bool {
 	return false
 }
 
+// isTrustedHost reports whether a request's Host names this machine by a loopback name
+// or an IP address. A DNS-rebinding page reaches the server under its own domain name,
+// with an Origin matching that Host, so the Origin check alone would let it through.
+// An empty Host only comes from non-browser clients.
+func isTrustedHost(reqHost string) bool {
+	if reqHost == "" {
+		return true
+	}
+	host := reqHost
+	if h, _, err := net.SplitHostPort(reqHost); err == nil {
+		host = h
+	}
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	return net.ParseIP(host) != nil
+}
+
 func (s *Server) sameOriginOnlyMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if !isTrustedHost(c.Request.Host) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Requests must address the server by localhost or IP"})
+			return
+		}
 		origin := c.GetHeader("Origin")
 		if origin != "" && !isAllowedOrigin(origin, c.Request.Host) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Cross-origin requests to configuration API are forbidden"})
@@ -203,7 +226,9 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.DELETE("/providers/:id", s.sameOriginOnlyMiddleware(), s.handleDeleteProvider)
 		// Spends the user's tokens with stored keys, so same-origin only as well.
 		api.POST("/llm/generate", s.sameOriginOnlyMiddleware(), s.handleGenerateText)
-		api.POST("/tasks", s.handleCreateTask)
+		// Gin binds JSON whatever the Content-Type, so a cross-site form post could
+		// otherwise start paid generations.
+		api.POST("/tasks", s.sameOriginOnlyMiddleware(), s.handleCreateTask)
 		api.GET("/tasks", s.handleListTasks)
 		api.GET("/tasks/:id", s.handleGetTask)
 		api.GET("/tasks/events", s.handleSSEEvents)
@@ -794,7 +819,8 @@ func (s *Server) handleSSEEvents(c *gin.Context) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
-	c.Header("Access-Control-Allow-Origin", "*")
+	// No wildcard CORS here: the stream carries every task's prompt and outputs, so
+	// only origins the CORS middleware allows may read it.
 
 	// Emit initial connection ready event
 	initEvent := fmt.Sprintf("event: ready\ndata: {\"status\":\"connected\",\"time\":\"%s\"}\n\n", time.Now().UTC().Format(time.RFC3339))

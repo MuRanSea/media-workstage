@@ -142,6 +142,62 @@ func TestServer_SSEEventsHeader(t *testing.T) {
 	assert.Equal(t, "no-cache", w.Header().Get("Cache-Control"))
 	assert.Contains(t, w.Body.String(), "event: ready")
 }
+
+// Another site must not be able to read the task stream (prompts, outputs) through CORS.
+func TestServer_SSEEventsRefuseForeignOrigins(t *testing.T) {
+	r, _ := setupTestServer(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/api/tasks/events", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	r.ServeHTTP(w, req)
+
+	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
+}
+
+// A cross-site form post binds as JSON in Gin, so task creation (which spends the
+// provider's key) is same-origin only.
+func TestServer_CreateTaskRejectsCrossOrigin(t *testing.T) {
+	r, database := setupTestServer(t)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/tasks", bytes.NewBufferString(
+		`{"provider":"ark","model":"doubao-seedance-2-5-260628","task_type":"video_generation","prompt":"spend"}`))
+	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Origin", "https://evil.example")
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	var count int64
+	database.Model(&model.MediaTask{}).Count(&count)
+	assert.Zero(t, count)
+}
+
+// A DNS-rebinding page reaches the server under its own domain, with an Origin
+// matching that Host; config writes only accept loopback names and IP addresses.
+func TestServer_ConfigWritesRejectRebindingHost(t *testing.T) {
+	r, _ := setupTestServer(t)
+	body := `{"provider":"ark","base_url":"https://ark.cn-beijing.volces.com/api/v3","api_key":"attacker-key-123456"}`
+
+	for host, want := range map[string]int{
+		"rebind.evil.example:8080": http.StatusForbidden,
+		"127.0.0.1:8080":           http.StatusOK,
+		"localhost:8080":           http.StatusOK,
+		"[::1]:8080":               http.StatusOK,
+		"192.168.1.20:8080":        http.StatusOK,
+	} {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/config", bytes.NewBufferString(body))
+		req.Host = host
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://"+host)
+		r.ServeHTTP(w, req)
+		assert.Equal(t, want, w.Code, host)
+	}
+}
+
 func TestServer_MiniMaxTaskCreation(t *testing.T) {
 	r, _ := setupTestServer(t)
 
