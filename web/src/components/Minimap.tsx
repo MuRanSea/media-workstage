@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SpatialCard } from '../types/canvas.ts';
-import type { CanvasTransform, Point, ViewportSize } from '../engine/matrix.ts';
+import type { CanvasTransform, Point, Rect, ViewportSize } from '../engine/matrix.ts';
 import { centerOn, minimapFrame, minimapToWorld, viewportWorldRect, worldToMinimap } from '../engine/minimap.ts';
 
 const WIDTH = 200;
@@ -38,6 +38,8 @@ export function useMinimapVisible(): [boolean, (visible: boolean) => void] {
 
 interface MinimapProps {
   cards: SpatialCard[];
+  /** Collapsed sections, drawn as their title bars. */
+  bars: Rect[];
   heightOf: (card: SpatialCard) => number;
   transform: CanvasTransform;
   viewport: ViewportSize;
@@ -47,14 +49,14 @@ interface MinimapProps {
 }
 
 /** Overview of the whole canvas; click or drag in it to move the view there. */
-export const Minimap: React.FC<MinimapProps> = ({ cards, heightOf, transform, viewport, right, onPan }) => {
+export const Minimap: React.FC<MinimapProps> = ({ cards, bars, heightOf, transform, viewport, right, onPan }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const view = useMemo(() => viewportWorldRect(transform, viewport), [transform, viewport]);
   const rects = useMemo(
     () => cards.map((c) => ({ type: c.type, x: c.x, y: c.y, width: c.width, height: heightOf(c) })),
     [cards, heightOf]
   );
-  const frame = useMemo(() => minimapFrame(rects, view, { width: WIDTH, height: HEIGHT }), [rects, view]);
+  const frame = useMemo(() => minimapFrame([...rects, ...bars], view, { width: WIDTH, height: HEIGHT }), [rects, bars, view]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -70,13 +72,18 @@ export const Minimap: React.FC<MinimapProps> = ({ cards, heightOf, transform, vi
       ctx.fillStyle = FILL[r.type];
       ctx.fillRect(p.x, p.y, Math.max(1.5, r.width * frame.scale), Math.max(1.5, r.height * frame.scale));
     }
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.6)';
+    for (const b of bars) {
+      const p = worldToMinimap(b, frame);
+      ctx.fillRect(p.x, p.y, Math.max(2, b.width * frame.scale), Math.max(2, b.height * frame.scale));
+    }
     const v = worldToMinimap(view, frame);
     ctx.strokeStyle = 'rgba(148, 163, 184, 0.9)';
     ctx.lineWidth = 1.5;
     ctx.fillStyle = 'rgba(148, 163, 184, 0.08)';
     ctx.fillRect(v.x, v.y, view.width * frame.scale, view.height * frame.scale);
     ctx.strokeRect(v.x, v.y, view.width * frame.scale, view.height * frame.scale);
-  }, [rects, view, frame]);
+  }, [rects, bars, view, frame]);
 
   // The frame changes while dragging (the view moves); keep using the one the drag started with.
   const dragFrame = useRef(frame);

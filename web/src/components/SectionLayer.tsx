@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { CanvasSection } from '../types/canvas.ts';
 import { SECTION_HEADER, sectionRect } from '../engine/sections.ts';
 
@@ -12,6 +13,7 @@ interface SectionLayerProps {
   /** Mouse down on the corner handle. */
   onStartResize: (e: React.MouseEvent, section: CanvasSection) => void;
   onRename: (id: string, title: string) => void;
+  onToggleCollapse: (id: string) => void;
 }
 
 /**
@@ -19,7 +21,7 @@ interface SectionLayerProps {
  * take the mouse: the body lets clicks through to the canvas, so marquee
  * selection and double-click-to-add still work inside a section.
  */
-export const SectionLayer: React.FC<SectionLayerProps> = ({ sections, selectedIds, memberCounts, onStartMove, onStartResize, onRename }) => (
+export const SectionLayer: React.FC<SectionLayerProps> = ({ sections, selectedIds, memberCounts, onStartMove, onStartResize, onRename, onToggleCollapse }) => (
   <div className="absolute top-0 left-0">
     {sections.map((s) => (
       <SectionFrame
@@ -30,6 +32,7 @@ export const SectionLayer: React.FC<SectionLayerProps> = ({ sections, selectedId
         onStartMove={onStartMove}
         onStartResize={onStartResize}
         onRename={onRename}
+        onToggleCollapse={onToggleCollapse}
       />
     ))}
   </div>
@@ -42,7 +45,8 @@ const SectionFrame: React.FC<{
   onStartMove: SectionLayerProps['onStartMove'];
   onStartResize: SectionLayerProps['onStartResize'];
   onRename: SectionLayerProps['onRename'];
-}> = ({ section, selected, count, onStartMove, onStartResize, onRename }) => {
+  onToggleCollapse: SectionLayerProps['onToggleCollapse'];
+}> = ({ section, selected, count, onStartMove, onStartResize, onRename, onToggleCollapse }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(section.title);
   const rect = sectionRect(section);
@@ -70,8 +74,20 @@ const SectionFrame: React.FC<{
           setEditing(true);
         }}
         style={{ height: SECTION_HEADER }}
-        className="pointer-events-auto flex items-center gap-2 px-3 rounded-t-2xl cursor-grab active:cursor-grabbing select-none"
+        className={`pointer-events-auto flex items-center gap-2 pl-1.5 pr-3 cursor-grab active:cursor-grabbing select-none ${
+          section.collapsed ? 'rounded-2xl' : 'rounded-t-2xl'
+        }`}
       >
+        <button
+          type="button"
+          title={section.collapsed ? '展开分区' : '折叠分区'}
+          onMouseDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onClick={() => onToggleCollapse(section.id)}
+          className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-100 hover:bg-slate-700/60"
+        >
+          {section.collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </button>
         {editing ? (
           <input
             autoFocus

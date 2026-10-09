@@ -16,7 +16,17 @@ import { PORT_Y, type ConnectHint, type SlotKind } from './cards/CardPorts.tsx';
 import { CanvasCard, type CardActions } from './CanvasCard.tsx';
 import { Minimap, useMinimapVisible } from './Minimap.tsx';
 import { SectionLayer } from './SectionLayer.tsx';
-import { SECTION_MIN_HEIGHT, SECTION_MIN_WIDTH, duplicateSections, emptySection, membersBySection, sectionAround } from '../engine/sections.ts';
+import {
+  SECTION_MIN_HEIGHT,
+  SECTION_MIN_WIDTH,
+  collapsedSectionOf,
+  duplicateSections,
+  emptySection,
+  hiddenCardIds,
+  membersBySection,
+  sectionAround,
+  sectionRect,
+} from '../engine/sections.ts';
 import { cardsToRender, isAwaitingTask, lineMayCross, visibleWorldRect } from '../engine/culling.ts';
 import { dropOptions, type DropCardType, type DropRole } from '../engine/dropToCreate.ts';
 import { InspectorPanel, INSPECTOR_WIDTH } from './inspector/InspectorPanel.tsx';
@@ -66,6 +76,8 @@ interface Ray {
   midY: number;
   /** End points, for skipping lines far off screen. */
   ends: [number, number, number, number];
+  /** The two cards it joins. */
+  cardIds: [string, string];
   /** Label pill with a disconnect button; source lines (generation → result) have none. */
   label?: string;
   onRemove?: () => void;
@@ -153,6 +165,12 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const heightOf = useCallback((card: SpatialCard) => cardHeight(metrics, card), [metrics]);
+  const sectionMembers = useMemo(() => membersBySection(cards, sections, heightOf), [cards, sections, heightOf]);
+  const memberCounts = useMemo(() => new Map([...sectionMembers].map(([id, ids]) => [id, ids.length])), [sectionMembers]);
+  // Cards inside collapsed sections are not drawn, selected or snapped to.
+  const hiddenIds = useMemo(() => hiddenCardIds(sections, sectionMembers), [sections, sectionMembers]);
+  const sectionRects = useMemo(() => sections.map(sectionRect), [sections]);
+  const collapsedBars = useMemo(() => sections.filter((s) => s.collapsed).map(sectionRect), [sections]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [linkDrag, setLinkDrag] = useState<LinkDrag | null>(null);
@@ -219,6 +237,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     initialPanY: initialViewport?.panY,
     onBeforeEdit: recordEdit,
     keyboardEnabled: !isSettingsOpen && !viewer && !showShortcuts,
+    hiddenIds,
+    sectionRects,
   });
 
   const transformRef = useRef(transform);
@@ -229,28 +249,40 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   }, [transform, onViewportChange]);
 
   // A video takes minutes and its result card may be off screen by the time it is done: say so, and offer to jump to it.
-  const finishedVideoIds = useRef<Set<string> | null>(null);
+  // A result finishing inside a collapsed section cannot be seen at all: say so too, and open the section to show it.
+  const finishedIds = useRef<Set<string> | null>(null);
   useEffect(() => {
-    const isFinishedVideo = (c: SpatialCard) => c.type === 'video' && c.role === 'result' && c.status === 'succeeded';
-    const seen = finishedVideoIds.current;
-    finishedVideoIds.current = new Set(cards.filter(isFinishedVideo).map((c) => c.id));
+    const isFinished = (c: SpatialCard) => c.role === 'result' && (c.status === 'succeeded' || c.status === 'failed');
+    const seen = finishedIds.current;
+    finishedIds.current = new Set(cards.filter(isFinished).map((c) => c.id));
     if (!seen) return;
     for (const card of cards) {
-      if (!isFinishedVideo(card) || seen.has(card.id) || !card.sourceId) continue;
+      if (!isFinished(card) || seen.has(card.id)) continue;
+      const hiddenIn = collapsedSectionOf(card.id, sections, sectionMembers);
+      const isVideo = card.type === 'video' && card.status === 'succeeded' && !!card.sourceId;
+      if (!isVideo && !hiddenIn) continue;
       const source = cards.find((c) => c.id === card.sourceId);
-      toast(`「${source?.title ?? '视频'}」生成完成，结果在卡片「${card.title}」`, {
-        tone: 'success',
+      const message = isVideo
+        ? `「${source?.title ?? '视频'}」生成完成，结果在卡片「${card.title}」`
+        : `折叠的分区「${hiddenIn!.title}」里，「${card.title}」${card.status === 'failed' ? '生成失败' : '已生成'}`;
+      toast(message, {
+        tone: card.status === 'failed' ? 'warning' : 'success',
         durationMs: 8000,
         action: {
           label: '查看',
           onClick: () => {
+            const section = collapsedSectionOf(card.id, sectionsRef.current, sectionMembersRef.current);
+            if (section) toggleSectionCollapseRef.current(section.id);
             setSelectedCardIds(new Set([card.id]));
             focusSelection(card.id);
           },
         },
       });
     }
-  }, [cards, toast, focusSelection, setSelectedCardIds]);
+  }, [cards, sections, sectionMembers, toast, focusSelection, setSelectedCardIds]);
+  const sectionMembersRef = useRef(sectionMembers);
+  sectionMembersRef.current = sectionMembers;
+  const toggleSectionCollapseRef = useRef<(id: string) => void>(() => {});
 
   const selectedCards = useMemo(() => cards.filter((c) => selectedCardIds.has(c.id)), [cards, selectedCardIds]);
   // Cards a video card can take as references: image and video results, uploads included. Generation cards hold none.
@@ -397,8 +429,23 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     [recordEdit, setSections]
   );
 
-  const sectionMembers = useMemo(() => membersBySection(cards, sections, heightOf), [cards, sections, heightOf]);
-  const memberCounts = useMemo(() => new Map([...sectionMembers].map(([id, ids]) => [id, ids.length])), [sectionMembers]);
+  /** Shows or hides a section's cards. Collapsing drops them from the selection. */
+  const toggleSectionCollapse = useCallback(
+    (id: string) => {
+      const section = sectionsRef.current.find((s) => s.id === id);
+      if (!section) return;
+      recordEdit();
+      const collapsed = !section.collapsed;
+      setSections((prev) => prev.map((s) => (s.id === id ? { ...s, collapsed: collapsed || undefined } : s)));
+      if (collapsed) {
+        const gone = new Set(sectionMembers.get(id) ?? []);
+        setSelectedCardIds((prev) => (([...prev].some((c) => gone.has(c)) ? new Set([...prev].filter((c) => !gone.has(c))) : prev)));
+      }
+    },
+    [recordEdit, setSections, sectionMembers, setSelectedCardIds]
+  );
+
+  toggleSectionCollapseRef.current = toggleSectionCollapse;
 
   /** Moving a section by its title bar (with the cards in it), or resizing it by its corner. */
   const startSectionGesture = (mode: 'move' | 'resize', e: React.MouseEvent, section: CanvasSection) => {
@@ -556,7 +603,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         redo();
       } else if (mod && key === 'a') {
         e.preventDefault();
-        setSelectedCardIds(new Set(cardsRef.current.map((c) => c.id)));
+        setSelectedCardIds(new Set(cardsRef.current.filter((c) => !hiddenIds.has(c.id)).map((c) => c.id)));
       } else if (mod && key === 'g') {
         e.preventDefault();
         wrapInSection(selected);
@@ -585,7 +632,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedCardIds, selectedSectionIds, sectionMembers, undo, redo, duplicate, pasteAtPointer, deleteCards, deleteSections, wrapInSection, setSelectedCardIds, setActiveTool, toast, isSettingsOpen, viewer, showShortcuts]);
+  }, [selectedCardIds, selectedSectionIds, sectionMembers, hiddenIds, undo, redo, duplicate, pasteAtPointer, deleteCards, deleteSections, wrapInSection, setSelectedCardIds, setActiveTool, toast, isSettingsOpen, viewer, showShortcuts]);
 
   // --- Drag-to-connect ------------------------------------------------------
 
@@ -694,8 +741,14 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   // Off-screen cards are not mounted. Selected (so dragged) cards, a connection's source
   // and cards waiting on a task stay mounted wherever they are.
   const renderedCards = useMemo(
-    () => cardsToRender(cards, visibleArea, heightOf, (c) => selectedCardIds.has(c.id) || c.id === linkSourceId || isAwaitingTask(c)),
-    [cards, visibleArea, heightOf, selectedCardIds, linkSourceId]
+    () =>
+      cardsToRender(
+        hiddenIds.size ? cards.filter((c) => !hiddenIds.has(c.id)) : cards,
+        visibleArea,
+        heightOf,
+        (c) => selectedCardIds.has(c.id) || c.id === linkSourceId || isAwaitingTask(c)
+      ),
+    [cards, hiddenIds, visibleArea, heightOf, selectedCardIds, linkSourceId]
   );
   const renderedKey = useMemo(() => renderedCards.map((c) => c.id).join(','), [renderedCards]);
 
@@ -740,6 +793,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         const srcY = src.y + PORT_Y;
         rays.push({
           id: `ref:${src.id}->${card.id}`,
+          cardIds: [src.id, card.id],
           kind: 'reference',
           tone: RAY_TONE[src.type],
           pathData: bezier(srcX, srcY, tgtX, tgtY),
@@ -759,6 +813,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         const resultY = card.y + PORT_Y;
         rays.push({
           id: `source:${generation.id}->${card.id}`,
+          cardIds: [generation.id, card.id],
           kind: 'source',
           sourceLabel: card.origin?.label,
           pathData: bezier(srcX, srcY, tgtX, resultY),
@@ -775,6 +830,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         const promptY = slotY('prompt');
         rays.push({
           id: `prompt:${textSrc.id}->${card.id}`,
+          cardIds: [textSrc.id, card.id],
           kind: 'prompt',
           tone: 'emerald',
           pathData: bezier(srcX, srcY, tgtX, promptY),
@@ -790,8 +846,12 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   }, [cards, handleUpdateCard, slotOffsets]);
 
   const visibleRays = useMemo(
-    () => connectionRays.filter(({ ends: [x1, y1, x2, y2] }) => lineMayCross(visibleArea, x1, y1, x2, y2, bulgeOf(x1, x2))),
-    [connectionRays, visibleArea]
+    () =>
+      connectionRays.filter(
+        ({ ends: [x1, y1, x2, y2], cardIds: [from, to] }) =>
+          !hiddenIds.has(from) && !hiddenIds.has(to) && lineMayCross(visibleArea, x1, y1, x2, y2, bulgeOf(x1, x2))
+      ),
+    [connectionRays, visibleArea, hiddenIds]
   );
 
   const dragSource = linkDrag ? cards.find((c) => c.id === linkDrag.sourceId) : undefined;
@@ -907,7 +967,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
       {minimapVisible && cards.length > 0 && (
         <Minimap
-          cards={cards}
+          cards={hiddenIds.size ? cards.filter((c) => !hiddenIds.has(c.id)) : cards}
+          bars={collapsedBars}
           heightOf={heightOf}
           transform={transform}
           viewport={viewSize}
@@ -995,6 +1056,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
             memberCounts={memberCounts}
             onStartMove={(e, s) => startSectionGesture('move', e, s)}
             onStartResize={(e, s) => startSectionGesture('resize', e, s)}
+            onToggleCollapse={toggleSectionCollapse}
             onRename={renameSection}
           />
 

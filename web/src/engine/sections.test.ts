@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { CanvasSection, SpatialCard } from '../types/canvas.ts';
 import {
   DEFAULT_SECTION_TITLE,
+  collapsedSectionOf,
+  hiddenCardIds,
   SECTION_HEADER,
   duplicateSections,
   emptySection,
@@ -116,5 +118,30 @@ describe('emptySection and duplicateSections', () => {
     const [copy] = duplicateSections([section('s', 10, 20, 300, 300)], { x: 40, y: 40 });
     expect(copy.id).not.toBe('s');
     expect(copy).toMatchObject({ x: 50, y: 60, width: 300, height: 300, title: 's 副本' });
+  });
+});
+
+describe('collapsed sections', () => {
+  const open = section('open', 0, 0, 1000, 1000);
+  const shut = section('shut', 2000, 0, 1000, 1000, { collapsed: true });
+  const cards = [card('a', 100, 100), card('b', 2100, 100), card('c', 2400, 300), card('free', 5000, 0)];
+  const members = membersBySection(cards, [open, shut], h);
+
+  it('hides exactly the cards of collapsed sections', () => {
+    expect([...hiddenCardIds([open, shut], members)].sort()).toEqual(['b', 'c']);
+  });
+
+  it('tells which collapsed section hides a card', () => {
+    expect(collapsedSectionOf('b', [open, shut], members)?.id).toBe('shut');
+    expect(collapsedSectionOf('a', [open, shut], members)).toBeUndefined();
+    expect(collapsedSectionOf('free', [open, shut], members)).toBeUndefined();
+  });
+
+  it('hides a connection when either end is hidden', () => {
+    const hidden = hiddenCardIds([open, shut], members);
+    const shown = (from: string, to: string) => !hidden.has(from) && !hidden.has(to);
+    expect(shown('a', 'free')).toBe(true);
+    expect(shown('a', 'b')).toBe(false);
+    expect(shown('c', 'free')).toBe(false);
   });
 });

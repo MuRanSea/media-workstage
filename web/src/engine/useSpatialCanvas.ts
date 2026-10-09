@@ -35,7 +35,14 @@ interface UseSpatialCanvasProps {
   onBeforeEdit?: () => void;
   /** False while a dialog covers the canvas, so its keys do not move the canvas. */
   keyboardEnabled?: boolean;
+  /** Cards inside collapsed sections: not selectable, not snapped to, not framed by fit view. */
+  hiddenIds?: ReadonlySet<string>;
+  /** Section rectangles, so fit view frames sections too (a collapsed one may hold every card). */
+  sectionRects?: Rect[];
 }
+
+const NO_IDS: ReadonlySet<string> = new Set();
+const NO_RECTS: Rect[] = [];
 
 export function useSpatialCanvas({
   cards,
@@ -47,6 +54,8 @@ export function useSpatialCanvas({
   initialPanY = 40,
   onBeforeEdit,
   keyboardEnabled = true,
+  hiddenIds = NO_IDS,
+  sectionRects = NO_RECTS,
 }: UseSpatialCanvasProps) {
   const [transform, setTransform] = useState<CanvasTransform>({
     zoom: initialZoom,
@@ -118,23 +127,27 @@ export function useSpatialCanvas({
 
   const fitView = useCallback(() => {
     const container = containerRef.current;
-    if (!container || cards.length === 0) return;
+    if (!container) return;
 
     const viewport = {
       width: container.clientWidth,
       height: container.clientHeight,
     };
 
-    const cardRects: Rect[] = cards.map((c) => ({
-      x: c.x,
-      y: c.y,
-      width: c.width,
-      height: heightOf(c),
-    }));
+    const rects: Rect[] = cards
+      .filter((c) => !hiddenIds.has(c.id))
+      .map((c) => ({
+        x: c.x,
+        y: c.y,
+        width: c.width,
+        height: heightOf(c),
+      }))
+      .concat(sectionRects);
+    if (rects.length === 0) return;
 
-    const nextTransform = calculateFitView(cardRects, viewport, 140);
+    const nextTransform = calculateFitView(rects, viewport, 140);
     setTransform(nextTransform);
-  }, [cards, containerRef, heightOf]);
+  }, [cards, containerRef, heightOf, hiddenIds, sectionRects]);
 
   const focusSelection = useCallback(
     (cardId?: string) => {
@@ -304,6 +317,7 @@ export function useSpatialCanvas({
         );
 
         for (const card of cards) {
+          if (hiddenIds.has(card.id)) continue;
           const cardBox: Rect = {
             x: card.x,
             y: card.y,
@@ -427,7 +441,7 @@ export function useSpatialCanvas({
         if (nextSelectedIds.has(c.id)) {
           initialPositions.set(c.id, { x: c.x, y: c.y });
           moving.push(r);
-        } else {
+        } else if (!hiddenIds.has(c.id)) {
           others.push(r);
         }
       }
@@ -436,7 +450,7 @@ export function useSpatialCanvas({
       dragBoxRef.current = getCardsBoundingBox(moving.map((r, i) => ({ id: String(i), ...r })));
       snapTargetsRef.current = others;
     },
-    [activeTool, nextSelection, transform, containerRef, cards, heightOf]
+    [activeTool, nextSelection, transform, containerRef, cards, heightOf, hiddenIds]
   );
 
   // Multi-card layout commands

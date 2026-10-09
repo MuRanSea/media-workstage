@@ -111,3 +111,15 @@ export function duplicateSections(sections: CanvasSection[], offset: Point): Can
     y: Math.round(s.y + offset.y),
   }));
 }
+
+/** Cards hidden because their section is collapsed. */
+export function hiddenCardIds(sections: CanvasSection[], members: ReadonlyMap<string, string[]>): Set<string> {
+  const hidden = new Set<string>();
+  for (const s of sections) if (s.collapsed) for (const id of members.get(s.id) ?? []) hidden.add(id);
+  return hidden;
+}
+
+/** The collapsed section hiding `cardId`, if any. */
+export function collapsedSectionOf(cardId: string, sections: CanvasSection[], members: ReadonlyMap<string, string[]>): CanvasSection | undefined {
+  return sections.find((s) => s.collapsed && (members.get(s.id) ?? []).includes(cardId));
+}
