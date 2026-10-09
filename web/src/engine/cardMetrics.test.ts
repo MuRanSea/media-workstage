@@ -28,6 +28,15 @@ describe('cardHeight', () => {
     expect(cardHeight(metrics, c)).toBe(estimateCardHeight(c));
   });
 
+  it('keeps cards still on the canvas and forgets deleted ones', () => {
+    const metrics = createCardMetrics();
+    metrics.set('a', 300);
+    metrics.set('b', 400);
+    metrics.retain(new Set(['a']));
+    expect(metrics.get('a')).toBe(300);
+    expect(metrics.get('b')).toBeUndefined();
+  });
+
   it('picks up a new height after the card resizes', () => {
     const metrics = createCardMetrics();
     const c = card();

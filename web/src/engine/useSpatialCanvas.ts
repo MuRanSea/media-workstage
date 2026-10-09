@@ -18,6 +18,7 @@ import {
 } from './layout.ts';
 import type { CanvasTool, SpatialCard } from '../types/canvas.ts';
 import type { CardHeightOf } from './layout.ts';
+import { sameIds } from './culling.ts';
 
 interface UseSpatialCanvasProps {
   cards: SpatialCard[];
@@ -308,7 +309,8 @@ export function useSpatialCanvas({
           }
         }
 
-        setSelectedCardIds(newSelected);
+        // Most moves change nothing: keep the same set so nothing re-renders.
+        setSelectedCardIds((prev) => (sameIds(prev, newSelected) ? prev : newSelected));
       } else if (isDraggingCards) {
         const currentWorld = screenToWorld(
           { x: e.clientX, y: e.clientY },

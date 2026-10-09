@@ -4,7 +4,7 @@ import type { CardType, ResultActionDto, SpatialCard, UploadKind } from '../type
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
 import { cardHeight, type CardMetrics } from '../engine/cardMetrics.ts';
 import { screenToWorld, type CanvasTransform, type Point } from '../engine/matrix.ts';
-import { connectCards, hasOutputPort, removeCards } from '../engine/connections.ts';
+import { connectCards, removeCards } from '../engine/connections.ts';
 import { createCard, duplicateCards } from '../engine/cardFactory.ts';
 import { useHistory } from '../engine/useHistory.ts';
 import { removeReferencePatch } from '../engine/cardParams.ts';
@@ -12,12 +12,9 @@ import { actionKey, runningActionIds, runsInProgress } from '../engine/resultCar
 import { findDescribeProvider, savedImageOf } from '../engine/midjourney.ts';
 import { useChannels } from '../services/channels.ts';
 import { refTag } from '../engine/refTags.ts';
-import { ImageCardView } from './cards/ImageCardView.tsx';
-import { VideoCardView } from './cards/VideoCardView.tsx';
-import { TextCardView } from './cards/TextCardView.tsx';
-import { UploadCardView } from './cards/UploadCardView.tsx';
 import { PORT_Y, type ConnectHint, type SlotKind } from './cards/CardPorts.tsx';
-import type { CardViewProps } from './cards/cardProps.ts';
+import { CanvasCard, type CardActions } from './CanvasCard.tsx';
+import { cardsToRender, isAwaitingTask, lineMayCross, visibleWorldRect } from '../engine/culling.ts';
 import { InspectorPanel, INSPECTOR_WIDTH } from './inspector/InspectorPanel.tsx';
 import { NavigationDock } from './NavigationDock.tsx';
 import { ADD_CARD_ITEMS, CanvasHeader } from './CanvasHeader.tsx';
@@ -60,6 +57,8 @@ interface Ray {
   pathData: string;
   midX: number;
   midY: number;
+  /** End points, for skipping lines far off screen. */
+  ends: [number, number, number, number];
   /** Label pill with a disconnect button; source lines (generation → result) have none. */
   label?: string;
   onRemove?: () => void;
@@ -97,10 +96,15 @@ const RAY_COLORS = {
 
 const RAY_TONE = { image: 'pink', video: 'indigo', upload: 'amber', text: 'emerald' } as const;
 
+/** How far a connection curve bulges sideways past its end points. */
+const bulgeOf = (srcX: number, tgtX: number) => Math.max(80, Math.abs(tgtX - srcX) * 0.5);
+
 const bezier = (srcX: number, srcY: number, tgtX: number, tgtY: number) => {
-  const dx = Math.max(80, Math.abs(tgtX - srcX) * 0.5);
+  const dx = bulgeOf(srcX, tgtX);
   return `M ${srcX} ${srcY} C ${srcX + dx} ${srcY}, ${tgtX - dx} ${tgtY}, ${tgtX} ${tgtY}`;
 };
+
+const NO_CARDS: SpatialCard[] = [];
 
 const isTyping = () => {
   const el = document.activeElement as HTMLElement | null;
@@ -189,6 +193,9 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     keyboardEnabled: !isSettingsOpen && !viewer && !showShortcuts,
   });
 
+  const transformRef = useRef(transform);
+  transformRef.current = transform;
+
   useEffect(() => {
     onViewportChange?.(transform);
   }, [transform, onViewportChange]);
@@ -219,10 +226,15 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   const selectedCards = useMemo(() => cards.filter((c) => selectedCardIds.has(c.id)), [cards, selectedCardIds]);
   // Cards a video card can take as references: image and video results, uploads included. Generation cards hold none.
-  const availableImageCards = useMemo(
-    () => cards.filter((c) => c.role === 'result' && c.type !== 'text' && c.tagIndex !== undefined),
-    [cards]
-  );
+  const availableRef = useRef<SpatialCard[]>([]);
+  const availableImageCards = useMemo(() => {
+    const next = cards.filter((c) => c.role === 'result' && c.type !== 'text' && c.tagIndex !== undefined);
+    // Keep the old array while it holds the same card objects, so video cards do not re-render for nothing.
+    const prev = availableRef.current;
+    if (next.length === prev.length && next.every((c, i) => c === prev[i])) return prev;
+    availableRef.current = next;
+    return next;
+  }, [cards]);
 
   const toWorld = useCallback(
     (clientX: number, clientY: number) => {
@@ -459,8 +471,32 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   // --- Connection lines -----------------------------------------------------
 
+  // --- Viewport culling ------------------------------------------------------
+
+  const [viewSize, setViewSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const measure = () => setViewSize({ width: el.clientWidth, height: el.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const visibleArea = useMemo(() => visibleWorldRect(transform, viewSize), [transform, viewSize]);
+  const linkSourceId = linkDrag?.sourceId;
+  // Off-screen cards are not mounted. Selected (so dragged) cards, a connection's source
+  // and cards waiting on a task stay mounted wherever they are.
+  const renderedCards = useMemo(
+    () => cardsToRender(cards, visibleArea, heightOf, (c) => selectedCardIds.has(c.id) || c.id === linkSourceId || isAwaitingTask(c)),
+    [cards, visibleArea, heightOf, selectedCardIds, linkSourceId]
+  );
+  const renderedKey = useMemo(() => renderedCards.map((c) => c.id).join(','), [renderedCards]);
+
   // Where each card's input slots sit (world px below the card's top), read from the
-  // rendered cards: slots follow their fields, which grow with the prompt.
+  // rendered cards: slots follow their fields, which grow with the prompt. Panning and
+  // zooming move nothing inside a card, so this reruns only when cards change or mount.
   const [slotOffsets, setSlotOffsets] = useState<SlotOffsets>({});
   useLayoutEffect(() => {
     const root = containerRef.current;
@@ -472,10 +508,16 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       if (!cardEl || !id) return;
       const s = slot.getBoundingClientRect();
       const top = cardEl.getBoundingClientRect().top;
-      (next[id] ??= {})[slot.dataset.slot as SlotKind] = Math.round((s.top + s.height / 2 - top) / transform.zoom);
+      (next[id] ??= {})[slot.dataset.slot as SlotKind] = Math.round((s.top + s.height / 2 - top) / transformRef.current.zoom);
     });
-    setSlotOffsets((prev) => (sameSlotOffsets(prev, next) ? prev : next));
-  });
+    // Cards scrolled out of view keep their last known slots; deleted ones are dropped.
+    setSlotOffsets((prev) => {
+      const ids = new Set(cardsRef.current.map((c) => c.id));
+      const merged: SlotOffsets = {};
+      for (const [id, offsets] of Object.entries({ ...prev, ...next })) if (ids.has(id)) merged[id] = offsets;
+      return sameSlotOffsets(prev, merged) ? prev : merged;
+    });
+  }, [cards, renderedKey]);
 
   const connectionRays = useMemo(() => {
     const rays: Ray[] = [];
@@ -496,6 +538,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           kind: 'reference',
           tone: RAY_TONE[src.type],
           pathData: bezier(srcX, srcY, tgtX, tgtY),
+          ends: [srcX, srcY, tgtX, tgtY],
           midX: (srcX + tgtX) / 2,
           midY: (srcY + tgtY) / 2,
           label: refTag(ref),
@@ -514,6 +557,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           kind: 'source',
           sourceLabel: card.origin?.label,
           pathData: bezier(srcX, srcY, tgtX, resultY),
+          ends: [srcX, srcY, tgtX, resultY],
           midX: (srcX + tgtX) / 2,
           midY: (srcY + resultY) / 2,
         });
@@ -529,6 +573,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           kind: 'prompt',
           tone: 'emerald',
           pathData: bezier(srcX, srcY, tgtX, promptY),
+          ends: [srcX, srcY, tgtX, promptY],
           midX: (srcX + tgtX) / 2,
           midY: (srcY + promptY) / 2,
           label: '提示词',
@@ -538,6 +583,11 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     }
     return rays;
   }, [cards, handleUpdateCard, slotOffsets]);
+
+  const visibleRays = useMemo(
+    () => connectionRays.filter(({ ends: [x1, y1, x2, y2] }) => lineMayCross(visibleArea, x1, y1, x2, y2, bulgeOf(x1, x2))),
+    [connectionRays, visibleArea]
+  );
 
   const dragSource = linkDrag ? cards.find((c) => c.id === linkDrag.sourceId) : undefined;
   const dragPath =
@@ -558,6 +608,36 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       return src ? { title: src.title, text: src.textOutput ?? '' } : undefined;
     },
     [cards]
+  );
+
+  const cardsById = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
+
+  // Handlers cards call: one object for the canvas's lifetime that always calls the latest.
+  const actionsRef = useRef<CardActions>(null!);
+  actionsRef.current = {
+    select: handleSelectCard,
+    startDrag: handleStartDragCard,
+    startConnect,
+    updateCard: handleUpdateCard,
+    triggerGenerate: onTriggerGenerate,
+    menuItems: cardMenuItems,
+    openViewer: setViewer,
+    notice: showNotice,
+    runAction: onRunAction,
+  };
+  const cardActions = useMemo<CardActions>(
+    () => ({
+      select: (e, card) => actionsRef.current.select(e, card),
+      startDrag: (e, card) => actionsRef.current.startDrag(e, card),
+      startConnect: (card, e) => actionsRef.current.startConnect(card, e),
+      updateCard: (id, patch, opts) => actionsRef.current.updateCard(id, patch, opts),
+      triggerGenerate: (id) => actionsRef.current.triggerGenerate(id),
+      menuItems: (card) => actionsRef.current.menuItems(card),
+      openViewer: (media) => actionsRef.current.openViewer(media),
+      notice: (msg) => actionsRef.current.notice(msg),
+      runAction: (id, action) => actionsRef.current.runAction?.(id, action),
+    }),
+    []
   );
 
   // --- Canvas mouse --------------------------------------------------------
@@ -687,7 +767,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           {/* SVG Connection Rays Layer */}
           <svg className="absolute top-0 left-0 w-[50000px] h-[50000px] pointer-events-none overflow-visible -translate-x-[25000px] -translate-y-[25000px]">
             <g transform="translate(25000, 25000)">
-              {connectionRays.map((ray) => {
+              {visibleRays.map((ray) => {
                 if (ray.kind === 'source') {
                   return (
                     <g key={ray.id}>
@@ -739,60 +819,25 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
           {/* Cards Render Layer */}
           <div className="pointer-events-auto">
-            {cards.map((card) => {
-              const common: CardViewProps = {
-                card,
-                isSelected: selectedCardIds.has(card.id),
-                connectHint: connectHintFor(card),
-                onSelect: (e) => handleSelectCard(e, card),
-                onStartDrag: (e) => handleStartDragCard(e, card),
-                onUpdateCard: handleUpdateCard,
-                onTriggerGenerate,
-                menuItems: cardMenuItems(card),
-                onOpenViewer: setViewer,
-              };
-              if (card.type === 'text') {
-                return (
-                  <TextCardView
-                    key={card.id}
-                    {...common}
-                    linkedCount={cards.filter((c) => c.promptSourceId === card.id).length}
-                    onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
-                    runsInProgress={card.role === 'generation' ? textRuns?.get(card.id) ?? 0 : 0}
-                    linkedPrompt={linkedPromptFor(card)}
-                    onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
-                  />
-                );
-              }
-              if (card.type === 'upload') {
-                return <UploadCardView key={card.id} {...common} onStartConnect={(e) => startConnect(card, e)} />;
-              }
-              if (card.type === 'image') {
-                return (
-                  <ImageCardView
-                    key={card.id}
-                    {...common}
-                    linkedPrompt={linkedPromptFor(card)}
-                    onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
-                    onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
-                    isSubmitting={!!submittingIds?.has(card.id)}
-                    runsInProgress={card.role === 'generation' ? runsInProgress(cards, card.id) : 0}
-                    onRunAction={onRunAction && card.role === 'result' ? (action) => onRunAction(card.id, action) : undefined}
-                    busyActionIds={card.resultActions?.length ? busyActionsOf(card) : undefined}
-                  />
-                );
-              }
+            {renderedCards.map((card) => {
+              const linkedSource = card.promptSourceId ? cardsById.get(card.promptSourceId) : undefined;
+              const runs =
+                card.role !== 'generation' ? 0 : card.type === 'text' ? textRuns?.get(card.id) ?? 0 : runsInProgress(cards, card.id);
               return (
-                <VideoCardView
+                <CanvasCard
                   key={card.id}
-                  {...common}
-                  availableImageCards={availableImageCards}
-                  linkedPrompt={linkedPromptFor(card)}
-                  onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
-                  onNotice={showNotice}
+                  card={card}
+                  actions={cardActions}
+                  isSelected={selectedCardIds.has(card.id)}
+                  connectHint={connectHintFor(card)}
+                  menuKey={describer && onDescribe ? 'describe' : ''}
+                  linkedCount={card.type === 'text' ? cards.filter((c) => c.promptSourceId === card.id).length : 0}
+                  linkedPromptTitle={linkedSource?.title}
+                  linkedPromptText={linkedSource?.textOutput}
+                  runsInProgress={runs}
                   isSubmitting={!!submittingIds?.has(card.id)}
-                  runsInProgress={card.role === 'generation' ? runsInProgress(cards, card.id) : 0}
-                  onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
+                  busyActionKey={card.resultActions?.length ? [...busyActionsOf(card)].sort().join(',') : ''}
+                  availableImageCards={card.type === 'video' ? availableImageCards : NO_CARDS}
                 />
               );
             })}

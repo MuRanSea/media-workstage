@@ -94,6 +94,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   // Cards on screen report their rendered height here; new result cards are placed clear of them.
   const [metrics] = useState(createCardMetrics);
   const measuredHeight = useCallback<HeightOf>((card) => metrics.get(card.id), [metrics]);
+  useEffect(() => metrics.retain(new Set(cards.map((c) => c.id))), [cards, metrics]);
 
   const updateTaskCards = useCallback((task: BackendTaskResponse) => {
     setCards((prev) => applyTaskToCards(prev, task, measuredHeight));

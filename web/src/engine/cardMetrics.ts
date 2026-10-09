@@ -2,14 +2,16 @@ import type { SpatialCard } from '../types/canvas.ts';
 import { estimateCardHeight } from './resultCards.ts';
 
 /**
- * Rendered heights of the cards on screen. The page measures them (a card's
- * height depends on its media and parameters, not on the document), so they
- * are never saved with the project.
+ * Rendered heights of the cards. The page measures them (a card's height
+ * depends on its media and parameters, not on the document), so they are never
+ * saved with the project. A card scrolled out of view keeps its last height.
  */
 export interface CardMetrics {
   get(id: string): number | undefined;
   set(id: string, height: number): void;
   remove(id: string): void;
+  /** Forgets every card not in `ids` (deleted cards). */
+  retain(ids: ReadonlySet<string>): void;
 }
 
 export function createCardMetrics(): CardMetrics {
@@ -22,6 +24,9 @@ export function createCardMetrics(): CardMetrics {
     },
     remove: (id) => {
       heights.delete(id);
+    },
+    retain: (ids) => {
+      for (const id of heights.keys()) if (!ids.has(id)) heights.delete(id);
     },
   };
 }

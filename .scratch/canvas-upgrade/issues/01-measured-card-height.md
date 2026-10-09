@@ -21,3 +21,4 @@ Parent: [../spec.md](../spec.md)
 - 2026-10-09 实现完成。新增 `engine/cardMetrics.ts`（运行时高度表 `CardMetrics`，`cardHeight` 为实测优先、缺失回退 `estimateCardHeight`）与 `components/cards/CardMetricsContext.tsx`（`useReportCardHeight`：每张卡挂载时 ResizeObserver 上报 `offsetHeight`，卸载时清除；高度为 0 视为隐藏，保留上一次的值）。`CardShell` 上报，`CanvasPage` 持有高度表，原先按 DOM 查询的 `measuredHeight` 改读高度表。`useSpatialCanvas` 新增必填参数 `heightOf`，适应视图、聚焦、框选、对齐、网格排列都用它；`layout.ts` 的 `getCardsBoundingBox` / `alignCards` / `autoArrangeGrid` 增加可选的 `heightOf` 参数。`layout.ts` 里仅保留命名常量 `DEFAULT_CARD_HEIGHT = 380`，给没有高度也没有测量的 `LayoutCard` 当兜底，画布路径都不会用到它。
 - 测试：新增 `cardMetrics.test.ts`（9 条，含底部对齐齐平、垂直居中、网格行高、卸载清除、零高度忽略）；全部 283 条通过，`tsc --noEmit` 通过。
 - 走查（新建临时工程，已删除）：两张高度 212 / 186 的卡，全选后底部对齐，两者底边同为 474；按 `0` 适应视图后上下留白相等（232.8 / 232.8），说明按真实高度居中。落盘的卡没有任何高度字段。控制台无报错。
+- 2026-10-09（工单 03）卡片卸载不再清除高度：被视口裁剪的卡要保留最后的高度，已删除的卡由 `CanvasPage` 按卡片列表 `retain`。
