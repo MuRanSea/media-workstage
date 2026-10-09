@@ -267,11 +267,24 @@ export async function apiListProviderModels(payload: ListModelsPayload): Promise
   return resp.json();
 }
 
+export interface TextImage {
+  card_id: string;
+  tag_index: number;
+  role: 'reference_image';
+  label: string;
+  url?: string;
+  /** Project-relative path; the backend reads the file and sends it as a data URI. */
+  local_path?: string;
+}
+
 export interface GenerateTextPayload {
+  project_id?: string;
   provider: ProviderId;
   model: string;
   system?: string;
   prompt: string;
+  /** Images connected to the text card, sent with the prompt in order (图1, 图2, …). */
+  images?: TextImage[];
 }
 
 /**

@@ -674,16 +674,25 @@ func (s *Server) handleTestConfig(c *gin.Context) {
 }
 
 type GenerateTextPayload struct {
-	Provider string `json:"provider" binding:"required"`
-	Model    string `json:"model" binding:"required"`
-	System   string `json:"system"`
-	Prompt   string `json:"prompt" binding:"required"`
+	ProjectID string `json:"project_id"`
+	Provider  string `json:"provider" binding:"required"`
+	Model     string `json:"model" binding:"required"`
+	System    string `json:"system"`
+	Prompt    string `json:"prompt" binding:"required"`
+	// Images connected to the text card, sent with the user turn in order.
+	Images []model.ReferenceItem `json:"images"`
 }
 
-// handleGenerateText runs a text card: one system + user turn against the provider's LLM.
+// handleGenerateText runs a text card: one system + user turn against the provider's LLM,
+// with the card's connected images when it has any.
 func (s *Server) handleGenerateText(c *gin.Context) {
 	var payload GenerateTextPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	images, err := s.textRunImages(payload.ProjectID, payload.Images)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -704,12 +713,54 @@ func (s *Server) handleGenerateText(c *gin.Context) {
 		Model:  payload.Model,
 		System: payload.System,
 		Prompt: payload.Prompt,
+		Images: images,
 	})
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"text": text})
+}
+
+// textRunImages turns a text card's image references into what an LLM takes: project
+// files as data URIs, links as they are. Asset-library ids only mean something to Seedance.
+func (s *Server) textRunImages(projectID string, refs []model.ReferenceItem) ([]string, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	if len(refs) > llm.MaxImages {
+		return nil, fmt.Errorf("文本模型一次最多带 %d 张图片", llm.MaxImages)
+	}
+	if projectID != "" {
+		if s.projects == nil {
+			return nil, errors.New("Project storage is not configured")
+		}
+		projectDir, err := s.projects.Dir(projectID)
+		if err != nil {
+			return nil, errors.New("Unknown project: " + projectID)
+		}
+		if err := resolveProjectReferences(projectDir, refs); err != nil {
+			return nil, err
+		}
+	}
+	images := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		switch {
+		case strings.HasPrefix(ref.URL, "asset://"):
+			return nil, fmt.Errorf("「%s」是素材库 ID，文本模型读不了；请改用链接或本地图片", ref.Label)
+		case ref.URL != "":
+			images = append(images, ref.URL)
+		case ref.LocalPath != "" && projectID != "":
+			uri, err := adapter.EncodeLocalAssetToBase64(ref.LocalPath)
+			if err != nil {
+				return nil, fmt.Errorf("读取图片「%s」失败: %w", ref.Label, err)
+			}
+			images = append(images, uri)
+		default:
+			return nil, fmt.Errorf("图片「%s」没有可用的地址", ref.Label)
+		}
+	}
+	return images, nil
 }
 
 type CreateTaskPayload struct {

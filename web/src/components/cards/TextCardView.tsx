@@ -4,7 +4,9 @@ import { MISSING_PROVIDER_HINT, buildProviderGroups, findModelOption, isProvider
 import { getTextPreset } from '../../engine/textPresets.ts';
 import { useChannels } from '../../services/channels.ts';
 import { Button } from '../ui/Button.tsx';
-import { OutputPort } from './CardPorts.tsx';
+import { InputSlot, LinkedPromptBox, OutputPort } from './CardPorts.tsx';
+import { TEXT_MAX_IMAGES } from '../../engine/connections.ts';
+import { mentionsTag, refTag } from '../../engine/refTags.ts';
 import { AutoTextarea, CardShell, ErrorBox, RunsBadge, SummaryRow } from './CardShell.tsx';
 import type { CardViewProps } from './cardProps.ts';
 import type { TextPreset } from '../../types/canvas.ts';
@@ -16,6 +18,9 @@ interface TextCardViewProps extends CardViewProps {
   onStartConnect?: (e: React.MouseEvent<HTMLDivElement>) => void;
   /** Generation cards: prompt-assistant requests still in flight. */
   runsInProgress?: number;
+  /** Generation cards: the text card whose output is this card's prompt. */
+  linkedPrompt?: { title: string; text: string };
+  onUnlinkPrompt?: () => void;
 }
 
 /**
@@ -35,6 +40,8 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
   linkedCount,
   onStartConnect,
   runsInProgress = 0,
+  linkedPrompt,
+  onUnlinkPrompt,
 }) => {
   const [copied, setCopied] = useState(false);
   const channels = useChannels();
@@ -144,23 +151,55 @@ export const TextCardView: React.FC<TextCardViewProps> = ({
     );
   }
 
+  const refs = card.references ?? [];
+
   return (
     <CardShell {...shellProps} badges={<RunsBadge count={runsInProgress} accent="emerald" />}>
       <SummaryRow model={preset.label} spec={modelLabel} />
       {noModelsHint}
-      <AutoTextarea
-        accent="emerald"
-        value={card.prompt}
-        onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
-        placeholder={preset.placeholder}
-      />
+      {/* Images go to the model with the prompt; the prompt can name them (@图N). */}
+      <div className="relative flex items-center gap-1.5 flex-wrap text-[11px]">
+        <InputSlot kind="reference" title="参考图输入：从图片或上传卡片右侧的圆点拖线到这张卡片，图片会和提示词一起发给模型" />
+        <span className="text-slate-500">参考图</span>
+        {refs.map((ref) => (
+          <button
+            key={ref.cardId}
+            type="button"
+            title={`插入 ${refTag(ref)} 到提示词`}
+            onClick={() => !linkedPrompt && !mentionsTag(card.prompt, refTag(ref)) && onUpdateCard(card.id, { prompt: `${card.prompt} ${refTag(ref)}`.trim() })}
+            className="font-mono px-1.5 py-px rounded-md border bg-pink-500/15 text-pink-300 border-pink-500/30 hover:bg-pink-500/25"
+          >
+            {refTag(ref)}
+          </button>
+        ))}
+        {refs.length === 0 ? (
+          <span className="text-slate-600">从左侧圆点连入图片，看图写提示词</span>
+        ) : (
+          <span className="ml-auto text-slate-600 font-mono">
+            {refs.length}/{TEXT_MAX_IMAGES}
+          </span>
+        )}
+      </div>
+      <div className="relative">
+        <InputSlot kind="prompt" />
+        {linkedPrompt ? (
+          <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
+        ) : (
+          <AutoTextarea
+            accent="emerald"
+            value={card.prompt}
+            onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
+            placeholder={preset.placeholder}
+          />
+        )}
+      </div>
       {card.errorMessage && <ErrorBox message={card.errorMessage} />}
       {/* Runs may overlap: each one adds its own result card. */}
       <Button
         variant="primary"
         accent="emerald"
         block
-        disabled={missing || !card.model || !card.prompt.trim()}
+        disabled={missing || !card.model || (!linkedPrompt && !card.prompt.trim())}
         onClick={() => onTriggerGenerate(card.id)}
         icon={missing ? undefined : <Sparkles className="w-3.5 h-3.5" />}
       >

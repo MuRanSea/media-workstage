@@ -16,7 +16,7 @@ import { Button, useToast } from './ui/index.ts';
 import { compileCardImagePayload } from '../engine/compiler.ts';
 import { compileCardVideoPayload } from '../engine/videoCompiler.ts';
 import { withEffectivePrompt } from '../engine/connections.ts';
-import { getTextPreset } from '../engine/textPresets.ts';
+import { compileTextPayload } from '../engine/textCompiler.ts';
 import { MISSING_PROVIDER_HINT, isProviderMissing } from '../engine/channelModels.ts';
 import { useChannels } from '../services/channels.ts';
 import {
@@ -30,7 +30,7 @@ import {
   type TextRunOutcome,
 } from '../engine/resultCards.ts';
 import { compileActionPayload, compileDescribePayload, findDescribeProvider, isMidjourney } from '../engine/midjourney.ts';
-import type { BackendTaskResponse } from '../services/api.ts';
+import type { BackendTaskResponse, GenerateTextPayload } from '../services/api.ts';
 import { cardsAwaitingTask, normalizeCards, normalizeViewport, restoredAwaitingTask } from '../engine/projectDoc.ts';
 import { setActiveProjectId } from '../engine/assetPaths.ts';
 import { useAutosave } from '../engine/useAutosave.ts';
@@ -168,16 +168,16 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   const runTextGeneration = async (card: SpatialCard) => {
     const settle = (outcome: TextRunOutcome) =>
       setCards((prev) => settleTextRun(prev, card, outcome, measuredHeight));
-    if (!card.provider || !card.model) return settle({ error: '请先选择服务商和模型' });
-    if (!card.prompt.trim()) return settle({ error: '请先填写想法' });
+    let payload: GenerateTextPayload;
+    try {
+      // A linked text card supplies the prompt; connected images go along.
+      payload = compileTextPayload(card, cards);
+    } catch (err) {
+      return settle({ error: (err as Error).message });
+    }
     countTextRun(card.id, 1);
     try {
-      const { text } = await apiGenerateText({
-        provider: card.provider,
-        model: card.model,
-        system: getTextPreset(card.textPreset).system,
-        prompt: card.prompt,
-      });
+      const { text } = await apiGenerateText({ ...payload, project_id: projectId });
       settle({ text });
     } catch (err) {
       settle({ error: (err as Error).message || '文本生成失败' });

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Copy, FileText, Film, Image as ImageIcon, ScanText, Sparkles, Trash2, Upload } from 'lucide-react';
 import type { CardType, ResultActionDto, SpatialCard, UploadKind } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
@@ -15,7 +15,7 @@ import { ImageCardView } from './cards/ImageCardView.tsx';
 import { VideoCardView } from './cards/VideoCardView.tsx';
 import { TextCardView } from './cards/TextCardView.tsx';
 import { UploadCardView } from './cards/UploadCardView.tsx';
-import { PORT_Y, type ConnectHint } from './cards/CardPorts.tsx';
+import { PORT_Y, type ConnectHint, type SlotKind } from './cards/CardPorts.tsx';
 import type { CardViewProps } from './cards/cardProps.ts';
 import { InspectorPanel, INSPECTOR_WIDTH } from './inspector/InspectorPanel.tsx';
 import { NavigationDock } from './NavigationDock.tsx';
@@ -60,6 +60,15 @@ interface Ray {
   /** Label pill with a disconnect button; source lines (generation → result) have none. */
   label?: string;
   onRemove?: () => void;
+}
+
+/** Per card, the y of each input slot below the card's top (world px). */
+type SlotOffsets = Record<string, Partial<Record<SlotKind, number>>>;
+
+function sameSlotOffsets(a: SlotOffsets, b: SlotOffsets): boolean {
+  const ids = Object.keys(a);
+  if (ids.length !== Object.keys(b).length) return false;
+  return ids.every((id) => b[id] && a[id].prompt === b[id].prompt && a[id].reference === b[id].reference);
 }
 
 /** In-progress connection drag: from a card's output port to the cursor (world coords). */
@@ -444,13 +453,32 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   // --- Connection lines -----------------------------------------------------
 
+  // Where each card's input slots sit (world px below the card's top), read from the
+  // rendered cards: slots follow their fields, which grow with the prompt.
+  const [slotOffsets, setSlotOffsets] = useState<SlotOffsets>({});
+  useLayoutEffect(() => {
+    const root = containerRef.current;
+    if (!root) return;
+    const next: SlotOffsets = {};
+    root.querySelectorAll<HTMLElement>('[data-slot]').forEach((slot) => {
+      const cardEl = slot.closest<HTMLElement>('[data-card-id]');
+      const id = cardEl?.dataset.cardId;
+      if (!cardEl || !id) return;
+      const s = slot.getBoundingClientRect();
+      const top = cardEl.getBoundingClientRect().top;
+      (next[id] ??= {})[slot.dataset.slot as SlotKind] = Math.round((s.top + s.height / 2 - top) / transform.zoom);
+    });
+    setSlotOffsets((prev) => (sameSlotOffsets(prev, next) ? prev : next));
+  });
+
   const connectionRays = useMemo(() => {
     const rays: Ray[] = [];
     const byId = new Map(cards.map((c) => [c.id, c]));
 
     for (const card of cards) {
       const tgtX = card.x;
-      const tgtY = card.y + PORT_Y;
+      const slotY = (kind: SlotKind) => card.y + (slotOffsets[card.id]?.[kind] ?? PORT_Y);
+      const tgtY = slotY('reference');
 
       card.references?.forEach((ref) => {
         const src = byId.get(ref.cardId);
@@ -474,13 +502,14 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       if (generation) {
         const srcX = generation.x + generation.width;
         const srcY = generation.y + PORT_Y;
+        const resultY = card.y + PORT_Y;
         rays.push({
           id: `source:${generation.id}->${card.id}`,
           kind: 'source',
           sourceLabel: card.origin?.label,
-          pathData: bezier(srcX, srcY, tgtX, tgtY),
+          pathData: bezier(srcX, srcY, tgtX, resultY),
           midX: (srcX + tgtX) / 2,
-          midY: (srcY + tgtY) / 2,
+          midY: (srcY + resultY) / 2,
         });
       }
 
@@ -488,20 +517,21 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       if (textSrc) {
         const srcX = textSrc.x + textSrc.width;
         const srcY = textSrc.y + PORT_Y;
+        const promptY = slotY('prompt');
         rays.push({
           id: `prompt:${textSrc.id}->${card.id}`,
           kind: 'prompt',
           tone: 'emerald',
-          pathData: bezier(srcX, srcY, tgtX, tgtY),
+          pathData: bezier(srcX, srcY, tgtX, promptY),
           midX: (srcX + tgtX) / 2,
-          midY: (srcY + tgtY) / 2,
+          midY: (srcY + promptY) / 2,
           label: '提示词',
           onRemove: () => handleUpdateCard(card.id, { promptSourceId: undefined }),
         });
       }
     }
     return rays;
-  }, [cards, handleUpdateCard]);
+  }, [cards, handleUpdateCard, slotOffsets]);
 
   const dragSource = linkDrag ? cards.find((c) => c.id === linkDrag.sourceId) : undefined;
   const dragPath =
@@ -723,6 +753,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                     linkedCount={cards.filter((c) => c.promptSourceId === card.id).length}
                     onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
                     runsInProgress={card.role === 'generation' ? textRuns?.get(card.id) ?? 0 : 0}
+                    linkedPrompt={linkedPromptFor(card)}
+                    onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
                   />
                 );
               }
