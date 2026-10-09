@@ -39,6 +39,13 @@ describe('connectCards', () => {
     expect(res.patch.prompt).toBe('镜头推进 @图3');
   });
 
+  it('tags the prompt even when it already mentions a longer number with the same start', () => {
+    const res = connectCards(img, video({ prompt: '参考 @图31 的光线' }));
+    expect(res.ok && res.patch.prompt).toBe('参考 @图31 的光线 @图3');
+    const kept = connectCards(img, video({ prompt: '以 @图3 为主体' }));
+    expect(kept.ok && kept.patch.prompt).toBe('以 @图3 为主体');
+  });
+
   it('switches a text-to-video card to a mode that takes images', () => {
     const seedance = connectCards(img, video({ mode: 'text_to_video' }));
     expect(seedance.ok && seedance.patch.mode).toBe('all_modal');
@@ -239,6 +246,24 @@ describe('removeCards', () => {
     expect(next[1].promptSourceId).toBeUndefined();
     expect(next[1].references?.map((r) => r.cardId)).toEqual(['ri2']);
     expect(next[2]).toEqual(untouched);
+  });
+
+  it("takes a deleted reference card's tag out of the prompt, as disconnecting it does", () => {
+    const r3 = card({ id: 'r3', type: 'image', role: 'result', tagIndex: 3 });
+    const r31 = card({ id: 'r31', type: 'image', role: 'result', tagIndex: 31 });
+    const linked = video({
+      role: 'generation',
+      prompt: '@图3 走进 @图31 的雨夜',
+      references: [
+        { cardId: 'r3', tagIndex: 3, role: 'reference_image', label: 'a' },
+        { cardId: 'r31', tagIndex: 31, role: 'reference_image', label: 'b' },
+      ],
+    });
+
+    const next = removeCards([r3, r31, linked], ['r3']);
+
+    expect(next[1].prompt).toBe('走进 @图31 的雨夜');
+    expect(next[1].references?.map((r) => r.cardId)).toEqual(['r31']);
   });
 
   it('deleting a linked result card leaves its generation card and sibling results untouched', () => {

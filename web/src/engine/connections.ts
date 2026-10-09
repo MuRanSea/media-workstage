@@ -1,7 +1,7 @@
 import { maxReferenceVideos, resolveVideoModelDef, type ReferenceItem, type SpatialCard } from '../types/canvas.ts';
 import { inferVideoProvider } from './videoCompiler.ts';
 import { protocolOf } from './providers.ts';
-import { refTag } from './refTags.ts';
+import { mentionsTag, refTag, withoutRefTag } from './refTags.ts';
 import { MJ_MAX_REFERENCES, isMidjourney } from './midjourney.ts';
 
 export type ConnectResult =
@@ -92,7 +92,7 @@ function attachImageToVideo(image: SpatialCard, video: SpatialCard): ConnectResu
     label: image.title.slice(0, 10),
   };
   const tag = refTag(newRef);
-  const prompt = video.prompt.includes(tag) ? video.prompt : `${video.prompt} ${tag}`.trim();
+  const prompt = mentionsTag(video.prompt, tag) ? video.prompt : `${video.prompt} ${tag}`.trim();
 
   return { ok: true, patch: { mode, ratio, prompt, references: [...refs, newRef] } };
 }
@@ -133,7 +133,7 @@ function attachVideoToVideo(clip: SpatialCard, video: SpatialCard): ConnectResul
     label: clip.title.slice(0, 10),
   };
   const tag = refTag(newRef);
-  const prompt = video.prompt.includes(tag) ? video.prompt : `${video.prompt} ${tag}`.trim();
+  const prompt = mentionsTag(video.prompt, tag) ? video.prompt : `${video.prompt} ${tag}`.trim();
   return { ok: true, patch: { mode: 'all_modal', prompt, references: [...refs, newRef] } };
 }
 
@@ -170,11 +170,13 @@ export function removeCards(cards: SpatialCard[], ids: Iterable<string>): Spatia
   return cards
     .filter((c) => !gone.has(c.id))
     .map((c) => {
-      const refs = c.references?.filter((r) => !gone.has(r.cardId));
+      const dropped = c.references?.filter((r) => gone.has(r.cardId)) ?? [];
       const promptSourceId = c.promptSourceId && gone.has(c.promptSourceId) ? undefined : c.promptSourceId;
       const sourceId = c.sourceId && gone.has(c.sourceId) ? undefined : c.sourceId;
-      return refs?.length !== c.references?.length || promptSourceId !== c.promptSourceId || sourceId !== c.sourceId
-        ? { ...c, references: refs, promptSourceId, sourceId }
-        : c;
+      if (!dropped.length && promptSourceId === c.promptSourceId && sourceId === c.sourceId) return c;
+      // A deleted reference's tag leaves the prompt, as when it is disconnected: left in,
+      // it would be sent as 图N and name whichever image is Nth.
+      const prompt = dropped.reduce((text, ref) => withoutRefTag(text, ref), c.prompt);
+      return { ...c, prompt, references: c.references?.filter((r) => !gone.has(r.cardId)), promptSourceId, sourceId };
     });
 }

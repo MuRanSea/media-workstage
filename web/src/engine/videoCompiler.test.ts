@@ -190,6 +190,51 @@ describe('Video Task Payload Compiler & Asset Resolution', () => {
     expect(payload.reference_assets?.[1].url).toBeUndefined();
   });
 
+  it('keeps each mention on its own image when references are linked out of tag order', () => {
+    const image = (id: string, tagIndex: number): SpatialCard => ({
+      id,
+      role: 'result',
+      type: 'image',
+      title: id,
+      tagIndex,
+      x: 0,
+      y: 0,
+      width: 340,
+      prompt: '',
+      model: 'doubao-seedream-5-0-pro-260628',
+      status: 'succeeded',
+      progress: 100,
+      resultUrl: `assets/images/${id}/base.png`,
+    });
+    const videoCard: SpatialCard = {
+      id: 'v-1',
+      role: 'generation',
+      type: 'video',
+      title: '镜头',
+      x: 0,
+      y: 0,
+      width: 460,
+      model: 'doubao-seedance-2-5-260628',
+      prompt: '@图1 作为背景，@图5 是主角',
+      status: 'idle',
+      progress: 0,
+      mode: 'all_modal',
+      // @图5 was linked first, so it is sent as 图1 and @图1 as 图2.
+      references: [
+        { cardId: 'c-5', tagIndex: 5, role: 'reference_image', label: '主角' },
+        { cardId: 'c-1', tagIndex: 1, role: 'reference_image', label: '背景' },
+      ],
+    };
+
+    const payload = compileCardVideoPayload(videoCard, [image('c-1', 1), image('c-5', 5)]);
+
+    expect(payload.prompt).toBe('图2 作为背景，图1 是主角');
+    expect(payload.reference_assets?.map((r) => [r.card_id, r.tag_index])).toEqual([
+      ['c-5', 1],
+      ['c-1', 2],
+    ]);
+  });
+
   it('forces ratio to adaptive in first_last_frame mode and assigns roles', () => {
     const card1: SpatialCard = {
       id: 'c-1',
