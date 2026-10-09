@@ -239,7 +239,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     name: 'MiniMax H3',
     tag: '海螺2K高动态',
     protocol: 'minimax',
-    resolutions: ['720P', '1080P', '2K'],
+    resolutions: ['768P', '2K'],
     durations: [5, 6, 10, 15],
     ratios: ['16:9', '9:16', '1:1'],
     supportsAudio: true,

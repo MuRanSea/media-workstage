@@ -210,7 +210,7 @@ export function compileVideoTaskPayload(
   }
 
   const params: Record<string, unknown> = {
-    resolution: card.resolution ?? (isMiniMax ? '1080P' : '720p'),
+    resolution: card.resolution ?? (isMiniMax ? modelDef.resolutions[0] : '720p'),
     duration: card.duration ?? (isMiniMax ? 6 : 5),
     ratio,
     seed: typeof card.seed === 'number' && !isNaN(card.seed) ? card.seed : -1,

@@ -123,6 +123,6 @@ describe('APIMart video readiness', () => {
     );
     expect(groups[0].options[0]).toMatchObject({ id: 'MiniMax-H3', label: 'MiniMax H3', ready: true });
     expect(resolveVideoModelDef('apimart', 'MiniMax-H3')).toMatchObject({ resolutions: ['768P', '2K'], maxRefs: 9 });
-    expect(resolveVideoModelDef('minimax', 'MiniMax-H3')).toMatchObject({ resolutions: ['720P', '1080P', '2K'], maxRefs: 2 });
+    expect(resolveVideoModelDef('minimax', 'MiniMax-H3')).toMatchObject({ resolutions: ['768P', '2K'], maxRefs: 2 });
   });
 });
