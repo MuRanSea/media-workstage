@@ -56,6 +56,7 @@ type MediaTask struct {
 	ResultActions      []ResultAction `gorm:"serializer:json;type:text" json:"result_actions,omitempty"` // Follow-ups offered on the result
 	ResultText         string         `gorm:"type:text" json:"result_text,omitempty"`                    // Text output (e.g. Midjourney Describe)
 	CreatedAt          time.Time      `gorm:"index;not null" json:"created_at"`
+	SubmittedAt        *time.Time     `json:"submitted_at,omitempty"` // Accepted by the provider; the poll deadline counts from here
 	UpdatedAt          time.Time      `gorm:"not null" json:"updated_at"`
 	CompletedAt        *time.Time     `json:"completed_at,omitempty"`
 	Assets             []TaskAsset    `gorm:"foreignKey:TaskID;constraint:OnDelete:CASCADE" json:"assets,omitempty"`

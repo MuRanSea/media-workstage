@@ -174,11 +174,11 @@ func (a *APIMartAdapter) PollTask(ctx context.Context, task *model.MediaTask) (*
 	}
 }
 
-// PollTimeout gives APIMart's queued jobs more than the poller's defaults: image jobs
-// often take 1–3 minutes, Kling videos (pro / 4K, 10–15 s) can take far longer.
+// PollTimeout gives APIMart's queued image jobs more than the poller's image default:
+// they often take 1–3 minutes. Videos already get the poller's long video default.
 func (a *APIMartAdapter) PollTimeout(task *model.MediaTask) time.Duration {
 	if task.TaskType == "video_generation" {
-		return 30 * time.Minute
+		return 0
 	}
 	return 10 * time.Minute
 }

@@ -246,7 +246,8 @@ func TestAPIMartVideoPoll_ReadsVideosInEitherURLShape(t *testing.T) {
 		assert.Equal(t, "https://cdn/v.mp4", res.Assets[0].RemoteURL)
 		assert.Equal(t, "videos/vt-1/output.mp4", res.Assets[0].LocalPath)
 	}
-	assert.Equal(t, 30*60, int(NewAPIMartAdapter(ChannelConfig{}).PollTimeout(videoTask("kling-v3", nil)).Seconds()))
+	// Videos keep the poller's own (longer) video timeout.
+	assert.Zero(t, NewAPIMartAdapter(ChannelConfig{}).PollTimeout(videoTask("kling-v3", nil)))
 }
 
 // Kling Omni takes its reference video in video_list (default: the video to edit, never

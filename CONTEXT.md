@@ -88,7 +88,7 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   The local filesystem repository responsible for caching uploaded reference assets, downloading finished generation outputs, and serving them via local HTTP endpoints.
 
 - **TaskPoller (任务轮询调度器)**:
-  The backend worker pool that queries cloud provider task status endpoints at configured intervals until a terminal state is reached, featuring smart backoff, IPM rate-limiting protection, and startup recovery.
+  The backend scheduler that submits tasks (a bounded number at once) and queries cloud provider task status endpoints at configured intervals until a terminal state is reached or the poll timeout passes (48 hours for videos, counted from submission), featuring IPM rate-limiting protection and startup recovery: a task the app was closed on resumes polling by its stored provider task ID.
 
 - **SyncEvent (同步事件)**:
   Real-time state broadcast pushed from the backend to the frontend canvas via SSE (`GET /api/tasks/events`).

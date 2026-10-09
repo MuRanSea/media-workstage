@@ -50,7 +50,8 @@ type ConfigurableAdapter interface {
 	UpdateConfig(baseURL string, apiKey string, extra map[string]string) error
 }
 
-// PollTimeoutHinter lets an adapter extend the poller's default timeout for slow providers.
+// PollTimeoutHinter lets an adapter extend the poller's default timeout for slow providers;
+// a hint shorter than the default is ignored.
 type PollTimeoutHinter interface {
 	PollTimeout(task *model.MediaTask) time.Duration
 }
