@@ -80,6 +80,12 @@ fn build_window(app: &AppHandle, port: Arc<AtomicU16>) -> tauri::Result<()> {
             NewWindowResponse::Deny
         })
         .build()?;
+    // The splash page follows the system theme; so does what shows behind it.
+    if let Some(window) = app.get_webview_window("main") {
+        if matches!(window.theme(), Ok(tauri::Theme::Light)) {
+            let _ = window.set_background_color(Some(Color(243, 244, 248, 255)));
+        }
+    }
     Ok(())
 }
 

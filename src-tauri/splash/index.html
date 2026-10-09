@@ -29,6 +29,10 @@
       }
       @keyframes spin { to { transform: rotate(360deg); } }
       p { margin: 0; font-size: 14px; letter-spacing: 0.04em; }
+      @media (prefers-color-scheme: light) {
+        html, body { background: #f3f4f8; color: #475569; }
+        .spinner { border-color: #dfe3ec; border-top-color: #7c3aed; }
+      }
     </style>
   </head>
   <body>

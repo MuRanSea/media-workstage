@@ -45,7 +45,7 @@ export function Segmented<T extends string | number>({
             } ${
               selected
                 ? ACCENT[accent].active
-                : 'bg-slate-800/70 text-slate-300 hover:bg-slate-700/80 hover:text-white'
+                : 'bg-slate-800/70 text-slate-300 hover:bg-slate-700/80 hover:text-slate-50'
             }`}
           >
             {opt.label}

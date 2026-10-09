@@ -64,7 +64,7 @@ export const NavigationDock: React.FC<NavigationDockProps> = ({
       type="button"
       onClick={onResetZoom}
       title="缩放到 100%（1）"
-      className="h-8 min-w-[52px] px-1.5 rounded-lg text-xs font-mono hover:bg-slate-800 hover:text-white"
+      className="h-8 min-w-[52px] px-1.5 rounded-lg text-xs font-mono hover:bg-slate-800 hover:text-slate-50"
     >
       {Math.round(zoom * 100)}%
     </button>

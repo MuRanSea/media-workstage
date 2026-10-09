@@ -19,7 +19,7 @@ export const InputPort: React.FC = () => (
   <div
     title="输入：从其他卡片右侧的圆点拖线到这张卡片"
     style={{ top: PORT_Y - 7 }}
-    className="absolute -left-[8px] w-3.5 h-3.5 rounded-full border-2 border-slate-500 bg-[#12141e] shadow"
+    className="absolute -left-[8px] w-3.5 h-3.5 rounded-full border-2 border-slate-500 bg-canvas-surface shadow"
   />
 );
 
@@ -37,7 +37,7 @@ export const OutputPort: React.FC<{
       onStart(e);
     }}
     style={{ top: PORT_Y - 8 }}
-    className={`absolute -right-[9px] w-4 h-4 rounded-full border-2 bg-[#12141e] cursor-crosshair shadow-lg transition hover:scale-125 ${
+    className={`absolute -right-[9px] w-4 h-4 rounded-full border-2 bg-canvas-surface cursor-crosshair shadow-lg transition hover:scale-125 ${
       color === 'pink'
         ? 'border-pink-400 shadow-pink-500/40'
         : color === 'amber'

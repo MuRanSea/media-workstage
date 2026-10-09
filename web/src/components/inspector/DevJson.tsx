@@ -23,7 +23,7 @@ export const DevJson: React.FC<{ compile: () => unknown }> = ({ compile }) => {
         开发者：查看请求 JSON
       </button>
       {open && (
-        <pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-black/60 border border-canvas-border p-2.5 text-[11px] leading-relaxed font-mono text-slate-300 select-text whitespace-pre-wrap break-all">
+        <pre className="mt-2 max-h-72 overflow-auto rounded-lg bg-slate-950/60 border border-canvas-border p-2.5 text-[11px] leading-relaxed font-mono text-slate-300 select-text whitespace-pre-wrap break-all">
           {json}
         </pre>
       )}

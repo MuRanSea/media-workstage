@@ -174,7 +174,7 @@ export const UploadCardView: React.FC<UploadCardViewProps> = ({
               type="button"
               disabled={busy}
               onClick={() => inputRef.current?.click()}
-              className="flex items-center gap-0.5 text-slate-400 hover:text-white flex-shrink-0 disabled:opacity-40"
+              className="flex items-center gap-0.5 text-slate-400 hover:text-slate-50 flex-shrink-0 disabled:opacity-40"
             >
               <RefreshCw className="w-3 h-3" /> 更换
             </button>

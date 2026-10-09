@@ -98,7 +98,7 @@ export const CardShell: React.FC<CardShellProps> = ({
               onMouseDown={(e) => e.stopPropagation()}
               onClick={toggle}
               className={`w-7 h-7 flex items-center justify-center rounded-lg transition ${
-                open ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-white hover:bg-slate-800'
+                open ? 'bg-slate-800 text-slate-50' : 'text-slate-500 hover:text-slate-50 hover:bg-slate-800'
               }`}
             >
               <MoreHorizontal className="w-4 h-4" />
@@ -218,7 +218,7 @@ export const GeneratingOverlay: React.FC<{ progress: number; label?: string }> =
 export const StatusChip: React.FC<{ status: SpatialCard['status'] }> = ({ status }) => {
   if (status === 'succeeded') {
     return (
-      <span className="absolute top-2 right-2 px-1.5 py-px rounded-md bg-black/70 text-[11px] text-emerald-300 flex items-center gap-1 pointer-events-none">
+      <span data-theme="dark" className="absolute top-2 right-2 px-1.5 py-px rounded-md bg-black/70 text-[11px] text-emerald-300 flex items-center gap-1 pointer-events-none">
         <Check className="w-3 h-3" /> 已完成
       </span>
     );
