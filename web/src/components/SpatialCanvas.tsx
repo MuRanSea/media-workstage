@@ -16,6 +16,7 @@ import { PORT_Y, type ConnectHint, type SlotKind } from './cards/CardPorts.tsx';
 import { CanvasCard, type CardActions } from './CanvasCard.tsx';
 import { Minimap, useMinimapVisible } from './Minimap.tsx';
 import { cardsToRender, isAwaitingTask, lineMayCross, visibleWorldRect } from '../engine/culling.ts';
+import { dropOptions, type DropCardType, type DropRole } from '../engine/dropToCreate.ts';
 import { InspectorPanel, INSPECTOR_WIDTH } from './inspector/InspectorPanel.tsx';
 import { NavigationDock } from './NavigationDock.tsx';
 import { ADD_CARD_ITEMS, CanvasHeader } from './CanvasHeader.tsx';
@@ -106,6 +107,19 @@ const bezier = (srcX: number, srcY: number, tgtX: number, tgtY: number) => {
 };
 
 const NO_CARDS: SpatialCard[] = [];
+
+const DROP_CARD_LABEL: Record<DropCardType, string> = { text: '文本卡片', image: '图片卡片', video: '视频卡片' };
+const DROP_CARD_ICON: Record<DropCardType, React.ReactNode> = {
+  text: <FileText className="w-4 h-4 text-emerald-400" />,
+  image: <ImageIcon className="w-4 h-4 text-pink-400" />,
+  video: <Film className="w-4 h-4 text-indigo-400" />,
+};
+const DROP_ROLE_HINT: Record<DropRole, string> = {
+  prompt: '作为提示词',
+  reference_image: '作为参考图',
+  reference_video: '作为参考视频',
+  read_image: '让模型读图',
+};
 
 const isTyping = () => {
   const el = document.activeElement as HTMLElement | null;
@@ -436,6 +450,38 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   const showNotice = useCallback((msg: string) => toast(msg, { tone: 'warning' }), [toast]);
 
+  /** Whether a point is on the canvas background: not on a card, a panel or the header. */
+  const isEmptyCanvasAt = (clientX: number, clientY: number): boolean => {
+    const el = document.elementFromPoint(clientX, clientY);
+    return !!el && !!containerRef.current?.contains(el) && !el.closest('[data-card-id]');
+  };
+
+  /** A connection dropped on empty canvas: offer the cards it could feed, created there and wired up. */
+  const offerNewCardAt = (source: SpatialCard, clientX: number, clientY: number) => {
+    const at = toWorld(clientX, clientY);
+    const options = dropOptions(source, at, cardsRef.current);
+    if (options.length === 0) {
+      showNotice('这张卡片的输出不能接到新卡片上');
+      return;
+    }
+    setContextMenu({
+      at: { x: clientX, y: clientY },
+      title: '新建卡片并连接',
+      items: options.map(({ type, role }) => ({
+        label: DROP_CARD_LABEL[type],
+        hint: DROP_ROLE_HINT[role],
+        icon: DROP_CARD_ICON[type],
+        onSelect: () => {
+          // Recomputed now: the canvas may have changed while the menu was open.
+          const option = dropOptions(source, at, cardsRef.current).find((o) => o.type === type);
+          if (!option) return;
+          editCards((prev) => [...prev, option.card]);
+          setSelectedCardIds(new Set([option.card.id]));
+        },
+      })),
+    });
+  };
+
   useEffect(() => {
     if (!linkDrag) return;
     const sourceId = linkDrag.sourceId;
@@ -447,8 +493,11 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     const onUp = (e: MouseEvent) => {
       setLinkDrag(null);
       const targetId = cardIdAt(e.clientX, e.clientY, sourceId);
-      if (!targetId) return;
       const source = cards.find((c) => c.id === sourceId);
+      if (!targetId) {
+        if (source && isEmptyCanvasAt(e.clientX, e.clientY)) offerNewCardAt(source, e.clientX, e.clientY);
+        return;
+      }
       const target = cards.find((c) => c.id === targetId);
       if (!source || !target) return;
       const res = connectCards(source, target);

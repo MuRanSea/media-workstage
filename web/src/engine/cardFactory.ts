@@ -20,8 +20,13 @@ export function newCardId(): string {
 
 /** Top-left for a card centred on `at`, stepped down-right while another card already sits there. */
 export function placeCard(at: Point, width: number, cards: SpatialCard[]): Point {
-  let x = Math.round(at.x - width / 2);
-  let y = Math.round(at.y - 120);
+  return cascadeFrom({ x: at.x - width / 2, y: at.y - 120 }, cards);
+}
+
+/** `topLeft`, stepped down and right while a card already sits (almost) exactly there. */
+export function cascadeFrom(topLeft: Point, cards: SpatialCard[]): Point {
+  let x = Math.round(topLeft.x);
+  let y = Math.round(topLeft.y);
   for (let i = 0; i < 50 && cards.some((c) => Math.abs(c.x - x) < 8 && Math.abs(c.y - y) < 8); i++) {
     x += CASCADE;
     y += CASCADE;
