@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -220,4 +221,62 @@ func TestResolveProjectReferences(t *testing.T) {
 
 	bad := []model.ReferenceItem{{LocalPath: "assets/../../secret.txt"}}
 	assert.Error(t, resolveProjectReferences(dir, bad))
+}
+
+func TestProjectsAPI_ExportImportDuplicate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database, err := db.InitDB(filepath.Join(t.TempDir(), "p.db"))
+	require.NoError(t, err)
+	sqlDB, _ := database.DB()
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	store, err := project.NewStore(t.TempDir())
+	require.NoError(t, err)
+	r := NewServer(database, t.TempDir(), adapter.NewAdapterRegistry(nil), store).SetupRouter()
+
+	w := postJSON(r, "/api/projects", map[string]string{"name": "片子"})
+	require.Equal(t, http.StatusCreated, w.Code)
+	var created project.Document
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	w = sendJSON(r, http.MethodGet, "/api/projects/"+created.ID+"/export", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/zip", w.Header().Get("Content-Type"))
+	assert.Contains(t, w.Header().Get("Content-Disposition"), "filename*=UTF-8''%E7%89%87%E5%AD%90.zip")
+	zipData := w.Body.Bytes()
+
+	upload := func(name string, data []byte) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		part, _ := mw.CreateFormFile("file", name)
+		_, _ = part.Write(data)
+		_ = mw.Close()
+		req, _ := http.NewRequest(http.MethodPost, "/api/projects/import", &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec
+	}
+
+	w = upload("片子.zip", zipData)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var imported project.Document
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &imported))
+	assert.NotEqual(t, created.ID, imported.ID)
+	assert.Equal(t, "片子 (2)", imported.Name)
+
+	w = upload("x.zip", []byte("not a zip"))
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = sendJSON(r, http.MethodPost, "/api/projects/"+created.ID+"/duplicate", nil)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var copied project.Document
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &copied))
+	assert.Equal(t, "片子 副本", copied.Name)
+
+	w = sendJSON(r, http.MethodGet, "/api/projects", nil)
+	var list struct {
+		Projects []project.Summary `json:"projects"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
+	assert.Len(t, list.Projects, 3)
 }

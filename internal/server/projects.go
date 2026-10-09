@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -42,6 +43,10 @@ func (s *Server) registerProjectRoutes(api *gin.RouterGroup) {
 	projects.PATCH("/:id", s.sameOriginOnlyMiddleware(), s.handleRenameProject)
 	projects.DELETE("/:id", s.sameOriginOnlyMiddleware(), s.handleDeleteProject)
 	projects.POST("/:id/reveal", s.sameOriginOnlyMiddleware(), s.handleRevealProject)
+	projects.POST("/import", s.sameOriginOnlyMiddleware(), s.handleImportProject)
+	projects.POST("/:id/duplicate", s.sameOriginOnlyMiddleware(), s.handleDuplicateProject)
+	projects.GET("/:id/export", s.handleExportProject)
+	projects.POST("/:id/export", s.sameOriginOnlyMiddleware(), s.handleExportProjectToFolder)
 	projects.GET("/:id/assets/*filepath", s.handleProjectAsset)
 	projects.HEAD("/:id/assets/*filepath", s.handleProjectAsset)
 }
@@ -194,6 +199,78 @@ func resolveProjectReferences(projectDir string, refs []model.ReferenceItem) err
 		refs[i].LocalPath = abs
 	}
 	return nil
+}
+
+// handleExportProject streams the project folder as a zip download.
+func (s *Server) handleExportProject(c *gin.Context) {
+	doc, err := s.projects.Get(c.Param("id"))
+	if err != nil {
+		respondProjectError(c, err)
+		return
+	}
+	file := doc.Name + ".zip"
+	c.Header("Content-Type", "application/zip")
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="project.zip"; filename*=UTF-8''%s`, url.PathEscape(file)))
+	c.Status(http.StatusOK)
+	// Headers are out once the zip starts; a failure now can only cut the download short.
+	_ = s.projects.Export(doc.ID, c.Writer)
+}
+
+// handleExportProjectToFolder writes the zip next to the projects (desktop mode, where
+// the window has no download manager) and shows it in the file manager.
+func (s *Server) handleExportProjectToFolder(c *gin.Context) {
+	path, err := s.projects.ExportToFolder(c.Param("id"))
+	if err != nil {
+		respondProjectError(c, err)
+		return
+	}
+	_ = revealFile(path)
+	c.JSON(http.StatusOK, gin.H{"path": path})
+}
+
+func (s *Server) handleImportProject(c *gin.Context) {
+	header, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要导入的工程 zip 文件"})
+		return
+	}
+	f, err := header.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	defer f.Close()
+	doc, err := s.projects.Import(f, header.Size)
+	if errors.Is(err, project.ErrInvalidArchive) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不是有效的工程文件：" + err.Error()})
+		return
+	}
+	if err != nil {
+		respondProjectError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, doc)
+}
+
+func (s *Server) handleDuplicateProject(c *gin.Context) {
+	doc, err := s.projects.Duplicate(c.Param("id"))
+	if err != nil {
+		respondProjectError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, doc)
+}
+
+// revealFile opens the file manager with the file selected.
+func revealFile(path string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("explorer.exe", "/select,", path).Start()
+	case "darwin":
+		return exec.Command("open", "-R", path).Start()
+	default:
+		return revealFolder(filepath.Dir(path))
+	}
 }
 
 func revealFolder(dir string) error {

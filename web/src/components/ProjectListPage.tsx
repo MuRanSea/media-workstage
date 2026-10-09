@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { FileText, Film, FolderOpen, Image as ImageIcon, MoreHorizontal, Pencil, Plus, Settings, Sparkles, Trash2 } from 'lucide-react';
+import { Copy, Download, FileText, FileUp, Film, FolderOpen, Image as ImageIcon, MoreHorizontal, Pencil, Plus, Settings, Sparkles, Trash2 } from 'lucide-react';
 import { apiListProjects, apiRevealProject, type ProjectList, type ProjectSummary } from '../services/projects.ts';
 import { navigate, projectHref } from '../services/router.ts';
 import { assetUrl } from '../engine/assetPaths.ts';
@@ -21,7 +21,7 @@ export const ProjectListPage: React.FC = () => {
   const [data, setData] = useState<ProjectList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const { create, rename, remove } = useProjectActions();
+  const { create, rename, remove, exportProject, duplicate, importProject } = useProjectActions();
   const toast = useToast();
 
   const reload = useCallback(() => {
@@ -59,6 +59,9 @@ export const ProjectListPage: React.FC = () => {
             <IconButton title="服务商设置" onClick={() => setSettingsOpen(true)}>
               <Settings className="w-4 h-4" />
             </IconButton>
+            <Button icon={<FileUp className="w-4 h-4" />} onClick={() => void importProject().then((id) => id && reload())}>
+              导入工程
+            </Button>
             <Button variant="primary" icon={<Plus className="w-4 h-4" />} onClick={() => void create()}>
               新建工程
             </Button>
@@ -110,6 +113,8 @@ export const ProjectListPage: React.FC = () => {
                             icon: <Pencil className="w-3.5 h-3.5" />,
                             onSelect: () => void rename(p).then((name) => name && reload()),
                           },
+                          { label: '复制工程', icon: <Copy className="w-3.5 h-3.5" />, onSelect: () => void duplicate(p).then((id) => id && reload()) },
+                          { label: '导出为 zip', icon: <Download className="w-3.5 h-3.5" />, onSelect: () => void exportProject(p) },
                           { label: '在资源管理器中打开', icon: <FolderOpen className="w-3.5 h-3.5" />, onSelect: () => void reveal(p) },
                           'separator',
                           {
