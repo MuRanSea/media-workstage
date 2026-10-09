@@ -9,7 +9,8 @@ mod settings;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 
-use tauri::webview::NewWindowResponse;
+use tauri::webview::{NewWindowResponse, PageLoadEvent};
+use tauri::window::Color;
 use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 
@@ -53,7 +54,17 @@ fn build_window(app: &AppHandle, port: Arc<AtomicU16>) -> tauri::Result<()> {
         .title("Media Workstage")
         .inner_size(1440.0, 900.0)
         .min_inner_size(960.0, 600.0)
-        .maximized(true)
+        // Stay hidden on the app's dark background until the splash page has
+        // painted, so the user never sees WebView2's white default surface.
+        .background_color(Color(8, 9, 15, 255))
+        .visible(false)
+        .on_page_load(|window, payload| {
+            if payload.event() == PageLoadEvent::Finished && !window.is_visible().unwrap_or(true) {
+                let _ = window.maximize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        })
         // Let file drops reach the page's own HTML5 drop handlers (Upload Cards).
         .disable_drag_drop_handler()
         .on_navigation(move |url| {
