@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Copy, FileText, Film, Image as ImageIcon, ScanText, SquareDashed, Sparkles, Trash2, Upload } from 'lucide-react';
+import { Copy, FileText, Film, Image as ImageIcon, Network, ScanText, SquareDashed, Sparkles, Trash2, Upload } from 'lucide-react';
 import type { CanvasSection, CardType, ResultActionDto, SpatialCard, UploadKind } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
 import { cardHeight, type CardMetrics } from '../engine/cardMetrics.ts';
@@ -29,6 +29,7 @@ import {
 } from '../engine/sections.ts';
 import { cardsToRender, isAwaitingTask, lineMayCross, visibleWorldRect } from '../engine/culling.ts';
 import { dropOptions, type DropCardType, type DropRole } from '../engine/dropToCreate.ts';
+import { arrangeCards } from '../engine/arrange.ts';
 import { InspectorPanel, INSPECTOR_WIDTH } from './inspector/InspectorPanel.tsx';
 import { NavigationDock } from './NavigationDock.tsx';
 import { ADD_CARD_ITEMS, CanvasHeader } from './CanvasHeader.tsx';
@@ -243,6 +244,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   const transformRef = useRef(transform);
   transformRef.current = transform;
+  const selectedCardIdsRef = useRef(selectedCardIds);
+  selectedCardIdsRef.current = selectedCardIds;
 
   useEffect(() => {
     onViewportChange?.(transform);
@@ -395,6 +398,28 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       setSelectedCardIds(new Set());
     },
     [heightOf, recordEdit, setSections, setSelectedCardIds]
+  );
+
+  /** Tidies the given cards by their links, as one undo step. */
+  const arrange = useCallback(
+    (ids: ReadonlySet<string>) => {
+      const { positions, sections: grown } = arrangeCards(cardsRef.current, ids, sectionsRef.current, heightOf);
+      const moved = cardsRef.current.some((c) => {
+        const p = positions.get(c.id);
+        return p && (p.x !== c.x || p.y !== c.y);
+      });
+      if (!moved && grown.length === 0) {
+        toast('已经整理好了');
+        return;
+      }
+      recordEdit();
+      setCards((prev) => prev.map((c) => (positions.has(c.id) ? { ...c, ...positions.get(c.id)! } : c)));
+      if (grown.length) {
+        const byId = new Map(grown.map((s) => [s.id, s]));
+        setSections((prev) => prev.map((s) => byId.get(s.id) ?? s));
+      }
+    },
+    [heightOf, recordEdit, setCards, setSections, toast]
   );
 
   const addSection = useCallback(
@@ -561,11 +586,26 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   const addMenuAt = useCallback(
     (clientX: number, clientY: number) => {
       const world = toWorld(clientX, clientY);
+      const selection = selectedCardIdsRef.current;
+      const tidy: MenuEntry[] = cardsRef.current.length
+        ? [
+            'separator',
+            selection.size > 1
+              ? { label: `整理选中的 ${selection.size} 张卡片`, hint: '按连线排列', icon: <Network className="w-4 h-4 text-slate-400" />, onSelect: () => arrange(selection) }
+              : {
+                  label: '整理全部卡片',
+                  hint: '按连线排列',
+                  icon: <Network className="w-4 h-4 text-slate-400" />,
+                  onSelect: () => arrange(new Set(cardsRef.current.map((c) => c.id))),
+                },
+          ]
+        : [];
       setContextMenu({
         at: { x: clientX, y: clientY },
         title: '在这里添加',
         items: ADD_CARD_ITEMS((type, kind) => addCard(type, world, kind)).concat(
           [{ label: '分区', hint: '圈出一块区域', icon: <SquareDashed className="w-4 h-4 text-slate-400" />, onSelect: () => addSection(world) }],
+          tidy,
           clipboardSize()
             ? [
                 'separator',
@@ -579,7 +619,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         ),
       });
     },
-    [toWorld, addCard, duplicate, addSection]
+    [toWorld, addCard, duplicate, addSection, arrange]
   );
 
   // --- Keyboard shortcuts ----------------------------------------------------
@@ -984,6 +1024,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         onAlign={alignSelected}
         onArrangeGrid={() => arrangeSelectedGrid(40, 2)}
         onWrapInSection={() => wrapInSection(selectedCards)}
+        onAutoArrange={() => arrange(selectedCardIds)}
         onClose={() => setSelectedCardIds(new Set())}
         linkedPromptFor={linkedPromptFor}
       />
