@@ -14,6 +14,7 @@ import { useChannels } from '../services/channels.ts';
 import { refTag } from '../engine/refTags.ts';
 import { PORT_Y, type ConnectHint, type SlotKind } from './cards/CardPorts.tsx';
 import { CanvasCard, type CardActions } from './CanvasCard.tsx';
+import { Minimap, useMinimapVisible } from './Minimap.tsx';
 import { cardsToRender, isAwaitingTask, lineMayCross, visibleWorldRect } from '../engine/culling.ts';
 import { InspectorPanel, INSPECTOR_WIDTH } from './inspector/InspectorPanel.tsx';
 import { NavigationDock } from './NavigationDock.tsx';
@@ -136,6 +137,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   const [linkDrag, setLinkDrag] = useState<LinkDrag | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [viewer, setViewer] = useState<ViewerMedia | null>(null);
+  const [minimapVisible, setMinimapVisible] = useMinimapVisible();
   const toast = useToast();
   const channels = useChannels();
   const describer = useMemo(() => findDescribeProvider(channels), [channels]);
@@ -162,6 +164,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   const {
     transform,
+    setTransform,
     activeTool,
     setActiveTool,
     isPanning,
@@ -694,7 +697,20 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         onFocusSelection={() => focusSelection()}
         onToggleTool={setActiveTool}
         onShowShortcuts={() => setShowShortcuts(true)}
+        minimapVisible={minimapVisible}
+        onToggleMinimap={() => setMinimapVisible(!minimapVisible)}
       />
+
+      {minimapVisible && cards.length > 0 && (
+        <Minimap
+          cards={cards}
+          heightOf={heightOf}
+          transform={transform}
+          viewport={viewSize}
+          right={inspectorOpen ? INSPECTOR_WIDTH + 32 : 16}
+          onPan={setTransform}
+        />
+      )}
 
       <InspectorPanel
         selected={selectedCards}
