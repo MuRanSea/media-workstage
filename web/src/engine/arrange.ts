@@ -1,6 +1,7 @@
 import type { CanvasSection, SpatialCard } from '../types/canvas.ts';
 import type { Point } from './matrix.ts';
-import { SECTION_HEADER, sectionOf } from './sections.ts';
+import { SECTION_HEADER, sectionOf, sectionRect } from './sections.ts';
+import { firstFreeSlotBelow } from './layout.ts';
 
 /** Space between columns of connected cards. */
 const COLUMN_GAP = 100;
@@ -131,7 +132,8 @@ function layoutGroup(group: SpatialCard[], allLinks: [string, string][], heightO
 /**
  * Tidies `targets` (ids of the cards to arrange). Cards are arranged within the
  * section they are in, from its top-left corner; cards outside sections from
- * where the top-left-most of them is now. Cards in collapsed sections stay put.
+ * where the top-left-most of them is now, moved down where needed to keep clear
+ * of sections and of cards left in place. Cards in collapsed sections stay put.
  * A section grows when its arranged cards need more room.
  */
 export function arrangeCards(
@@ -152,20 +154,38 @@ export function arrangeCards(
 
   const positions = new Map<string, Point>();
   const grown: CanvasSection[] = [];
-  for (const [key, group] of groups) {
+  // Sections first: they may grow, and the cards outside them must then keep clear of them.
+  const order = [...groups.keys()].sort((a, b) => (a === '' ? 1 : 0) - (b === '' ? 1 : 0));
+  for (const key of order) {
+    const group = groups.get(key)!;
     const section = sections.find((s) => s.id === key);
-    const origin = section
-      ? { x: section.x + SECTION_INSET, y: section.y + SECTION_HEADER + SECTION_INSET }
-      : { x: Math.min(...group.map((c) => c.x)), y: Math.min(...group.map((c) => c.y)) };
-    const placed = layoutGroup(group, links, heightOf, origin);
-    for (const [id, p] of placed) positions.set(id, { x: Math.round(p.x), y: Math.round(p.y) });
     if (section) {
+      const origin = { x: section.x + SECTION_INSET, y: section.y + SECTION_HEADER + SECTION_INSET };
+      const placed = layoutGroup(group, links, heightOf, origin);
+      for (const [id, p] of placed) positions.set(id, { x: Math.round(p.x), y: Math.round(p.y) });
       const right = Math.max(...group.map((c) => placed.get(c.id)!.x + c.width)) + SECTION_INSET;
       const bottom = Math.max(...group.map((c) => placed.get(c.id)!.y + heightOf(c))) + SECTION_INSET;
       const width = Math.max(section.width, Math.round(right - section.x));
       const height = Math.max(section.height, Math.round(bottom - section.y));
       if (width !== section.width || height !== section.height) grown.push({ ...section, width, height });
+      continue;
     }
+
+    // Cards outside sections: laid out from their top-left, then moved down as one block
+    // until it overlaps no section and no card that is not being arranged.
+    const origin = { x: Math.min(...group.map((c) => c.x)), y: Math.min(...group.map((c) => c.y)) };
+    const placed = layoutGroup(group, links, heightOf, origin);
+    const moving = new Set(group.map((c) => c.id));
+    const grownById = new Map(grown.map((s) => [s.id, s]));
+    const obstacles = [
+      ...sections.map((s) => ({ id: s.id, ...sectionRect(grownById.get(s.id) ?? s) })),
+      ...cards.filter((c) => !moving.has(c.id) && !positions.has(c.id)).map((c) => ({ id: c.id, x: c.x, y: c.y, width: c.width, height: heightOf(c) })),
+      ...cards.filter((c) => positions.has(c.id)).map((c) => ({ id: c.id, ...positions.get(c.id)!, width: c.width, height: heightOf(c) })),
+    ];
+    const right = Math.max(...group.map((c) => placed.get(c.id)!.x + c.width));
+    const bottom = Math.max(...group.map((c) => placed.get(c.id)!.y + heightOf(c)));
+    const slot = firstFreeSlotBelow(origin, { width: right - origin.x, height: bottom - origin.y }, obstacles);
+    for (const [id, p] of placed) positions.set(id, { x: Math.round(p.x + slot.x - origin.x), y: Math.round(p.y + slot.y - origin.y) });
   }
   return { positions, sections: grown };
 }

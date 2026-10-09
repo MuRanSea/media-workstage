@@ -50,6 +50,27 @@ describe('new image cards', () => {
 });
 
 describe('addPendingResult', () => {
+  it('leaves room below a result still waiting on its task for the size it will grow to', () => {
+    const g = gen({ imageRatioPreset: '1:1' });
+    const first = addPendingResult([g], g, task({ id: 'task-1' }));
+    const [r1] = results(first);
+    // Rendered small while pending: no preview yet, no upload panel.
+    const measured = (c: SpatialCard) => (c.id === r1.id ? 200 : undefined);
+    const second = addPendingResult(first, g, task({ id: 'task-2' }), measured);
+    const r2 = results(second).find((c) => c.id !== r1.id)!;
+    expect(r2.x).toBe(r1.x);
+    expect(r2.y).toBeGreaterThanOrEqual(r1.y + estimateCardHeight(r1));
+  });
+
+  it('plans with the measured height once a result has finished', () => {
+    const g = gen({ imageRatioPreset: '1:1' });
+    const first = addPendingResult([g], g, task({ id: 'task-1' })).map((c) => (c.role === 'result' ? { ...c, status: 'succeeded' as const } : c));
+    const [r1] = results(first);
+    const second = addPendingResult(first, g, task({ id: 'task-2' }), (c) => (c.id === r1.id ? 200 : undefined));
+    const r2 = results(second).find((c) => c.id !== r1.id)!;
+    expect(r2.y).toBeLessThan(r1.y + estimateCardHeight(r1));
+  });
+
   it('adds a queued result card linked to its generation card, with a snapshot', () => {
     const g = gen({ imageRatioPreset: '1:1' });
     const cards = addPendingResult([g], g, task());

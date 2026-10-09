@@ -46,6 +46,20 @@ const ACTION_ROW = 30;
 /** Text result card body: summary row and a few rows of editable text. */
 const TEXT_RESULT_BODY = 160;
 
+/**
+ * Height to leave room for when placing new cards: what the card measures, but
+ * never less than its finished estimate while it still waits on a task, since
+ * it grows (preview, upload panel) when the output arrives.
+ */
+function plannedHeight(heightOf: HeightOf): (card: SpatialCard) => number {
+  return (card) => {
+    const measured = heightOf(card);
+    if (measured === undefined) return estimateCardHeight(card);
+    const waiting = card.status === 'queued' || card.status === 'running';
+    return waiting ? Math.max(measured, estimateCardHeight(card)) : measured;
+  };
+}
+
 /** Height a card will roughly render at, from its preview's shape. */
 export function estimateCardHeight(card: SpatialCard): number {
   const aspect = previewAspect(card) ?? 16 / 9;
@@ -177,7 +191,7 @@ export function placeResult(
   draft: SpatialCard,
   heightOf: HeightOf = () => undefined
 ): SpatialCard {
-  const height = (c: SpatialCard) => heightOf(c) ?? estimateCardHeight(c);
+  const height = plannedHeight(heightOf);
   // The generation card may have been dragged while the request was in flight.
   const anchor = cards.find((c) => c.id === submitted.id) ?? submitted;
   const slot = firstFreeSlotRight(
@@ -373,7 +387,7 @@ export function placeInAssetGrid(
   cards: SpatialCard[],
   heightOf: HeightOf = () => undefined
 ): SpatialCard {
-  const height = (c: SpatialCard) => heightOf(c) ?? estimateCardHeight(c);
+  const height = plannedHeight(heightOf);
   // Columns grow with the output count: 2 for up to 4 cards, 4 for a 15-frame storyboard, 5 for 17 layers.
   const column = index % Math.ceil(Math.sqrt(count));
   const slot = firstFreeSlotBelow(

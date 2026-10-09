@@ -63,7 +63,11 @@ const SectionFrame: React.FC<{
       data-section-id={section.id}
       style={{ transform: `translate3d(${rect.x}px, ${rect.y}px, 0)`, width: rect.width, height: rect.height }}
       className={`absolute top-0 left-0 rounded-2xl border-2 ${
-        selected ? 'border-indigo-400/80 bg-indigo-500/[0.06]' : 'border-slate-700/70 bg-slate-500/[0.05]'
+        selected
+          ? 'border-indigo-400/80 bg-indigo-500/[0.06]'
+          : section.collapsed
+            ? 'border-slate-600 bg-canvas-surface shadow-lg shadow-black/30'
+            : 'border-slate-600/80 bg-slate-400/[0.07]'
       }`}
     >
       <div

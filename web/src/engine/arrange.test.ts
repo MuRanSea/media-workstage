@@ -92,3 +92,40 @@ describe('arrangeCards', () => {
     expect(positions.has('free')).toBe(true);
   });
 });
+
+describe('arrangeCards around sections', () => {
+  // Loose cards left of a section: their type grid would reach into it.
+  const section: CanvasSection = { id: 's', title: 's', x: 500, y: 0, width: 800, height: 700 };
+  const cards = [
+    card('txt', 0, 100, { type: 'text', role: 'result' }),
+    card('v1', 100, 900, { type: 'video' }),
+    card('v2', 0, 1200, { type: 'video' }),
+    card('in-a', 600, 100),
+    card('in-b', 900, 100, { role: 'result', sourceId: 'in-a' }),
+  ];
+  const inside = (c: SpatialCard, s: CanvasSection) => c.x + c.width / 2 > s.x && c.x + c.width / 2 < s.x + s.width && c.y + h(c) / 2 > s.y && c.y + h(c) / 2 < s.y + s.height;
+
+  it('keeps cards outside sections out of them and off the section cards', () => {
+    const { positions, sections } = arrangeCards(cards, all(cards), [section], h);
+    const out = apply(cards, positions);
+    const grownSection = sections[0] ?? section;
+    for (const id of ['txt', 'v1', 'v2']) expect(inside(out.find((c) => c.id === id)!, grownSection)).toBe(false);
+    for (const id of ['in-a', 'in-b']) expect(inside(out.find((c) => c.id === id)!, grownSection)).toBe(true);
+    expect(overlaps(out)).toBe(false);
+  });
+
+  it('is stable with a section present', () => {
+    const first = arrangeCards(cards, all(cards), [section], h);
+    const once = apply(cards, first.positions);
+    const sectionsOnce = [first.sections[0] ?? section];
+    const twice = apply(once, arrangeCards(once, all(once), sectionsOnce, h).positions);
+    expect(twice).toEqual(once);
+  });
+
+  it('keeps clear of cards that are not being arranged', () => {
+    const blocker = card('blocker', 400, 0);
+    const loose = [card('a', 0, 0), card('b', 0, 400)];
+    const out = apply([...loose, blocker], arrangeCards([...loose, blocker], new Set(['a', 'b']), [], h).positions);
+    expect(overlaps(out)).toBe(false);
+  });
+});
