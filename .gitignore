@@ -43,3 +43,8 @@ data/
 
 # Local projects (user work)
 projects/
+
+# Tauri desktop shell
+src-tauri/target/
+src-tauri/binaries/
+src-tauri/gen/

@@ -13,6 +13,7 @@ import {
   Info,
   Plus,
   Tag,
+  HardDrive,
 } from 'lucide-react';
 import {
   apiDeleteProvider,
@@ -26,6 +27,8 @@ import { refreshChannels, useChannels } from '../services/channels.ts';
 import { runsMockedWithoutKey } from '../engine/channelModels.ts';
 import { isNameTaken } from '../engine/providers.ts';
 import { AddProviderPane } from './AddProviderPane.tsx';
+import { DesktopSettingsPane } from './DesktopSettingsPane.tsx';
+import { apiGetDesktop, type DesktopInfo } from '../services/desktop.ts';
 import { ModelBindingPanel } from './ModelBindingPanel.tsx';
 import { PROTOCOL_META } from './protocolMeta.ts';
 import { Button, IconButton, inputClass, useDialogs } from './ui/index.ts';
@@ -70,8 +73,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<ProviderId>('ark');
-  // The right pane shows the add-provider form instead of a provider.
-  const [adding, setAdding] = useState(false);
+  // The right pane shows a provider, the add-provider form, or (desktop app only)
+  // the storage settings.
+  const [side, setSide] = useState<'provider' | 'add' | 'storage'>('provider');
+  const adding = side === 'add';
+  const [desktop, setDesktop] = useState<DesktopInfo>({ enabled: false });
   const providers = useChannels();
   const [forms, setForms] = useState<Record<ProviderId, ProviderForm>>({});
   const [testStatus, setTestStatus] = useState<Partial<Record<ProviderId, TestStatus>>>({});
@@ -108,7 +114,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       void refreshChannels();
       setTestStatus({});
       setSaveStatus({ saving: false });
-      setAdding(false);
+      setSide('provider');
+      apiGetDesktop()
+        .then(setDesktop)
+        .catch(() => setDesktop({ enabled: false }));
     }
   }, [isOpen]);
 
@@ -296,8 +305,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       <div className="relative w-full max-w-3xl max-h-[calc(100vh-2rem)] flex flex-col bg-canvas-surface border border-slate-700/80 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden">
         <div className="flex items-center justify-between px-5 h-14 border-b border-canvas-border flex-shrink-0">
           <div>
-            <h2 className="text-sm font-semibold text-slate-100">服务商设置</h2>
-            <p className="text-[11px] text-slate-500">填写各家服务的 API Key，并选择卡片里可以用的模型</p>
+            <h2 className="text-sm font-semibold text-slate-100">{side === 'storage' ? '存储与日志' : '服务商设置'}</h2>
+            <p className="text-[11px] text-slate-500">
+              {side === 'storage' ? '数据、工程与日志放在哪里' : '填写各家服务的 API Key，并选择卡片里可以用的模型'}
+            </p>
           </div>
           <IconButton title="关闭" onClick={() => void requestClose()}>
             <X className="w-4 h-4" />
@@ -309,7 +320,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {providers.map((c, i) => {
               const cMeta = PROTOCOL_META[c.protocol];
               const Icon = cMeta.icon;
-              const active = !adding && c.id === channel.id;
+              const active = side === 'provider' && c.id === channel.id;
               const st = statusFor(c);
               const firstCustom = !c.preset && (i === 0 || providers[i - 1].preset);
               return (
@@ -321,7 +332,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     type="button"
                     onClick={() => {
                       setActiveTab(c.id);
-                      setAdding(false);
+                      setSide('provider');
                     }}
                     title={`${cMeta.label} · ${st.label}`}
                     className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left whitespace-nowrap transition ${
@@ -341,7 +352,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             })}
             <button
               type="button"
-              onClick={() => setAdding(true)}
+              onClick={() => setSide('add')}
               className={`flex items-center gap-2 px-2.5 py-2 mt-1 rounded-lg text-left whitespace-nowrap border border-dashed transition ${
                 adding
                   ? 'border-slate-500 bg-slate-800 text-slate-100 font-semibold'
@@ -351,16 +362,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <Plus className="w-4 h-4 flex-shrink-0" />
               <span className="flex-1 truncate">添加服务商</span>
             </button>
+            {desktop.enabled && (
+              <button
+                type="button"
+                onClick={() => setSide('storage')}
+                className={`flex items-center gap-2 px-2.5 py-1.5 sm:mt-3 rounded-lg text-left whitespace-nowrap transition ${
+                  side === 'storage'
+                    ? 'bg-slate-800 text-slate-100 font-semibold'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                }`}
+              >
+                <HardDrive className="w-4 h-4 flex-shrink-0" />
+                <span className="flex-1 truncate">存储与日志</span>
+              </button>
+            )}
           </nav>
 
-          {adding ? (
+          {side === 'storage' && desktop.enabled ? (
+            <DesktopSettingsPane info={desktop} />
+          ) : adding ? (
             <AddProviderPane
               providers={providers}
               onCreated={(id) => {
                 setActiveTab(id);
-                setAdding(false);
+                setSide('provider');
               }}
-              onCancel={() => setAdding(false)}
+              onCancel={() => setSide('provider')}
             />
           ) : (
             <div key={channel.id} className="flex-1 min-w-0 overflow-y-auto px-5 py-4 space-y-5 text-xs text-slate-200">
@@ -510,7 +537,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         <div className="flex items-center justify-between gap-3 px-5 h-14 border-t border-canvas-border flex-shrink-0">
           <div className="min-w-0 text-[11px]">
-            {adding ? null : saveStatus.error ? (
+            {side !== 'provider' ? null : saveStatus.error ? (
               <span className="text-rose-400 flex items-center gap-1">
                 <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> 操作失败：{saveStatus.error}
               </span>
@@ -526,7 +553,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <Button variant="ghost" onClick={() => void requestClose()}>
               关闭
             </Button>
-            {!adding && (
+            {side === 'provider' && (
               <Button
                 variant="primary"
                 onClick={handleSave}

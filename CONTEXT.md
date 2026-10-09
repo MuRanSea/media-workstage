@@ -9,6 +9,17 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
 - **Project (工程)**:
   A self-contained folder on disk under the projects root (`./projects` by default) holding one `CanvasWorkspace` (`project.json`: cards + viewport + revision) and the `TaskAsset` files its tasks produced (`assets/`). Card media paths are relative to the project folder, so a project can be copied or moved as a unit. `MediaTask.project_id` links a task to the project whose folder receives its outputs. See ADR 0003.
 
+- **Projects Root (工程目录)**:
+  The folder holding every Project, one subfolder each. In the desktop app it is chosen in settings; changing it only switches where the app looks and never moves existing Projects.
+  _Avoid_: 工程根目录, workspace dir
+
+- **Data Directory (数据目录)**:
+  The folder holding the app's own data that belongs to no Project: the database (Providers, tasks, settings) and outputs of tasks run outside a Project. Chosen in settings in the desktop app; changing it, like the Projects Root, moves nothing.
+  _Avoid_: 应用目录, app data
+
+- **Desktop mode / Browser mode (桌面模式 / 浏览器模式)**:
+  The two ways the workstage is launched: as the installed desktop app in its own window, or as the standalone backend opened in a web browser. Same UI and data model; only the desktop mode lets the user choose the Projects Root and Data Directory in settings. See ADR 0007.
+
 - **CanvasWorkspace (画布工作区)**:
   The top-level interactive infinite spatial canvas containing cards, connections, viewport transform matrix (`zoom`, `panX`, `panY`), and active user selections.
 

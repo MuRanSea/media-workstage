@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"media-workstage/internal/adapter"
+	"media-workstage/internal/desktop"
 	"media-workstage/internal/llm"
 	"media-workstage/internal/model"
 	"media-workstage/internal/poller"
@@ -32,6 +33,7 @@ type Server struct {
 	poller      *poller.TaskPoller
 	projects    *project.Store
 	staticFS    fs.FS
+	desktop     *desktop.Mode // nil in browser mode
 
 	// providersMu serializes provider list and name changes, which read-check-write
 	// the config table (creating, deleting and renaming providers).
@@ -57,6 +59,7 @@ func NewServer(
 	var p *poller.TaskPoller
 	var staticFS fs.FS
 	var projects *project.Store
+	var desktopMode *desktop.Mode
 	explicitRegistry := false
 
 	for _, opt := range opts {
@@ -70,6 +73,8 @@ func NewServer(
 			staticFS = v
 		case *project.Store:
 			projects = v
+		case *desktop.Mode:
+			desktopMode = v
 		}
 	}
 
@@ -100,6 +105,7 @@ func NewServer(
 		poller:      p,
 		projects:    projects,
 		staticFS:    staticFS,
+		desktop:     desktopMode,
 	}
 }
 
@@ -203,6 +209,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.GET("/tasks/events", s.handleSSEEvents)
 		s.registerProjectRoutes(api)
 		s.registerUploadRoutes(api)
+		s.registerDesktopRoutes(api)
 	}
 
 	// Embedded SPA Static File Server & Fallback handler

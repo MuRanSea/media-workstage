@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 
 	"media-workstage/internal/adapter"
 	"media-workstage/internal/db"
+	"media-workstage/internal/desktop"
 	"media-workstage/internal/model"
 	"media-workstage/internal/poller"
 	"media-workstage/internal/project"
@@ -45,7 +48,21 @@ func main() {
 	assetDirFlag := flag.String("assets", "", "Local assets directory")
 	projectsDirFlag := flag.String("projects", "", "Projects root directory (one folder per project)")
 	noBrowserFlag := flag.Bool("no-browser", false, "Disable opening default browser on startup")
+	settingsFlag := flag.String("settings", "", "Desktop mode: the shell's settings.json (enables the directory settings API)")
+	dataDirFlag := flag.String("data-dir", "", "Desktop mode: Data Directory holding data/, assets/ and logs/")
 	flag.Parse()
+
+	// The Data Directory lays out the database and global assets the way a
+	// checkout does (data/, assets/), so pointing it at an old checkout reuses it.
+	dataDir := *dataDirFlag
+	if dataDir != "" {
+		if *dbFlag == "" {
+			*dbFlag = filepath.Join(dataDir, "data", "media_workstage.db")
+		}
+		if *assetDirFlag == "" {
+			*assetDirFlag = filepath.Join(dataDir, "assets")
+		}
+	}
 
 	port := *portFlag
 	if port == "" {
@@ -131,9 +148,28 @@ func main() {
 		log.Printf("[WARN] Failed to load embedded dist filesystem: %v", err)
 	}
 
-	srv := server.NewServer(database, assetDir, registry, taskPoller, distSub, projectStore)
+	opts := []interface{}{taskPoller, distSub, projectStore}
+	if *settingsFlag != "" {
+		opts = append(opts, &desktop.Mode{
+			SettingsPath: *settingsFlag,
+			DataDir:      dataDir,
+			ProjectsDir:  projectsDir,
+			LogsDir:      filepath.Join(dataDir, "logs"),
+			Restart: func() {
+				taskPoller.Stop()
+				os.Exit(desktop.RestartExitCode)
+			},
+		})
+	}
+	srv := server.NewServer(database, assetDir, registry, opts...)
 	r := srv.SetupRouter()
 
+	// Listen before announcing, so port 0 (desktop mode) resolves to the real port.
+	listener, err := net.Listen("tcp", host+":"+port)
+	if err != nil {
+		log.Fatalf("Failed to listen on %s:%s: %v", host, port, err)
+	}
+	port = fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)
 	addr := host + ":" + port
 	displayHost := host
 	if displayHost == "0.0.0.0" || displayHost == ":" {
@@ -152,7 +188,10 @@ func main() {
 		}()
 	}
 
-	if err := r.Run(addr); err != nil {
+	// The desktop shell waits for this line on stdout before opening its window.
+	fmt.Printf("LISTENING %s\n", port)
+
+	if err := r.RunListener(listener); err != nil {
 		log.Fatalf("Server exited with error: %v", err)
 	}
 }
