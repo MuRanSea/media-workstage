@@ -35,6 +35,7 @@ func TestProtocolProbes_BuildAuthenticatedRequests(t *testing.T) {
 		{"midjourney", http.MethodPost, "https://base/mj/task/list-by-condition", "mj-api-secret", "k"},
 		{"google", http.MethodGet, "https://base/models", "x-goog-api-key", "k"},
 		{"openai", http.MethodGet, "https://base/models", "Authorization", "Bearer k"},
+		{"anthropic", http.MethodGet, "https://base/models", "x-api-key", "k"},
 		{"apimart", http.MethodGet, "https://base/models", "Authorization", "Bearer k"},
 	}
 	for _, tc := range cases {
@@ -371,7 +372,7 @@ func TestInferModelType_CoversAggregatorFamilies(t *testing.T) {
 
 // Channels with a live catalog must not bind anything the user did not tick.
 func TestBoundModels_ListableProvidersStartEmpty(t *testing.T) {
-	for _, id := range []string{"openai", "google", "apimart"} {
+	for _, id := range []string{"openai", "google", "anthropic", "apimart"} {
 		spec, _ := findProvider(nil, id)
 		models := resolveProvider(spec, nil).Models
 		assert.NotNil(t, models, id)
@@ -408,6 +409,33 @@ func TestListModels_HTMLPageMeansWrongPath(t *testing.T) {
 	_, err := listGoogleModels(context.Background(), srv.Client(), srv.URL, "k")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "返回的是网页而不是 API")
+}
+
+func TestAnthropicProbe_SendsVersionNotBearer(t *testing.T) {
+	spec, _ := findProvider(nil, "anthropic")
+	req, err := spec.protocol().newProbe(context.Background(), "https://base", "k", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "2023-06-01", req.Header.Get("anthropic-version"))
+	assert.Empty(t, req.Header.Get("Authorization"))
+}
+
+func TestListAnthropicModels_PagesAndBindsChat(t *testing.T) {
+	var afterIDs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/models", r.URL.Path)
+		assert.Equal(t, "k", r.Header.Get("x-api-key"))
+		afterIDs = append(afterIDs, r.URL.Query().Get("after_id"))
+		if r.URL.Query().Get("after_id") == "" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"claude-sonnet-x"}],"has_more":true,"last_id":"claude-sonnet-x"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":[{"id":"claude-haiku-x"}],"has_more":false,"last_id":"claude-haiku-x"}`)
+	}))
+	defer srv.Close()
+	models, err := listAnthropicModels(context.Background(), srv.Client(), srv.URL+"/v1", "k")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"", "claude-sonnet-x"}, afterIDs)
+	assert.Equal(t, []boundModel{chat("claude-haiku-x"), chat("claude-sonnet-x")}, models)
 }
 
 func TestListGoogleModels_AcceptsOpenAIShapedRelayList(t *testing.T) {
@@ -594,6 +622,7 @@ func TestGetConfig_ListsProtocolAndPresetFlag(t *testing.T) {
 		"midjourney": model.ProtocolMidjourney,
 		"google":     model.ProtocolGemini,
 		"openai":     model.ProtocolOpenAICompatible,
+		"anthropic":  model.ProtocolAnthropic,
 		"apimart":    model.ProtocolAPIMart,
 	}, got)
 	for _, spec := range presetProviders {

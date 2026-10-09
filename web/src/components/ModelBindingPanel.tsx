@@ -20,6 +20,8 @@ interface ModelBindingPanelProps {
   models: BoundModel[];
   /** Built-in models; enables 「恢复默认」 when non-empty. */
   presets?: BoundModel[];
+  /** The kind the catalog opens on and hand-added IDs default to. */
+  defaultType?: BindableType;
   onChange: (models: BoundModel[]) => void;
 }
 
@@ -52,6 +54,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
   isConfigured,
   models,
   presets,
+  defaultType = 'image',
   onChange,
 }) => {
   const [catalog, setCatalog] = useState<{
@@ -59,10 +62,10 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
     error?: string;
     result?: ListModelsResponse;
   } | null>(null);
-  const [filter, setFilter] = useState<CatalogFilter>('image');
+  const [filter, setFilter] = useState<CatalogFilter>(defaultType);
   const [query, setQuery] = useState('');
   const [manualId, setManualId] = useState('');
-  const [manualType, setManualType] = useState<BindableType>('image');
+  const [manualType, setManualType] = useState<BindableType>(defaultType);
 
   const boundIds = useMemo(() => new Set(models.map((m) => m.id)), [models]);
   const needsKey = canListModels && !apiKey.trim() && !isConfigured;

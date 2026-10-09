@@ -436,7 +436,7 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 	if strings.TrimSpace(payload.APIKey) != "" {
 		configsToSave[provider+"_api_key"] = strings.TrimSpace(payload.APIKey)
 	}
-	for key := range spec.ExtraEnv {
+	for _, key := range spec.extraKeys() {
 		if val, ok := payload.Extra[key]; ok {
 			configsToSave[provider+"_"+key] = strings.TrimSpace(val)
 		}
@@ -464,7 +464,7 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 // back to the mock; keys set through environment variables still apply.
 func (s *Server) clearProvider(c *gin.Context, spec providerSpec) {
 	keys := []string{spec.ID + "_api_key", spec.ID + "_base_url", spec.ID + "_models"}
-	for extra := range spec.ExtraEnv {
+	for _, extra := range spec.extraKeys() {
 		keys = append(keys, spec.ID+"_"+extra)
 	}
 	if err := s.db.Where("key IN ?", keys).Delete(&model.SystemConfig{}).Error; err != nil {

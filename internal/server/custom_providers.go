@@ -16,10 +16,16 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// creatableProtocols are the protocols users can add Custom Providers for. Every
-// protocol is modeled as instances (ADR 0004); this list only gates the entry point.
+// creatableProtocols are the protocols users can add Custom Providers for: every one
+// with an adapter (ADR 0004). Kling only stores configuration so far.
 var creatableProtocols = map[model.Protocol]bool{
 	model.ProtocolOpenAICompatible: true,
+	model.ProtocolAnthropic:        true,
+	model.ProtocolGemini:           true,
+	model.ProtocolAPIMart:          true,
+	model.ProtocolArk:              true,
+	model.ProtocolMiniMax:          true,
+	model.ProtocolMidjourney:       true,
 }
 
 // upsertConfigs writes config entries in one transaction.
@@ -70,10 +76,11 @@ func newCustomProviderID(stored map[string]string) string {
 }
 
 type CreateProviderPayload struct {
-	Protocol model.Protocol `json:"protocol" binding:"required"`
-	Name     string         `json:"name"`
-	BaseURL  string         `json:"base_url" binding:"required"`
-	APIKey   string         `json:"api_key"`
+	Protocol model.Protocol    `json:"protocol" binding:"required"`
+	Name     string            `json:"name"`
+	BaseURL  string            `json:"base_url" binding:"required"`
+	APIKey   string            `json:"api_key"`
+	Extra    map[string]string `json:"extra"`
 }
 
 // handleCreateProvider adds a Custom Provider. Its ID is generated here and never
@@ -114,6 +121,11 @@ func (s *Server) handleCreateProvider(c *gin.Context) {
 	if key := strings.TrimSpace(payload.APIKey); key != "" {
 		configs[id+"_api_key"] = key
 	}
+	for _, key := range protocolSpecs[payload.Protocol].extraKeys {
+		if val := strings.TrimSpace(payload.Extra[key]); val != "" {
+			configs[id+"_"+key] = val
+		}
+	}
 	if err := upsertConfigs(s.db, configs); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save provider: " + err.Error()})
 		return
@@ -152,6 +164,9 @@ func (s *Server) handleDeleteProvider(c *gin.Context) {
 	}
 	recordsJSON, _ := json.Marshal(records)
 	keys := []string{spec.ID + "_name", spec.ID + "_api_key", spec.ID + "_base_url", spec.ID + "_models"}
+	for _, extra := range spec.extraKeys() {
+		keys = append(keys, spec.ID+"_"+extra)
+	}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("key IN ?", keys).Delete(&model.SystemConfig{}).Error; err != nil {
 			return err

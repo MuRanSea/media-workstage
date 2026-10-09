@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"media-workstage/internal/adapter"
+	"media-workstage/internal/llm"
 	"media-workstage/internal/model"
 )
 
@@ -42,6 +43,9 @@ type protocolSpec struct {
 	// notFoundHint replaces the generic "wrong path" message when the probe gets a 404;
 	// %s is the probed path.
 	notFoundHint string
+
+	// extraKeys are the protocol's settings beyond base URL and key, stored as "<id>_<key>".
+	extraKeys []string
 }
 
 var protocolSpecs = map[model.Protocol]protocolSpec{
@@ -61,6 +65,7 @@ var protocolSpecs = map[model.Protocol]protocolSpec{
 			}
 			return newBearerRequest(ctx, http.MethodGet, testURL, apiKey)
 		},
+		extraKeys: []string{"group_id"},
 	},
 	model.ProtocolKling: {
 		// Free resource-pack query (QPS <= 1); rejects bad keys with HTTP 401.
@@ -104,6 +109,14 @@ var protocolSpecs = map[model.Protocol]protocolSpec{
 		// Some OpenAI-compatible services generate and chat fine but have no model list.
 		notFoundHint: "无法获取模型列表 (HTTP 404: %s)：该服务可能不提供 /models 接口，仍可保存并在下方手动添加模型 ID；也请确认 Base URL 是否包含 /v1",
 	},
+	model.ProtocolAnthropic: {
+		newProbe: func(ctx context.Context, baseURL, apiKey string, _ map[string]string) (*http.Request, error) {
+			return newAnthropicRequest(ctx, baseURL+"/models?limit=1", apiKey)
+		},
+		probeNeeds2xx: true,
+		listModels:    listAnthropicModels,
+		notFoundHint:  "无法获取模型列表 (HTTP 404: %s)：该服务可能不提供 /models 接口，仍可保存并在下方手动添加模型 ID；也请确认 Base URL 是否包含 /v1",
+	},
 	model.ProtocolAPIMart: {
 		// Model list rather than /balance: relays (e.g. new-api style ".../apimart/v1")
 		// forward /models, /images and /tasks but not the balance endpoint.
@@ -130,7 +143,7 @@ type providerSpec struct {
 	DefaultBaseURL string
 	APIKeyEnv      string
 	BaseURLEnv     string
-	ExtraEnv       map[string]string // extra field key -> env var fallback
+	ExtraEnv       map[string]string // extra field key -> env var fallback (presets only)
 	Presets        []boundModel      // catalog for providers without listModels
 	// MockWhenUnset runs the provider on the mock adapter until it has a key.
 	MockWhenUnset bool
@@ -139,6 +152,9 @@ type providerSpec struct {
 }
 
 func (s providerSpec) protocol() protocolSpec { return protocolSpecs[s.Protocol] }
+
+// extraKeys are the extra settings every provider of this protocol has, preset or custom.
+func (s providerSpec) extraKeys() []string { return s.protocol().extraKeys }
 
 var presetProviders = []providerSpec{
 	{
@@ -223,6 +239,14 @@ var presetProviders = []providerSpec{
 		BaseURLEnv:     "OPENAI_BASE_URL",
 	},
 	{
+		ID:             "anthropic",
+		Name:           "Anthropic",
+		Protocol:       model.ProtocolAnthropic,
+		DefaultBaseURL: "https://api.anthropic.com/v1",
+		APIKeyEnv:      "ANTHROPIC_API_KEY",
+		BaseURLEnv:     "ANTHROPIC_BASE_URL",
+	},
+	{
 		// APIMart aggregates many vendors behind one OpenAI-style key.
 		ID:             "apimart",
 		Name:           "APIMart",
@@ -255,9 +279,20 @@ func customProviderRecords(stored map[string]string) []customProviderRecord {
 func allProviders(stored map[string]string) []providerSpec {
 	specs := append([]providerSpec(nil), presetProviders...)
 	for _, r := range customProviderRecords(stored) {
-		specs = append(specs, providerSpec{ID: r.ID, Name: r.ID, Protocol: r.Protocol, Custom: true})
+		specs = append(specs, providerSpec{ID: r.ID, Name: r.ID, Protocol: r.Protocol, Presets: protocolPresets(r.Protocol), Custom: true})
 	}
 	return specs
+}
+
+// protocolPresets are the built-in models of the preset provider speaking protocol, which
+// a custom provider of that protocol offers too (a second Ark account, another MJ proxy).
+func protocolPresets(protocol model.Protocol) []boundModel {
+	for _, spec := range presetProviders {
+		if spec.Protocol == protocol {
+			return spec.Presets
+		}
+	}
+	return nil
 }
 
 func findProvider(stored map[string]string, id string) (providerSpec, bool) {
@@ -334,8 +369,8 @@ func ProviderCredentials(stored map[string]string, id string) (baseURL, apiKey s
 // providerExtras resolves a provider's extra fields (e.g. MiniMax group_id) from stored config and env.
 func providerExtras(spec providerSpec, stored map[string]string) map[string]string {
 	var extra map[string]string
-	for key, env := range spec.ExtraEnv {
-		if val := providerValue(spec, stored, key, env); val != "" {
+	for _, key := range spec.extraKeys() {
+		if val := providerValue(spec, stored, key, spec.ExtraEnv[key]); val != "" {
 			if extra == nil {
 				extra = make(map[string]string)
 			}
@@ -438,6 +473,17 @@ func newGoogleRequest(ctx context.Context, target, apiKey string) (*http.Request
 		return nil, err
 	}
 	req.Header.Set("x-goog-api-key", strings.TrimSpace(apiKey))
+	return req, nil
+}
+
+// newAnthropicRequest is a GET carrying Anthropic's key and version headers, never a Bearer token.
+func newAnthropicRequest(ctx context.Context, target, apiKey string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-api-key", strings.TrimSpace(apiKey))
+	req.Header.Set("anthropic-version", llm.AnthropicVersion)
 	return req, nil
 }
 
@@ -570,6 +616,40 @@ func listOpenAIModels(ctx context.Context, client *http.Client, baseURL, apiKey 
 	models := make([]boundModel, 0, len(resp.Data))
 	for _, m := range resp.Data {
 		models = append(models, boundModel{ID: m.ID, Type: inferModelType(m.ID)})
+	}
+	return sortModels(models), nil
+}
+
+// listAnthropicModels pages through /models; every Anthropic model is a chat model.
+func listAnthropicModels(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]boundModel, error) {
+	var models []boundModel
+	afterID := ""
+	for range 5 {
+		target := baseURL + "/models?limit=1000"
+		if afterID != "" {
+			target += "&after_id=" + url.QueryEscape(afterID)
+		}
+		req, err := newAnthropicRequest(ctx, target, apiKey)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+			HasMore bool   `json:"has_more"`
+			LastID  string `json:"last_id"`
+		}
+		if err := fetchJSON(client, req, &resp); err != nil {
+			return nil, err
+		}
+		for _, m := range resp.Data {
+			models = append(models, chat(m.ID))
+		}
+		if !resp.HasMore || resp.LastID == "" {
+			break
+		}
+		afterID = resp.LastID
 	}
 	return sortModels(models), nil
 }

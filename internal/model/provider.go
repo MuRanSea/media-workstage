@@ -11,5 +11,6 @@ const (
 	ProtocolMidjourney       Protocol = "midjourney" // midjourney-proxy /mj protocol
 	ProtocolGemini           Protocol = "gemini"
 	ProtocolOpenAICompatible Protocol = "openai_compatible"
+	ProtocolAnthropic        Protocol = "anthropic" // Anthropic Messages API
 	ProtocolAPIMart          Protocol = "apimart"
 )

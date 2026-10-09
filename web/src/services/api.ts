@@ -50,7 +50,7 @@ export interface BackendTaskResponse {
 export type ProviderId = string;
 
 /** API dialect a provider speaks; decides the adapter and which card kinds it can run. */
-export type Protocol = 'ark' | 'minimax' | 'kling' | 'midjourney' | 'gemini' | 'openai_compatible' | 'apimart';
+export type Protocol = 'ark' | 'minimax' | 'kling' | 'midjourney' | 'gemini' | 'openai_compatible' | 'anthropic' | 'apimart';
 
 export type ModelType = 'image' | 'video' | 'chat' | 'audio' | 'other';
 
@@ -197,6 +197,8 @@ export interface CreateProviderPayload {
   name: string;
   base_url: string;
   api_key?: string;
+  /** The protocol's extra fields, e.g. MiniMax's group_id. */
+  extra?: Record<string, string>;
 }
 
 /**

@@ -33,10 +33,22 @@ const MaxImages = 6
 // maxRemoteImageBytes caps an image fetched to inline it (Gemini takes no plain URLs).
 const maxRemoteImageBytes = 20 << 20
 
+// Anthropic's Messages API: max_tokens is required, and a prompt for an image or video
+// card is far shorter than this. An image's Base64 data may be at most 5 MB.
+const (
+	// AnthropicVersion is the anthropic-version header every Anthropic request carries.
+	AnthropicVersion       = "2023-06-01"
+	anthropicMaxTokens     = 8192
+	anthropicMaxImageBytes = 5 << 20
+)
+
+var anthropicImageTypes = map[string]bool{"image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true}
+
 // Supported reports whether providers speaking protocol can run text generation.
 func Supported(protocol model.Protocol) bool {
 	switch protocol {
-	case model.ProtocolOpenAICompatible, model.ProtocolAPIMart, model.ProtocolArk, model.ProtocolMiniMax, model.ProtocolGemini:
+	case model.ProtocolOpenAICompatible, model.ProtocolAPIMart, model.ProtocolArk, model.ProtocolMiniMax, model.ProtocolGemini,
+		model.ProtocolAnthropic:
 		return true
 	}
 	return false
@@ -61,6 +73,8 @@ func Generate(ctx context.Context, client *http.Client, protocol model.Protocol,
 		text, err = chatCompletions(ctx, client, baseURL+"/text/chatcompletion_v2", apiKey, req, nil)
 	case model.ProtocolGemini:
 		text, err = geminiGenerate(ctx, client, baseURL, apiKey, req)
+	case model.ProtocolAnthropic:
+		text, err = anthropicMessages(ctx, client, baseURL+"/messages", apiKey, req)
 	default:
 		return "", fmt.Errorf("接入协议 %s 不支持文本生成", protocol)
 	}
@@ -146,6 +160,84 @@ func chatCompletions(ctx context.Context, client *http.Client, endpoint, apiKey 
 	return resp.Choices[0].Message.Content, nil
 }
 
+// anthropicMessages calls the Messages API. Extended thinking stays off and only text
+// blocks are read; images are always inlined, since relays differ on URL sources and
+// Anthropic cannot reach local addresses.
+func anthropicMessages(ctx context.Context, client *http.Client, endpoint, apiKey string, req Request) (string, error) {
+	type imageSource struct {
+		Type      string `json:"type"`
+		MediaType string `json:"media_type"`
+		Data      string `json:"data"`
+	}
+	type block struct {
+		Type   string       `json:"type"`
+		Text   string       `json:"text,omitempty"`
+		Source *imageSource `json:"source,omitempty"`
+	}
+	type message struct {
+		Role    string `json:"role"`
+		Content any    `json:"content"`
+	}
+	var content any = req.Prompt
+	if len(req.Images) > 0 {
+		blocks := make([]block, 0, len(req.Images)+1)
+		for i, img := range req.Images {
+			mime, data, err := inlineImage(ctx, client, img)
+			if err != nil {
+				return "", err
+			}
+			if !anthropicImageTypes[mime] {
+				return "", fmt.Errorf("第 %d 张图片格式为 %s，Anthropic 只接受 JPEG / PNG / GIF / WebP", i+1, mime)
+			}
+			if len(data) > anthropicMaxImageBytes {
+				return "", fmt.Errorf("第 %d 张图片超过 Anthropic 单张 5 MB 的上限", i+1)
+			}
+			blocks = append(blocks, block{Type: "image", Source: &imageSource{Type: "base64", MediaType: mime, Data: data}})
+		}
+		// Anthropic recommends images before the text that asks about them.
+		content = append(blocks, block{Type: "text", Text: req.Prompt})
+	}
+	payload := map[string]any{
+		"model":      req.Model,
+		"max_tokens": anthropicMaxTokens,
+		"messages":   []message{{Role: "user", Content: content}},
+	}
+	if strings.TrimSpace(req.System) != "" {
+		payload["system"] = req.System
+	}
+	body, _ := json.Marshal(payload)
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-key", strings.TrimSpace(apiKey))
+	httpReq.Header.Set("anthropic-version", AnthropicVersion)
+
+	var resp struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		StopReason string `json:"stop_reason"`
+	}
+	if err := doJSON(client, httpReq, &resp); err != nil {
+		return "", err
+	}
+	if resp.StopReason == "refusal" {
+		return "", errors.New("模型拒绝回答")
+	}
+	// A max_tokens stop still returns the text written so far.
+	var sb strings.Builder
+	for _, b := range resp.Content {
+		if b.Type == "text" {
+			sb.WriteString(b.Text)
+		}
+	}
+	return sb.String(), nil
+}
+
 func geminiGenerate(ctx context.Context, client *http.Client, baseURL, apiKey string, req Request) (string, error) {
 	type inlineData struct {
 		MimeType string `json:"mimeType"`
@@ -218,8 +310,8 @@ func geminiGenerate(ctx context.Context, client *http.Client, baseURL, apiKey st
 	return sb.String(), nil
 }
 
-// inlineImage turns an image into Gemini's inline form (MIME type + Base64): a data URI is
-// split, a URL is downloaded.
+// inlineImage turns an image into the inline form Gemini and Anthropic take (MIME type +
+// Base64): a data URI is split, a URL is downloaded.
 func inlineImage(ctx context.Context, client *http.Client, img string) (mime, data string, err error) {
 	if rest, ok := strings.CutPrefix(img, "data:"); ok {
 		meta, payload, found := strings.Cut(rest, ",")
@@ -229,7 +321,7 @@ func inlineImage(ctx context.Context, client *http.Client, img string) (mime, da
 		return strings.TrimSuffix(meta, ";base64"), payload, nil
 	}
 	if !strings.HasPrefix(img, "http://") && !strings.HasPrefix(img, "https://") {
-		return "", "", fmt.Errorf("Gemini 读不了这个图片地址: %.60s", img)
+		return "", "", fmt.Errorf("读不了这个图片地址: %.60s", img)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, img, nil)
 	if err != nil {

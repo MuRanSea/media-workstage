@@ -355,7 +355,7 @@ func TestServer_ConfigEndpoints_MaskingAndPersistence(t *testing.T) {
 	for _, p := range configResp.Providers {
 		ids = append(ids, p["id"])
 	}
-	assert.Equal(t, []interface{}{"ark", "minimax", "kling", "midjourney", "google", "openai", "apimart"}, ids)
+	assert.Equal(t, []interface{}{"ark", "minimax", "kling", "midjourney", "google", "openai", "anthropic", "apimart"}, ids)
 
 	// 2. POST /api/config -> test Cross-Origin rejection (403 Forbidden)
 	maliciousPayload := map[string]interface{}{

@@ -14,6 +14,7 @@ const PRESETS: Record<string, { protocol: Protocol; name: string }> = {
   midjourney: { protocol: 'midjourney', name: 'Midjourney' },
   google: { protocol: 'gemini', name: 'Google' },
   openai: { protocol: 'openai_compatible', name: 'OpenAI' },
+  anthropic: { protocol: 'anthropic', name: 'Anthropic' },
   apimart: { protocol: 'apimart', name: 'APIMart' },
 };
 

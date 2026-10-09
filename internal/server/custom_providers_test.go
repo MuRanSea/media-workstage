@@ -83,6 +83,87 @@ func TestCreateProvider_ListedAfterPresetsWithAdapter(t *testing.T) {
 	assert.IsType(t, &adapter.OpenAIImageAdapter{}, restarted[created.ID])
 }
 
+func TestCreateProvider_AnthropicProtocol(t *testing.T) {
+	_, r := newProviderTestServer(t)
+	w := postJSON(r, "/api/providers", map[string]string{
+		"protocol": "anthropic", "name": "Claude 中转", "base_url": "http://127.0.0.1:9/v1", "api_key": "sk-ant",
+	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var resp struct {
+		Config providerView `json:"config"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, model.ProtocolAnthropic, resp.Config.Protocol)
+	assert.True(t, resp.Config.CanListModels)
+	assert.Len(t, getProviders(t, r), len(presetProviders)+1)
+}
+
+// Every protocol with an adapter can be added again, and runs on that adapter.
+func TestCreateProvider_EveryProtocolWithAnAdapter(t *testing.T) {
+	srv, r := newProviderTestServer(t)
+	cases := map[model.Protocol]adapter.ProviderAdapter{
+		model.ProtocolArk:              &adapter.ArkAdapter{},
+		model.ProtocolMiniMax:          &adapter.MiniMaxAdapter{},
+		model.ProtocolMidjourney:       &adapter.MidjourneyAdapter{},
+		model.ProtocolGemini:           &adapter.GeminiImageAdapter{},
+		model.ProtocolOpenAICompatible: &adapter.OpenAIImageAdapter{},
+		model.ProtocolAPIMart:          &adapter.APIMartAdapter{},
+		model.ProtocolAnthropic:        nil, // text only, served by the llm package
+	}
+	for protocol, want := range cases {
+		w := postJSON(r, "/api/providers", map[string]string{
+			"protocol": string(protocol), "name": "第二个 " + string(protocol), "base_url": "http://127.0.0.1:9/v1", "api_key": "k",
+		})
+		require.Equal(t, http.StatusCreated, w.Code, "%s: %s", protocol, w.Body.String())
+		var resp struct {
+			Config providerView `json:"config"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, protocol, resp.Config.Protocol)
+		a, ok := srv.registry.Get(resp.Config.ID)
+		if want == nil {
+			assert.False(t, ok, protocol)
+			continue
+		}
+		require.True(t, ok, protocol)
+		assert.IsType(t, want, a, protocol)
+		if protocol == model.ProtocolMidjourney {
+			assert.Equal(t, []boundModel{img("MID_JOURNEY"), img("NIJI_JOURNEY")}, resp.Config.Models,
+				"a second MJ proxy binds the bot types like the preset one")
+		}
+	}
+	assert.Len(t, getProviders(t, r), len(presetProviders)+len(cases))
+}
+
+// A custom MiniMax provider keeps its own Group ID, and loses it when deleted.
+func TestCreateProvider_MiniMaxGroupID(t *testing.T) {
+	srv, r := newProviderTestServer(t)
+	w := postJSON(r, "/api/providers", map[string]any{
+		"protocol": "minimax", "name": "海螺 B", "base_url": "http://127.0.0.1:9/v1", "api_key": "k",
+		"extra": map[string]string{"group_id": " g-1 ", "unknown": "x"},
+	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var resp struct {
+		Config providerView `json:"config"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	id := resp.Config.ID
+	assert.Equal(t, map[string]string{"group_id": "g-1"}, resp.Config.Extra)
+
+	w = postJSON(r, "/api/config", map[string]any{"provider": id, "extra": map[string]string{"group_id": "g-2"}})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	for _, p := range getProviders(t, r) {
+		if p.ID == id {
+			assert.Equal(t, map[string]string{"group_id": "g-2"}, p.Extra)
+		}
+	}
+
+	require.Equal(t, http.StatusOK, deleteProvider(r, id).Code)
+	var left int64
+	srv.db.Model(&model.SystemConfig{}).Where("key LIKE ?", id+"%").Count(&left)
+	assert.Zero(t, left, "the Group ID goes with the provider")
+}
+
 func TestCreateProvider_Validation(t *testing.T) {
 	_, r := newProviderTestServer(t)
 	cases := []struct {
@@ -90,7 +171,7 @@ func TestCreateProvider_Validation(t *testing.T) {
 		status int
 		msg    string
 	}{
-		{map[string]string{"protocol": "ark", "name": "方舟 B", "base_url": "http://127.0.0.1:9"}, http.StatusBadRequest, "暂不支持"},
+		{map[string]string{"protocol": "kling", "name": "可灵 B", "base_url": "http://127.0.0.1:9"}, http.StatusBadRequest, "暂不支持"},
 		{map[string]string{"protocol": "openai_compatible", "name": "  ", "base_url": "http://127.0.0.1:9"}, http.StatusBadRequest, "名称不能为空"},
 		{map[string]string{"protocol": "openai_compatible", "name": " openai ", "base_url": "http://127.0.0.1:9"}, http.StatusConflict, "名称已被其他服务商使用"},
 		{map[string]string{"protocol": "openai_compatible", "name": "中转", "base_url": "ftp://x"}, http.StatusBadRequest, "base_url"},

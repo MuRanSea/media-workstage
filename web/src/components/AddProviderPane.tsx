@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertCircle, Globe, Key, Loader2, Plus, Tag } from 'lucide-react';
+import { AlertCircle, Building, Globe, Key, Loader2, Plus, Tag } from 'lucide-react';
 import { apiCreateProvider, type Protocol, type ProviderConfigItem, type ProviderId } from '../services/api.ts';
 import { refreshChannels } from '../services/channels.ts';
 import { defaultProviderName, isNameTaken } from '../engine/providers.ts';
@@ -19,6 +19,7 @@ export const AddProviderPane: React.FC<AddProviderPaneProps> = ({ providers, onC
   const [name, setName] = useState(() => defaultProviderName(meta.label, providers));
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [extra, setExtra] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,6 +35,9 @@ export const AddProviderPane: React.FC<AddProviderPaneProps> = ({ providers, onC
         name: name.trim(),
         base_url: baseUrl.trim(),
         api_key: apiKey.trim() || undefined,
+        extra: meta.extraFields
+          ? Object.fromEntries(meta.extraFields.map((f) => [f.key, extra[f.key]?.trim() ?? '']))
+          : undefined,
       });
       await refreshChannels();
       onCreated(config.id);
@@ -110,6 +114,20 @@ export const AddProviderPane: React.FC<AddProviderPaneProps> = ({ providers, onC
             placeholder={meta.keyPlaceholder}
           />
         </label>
+        {meta.extraFields?.map((field) => (
+          <label key={field.key} className="block space-y-1.5">
+            <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+              <Building className="w-3.5 h-3.5" /> {field.label}
+            </span>
+            <input
+              type="text"
+              value={extra[field.key] ?? ''}
+              onChange={(e) => setExtra({ ...extra, [field.key]: e.target.value })}
+              className={`${inputClass} font-mono py-2 ${meta.accent.focus}`}
+              placeholder={field.placeholder}
+            />
+          </label>
+        ))}
         {meta.hint && <p className="text-[11px] leading-relaxed text-slate-500">{meta.hint}</p>}
       </section>
 

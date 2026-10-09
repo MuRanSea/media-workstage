@@ -51,10 +51,10 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   _Avoid_: channel, 渠道
 
 - **Preset Provider (预置服务商)**:
-  A Provider that ships with the app (火山方舟, MiniMax, OpenAI, …) under a fixed legacy ID. It can be renamed and have its credential cleared, but never deleted. User-added Providers are **Custom Providers (自定义服务商)** and can be deleted.
+  A Provider that ships with the app (火山方舟, MiniMax, OpenAI, …) under a fixed legacy ID. It can be renamed and have its credential cleared, but never deleted. User-added Providers are **Custom Providers (自定义服务商)** and can be deleted; one can be added for any Protocol that can run cards, and it offers the same built-in models as the Preset Provider of its Protocol.
 
 - **Protocol (接入协议)**:
-  The API dialect a Provider speaks (Ark native, MiniMax, OpenAI-compatible, Gemini, APIMart, MJ Proxy). Determines which `ProviderAdapter` serves the Provider and which card kinds it can run.
+  The API dialect a Provider speaks (Ark native, MiniMax, OpenAI-compatible, Anthropic, Gemini, APIMart, MJ Proxy). The Anthropic protocol (Messages API) runs text cards only. Determines which `ProviderAdapter` serves the Provider and which card kinds it can run.
   _Avoid_: provider type, vendor
 
 - **ProviderAdapter (服务商适配器)**:

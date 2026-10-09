@@ -1,4 +1,5 @@
 import {
+  Asterisk,
   Bot,
   Building,
   Clapperboard,
@@ -26,6 +27,8 @@ export interface ProtocolMeta {
   hint?: string;
   // Whether a generation adapter exists yet; protocols without one only store credentials.
   adapterReady: boolean;
+  // Runs text cards only, so its models bind as text.
+  textOnly?: boolean;
 }
 
 export const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
@@ -100,6 +103,19 @@ export const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
     hint: '官方地址或 OpenAI 兼容中转均可，Base URL 需包含 /v1。',
     adapterReady: true,
   },
+  anthropic: {
+    label: 'Anthropic',
+    title: 'Anthropic Messages API',
+    subtitle: 'Claude 文本 /messages • 读图写提示词',
+    icon: Asterisk,
+    accent: { text: 'text-amber-400', key: 'text-amber-300', focus: 'focus:border-amber-500' },
+    baseUrlPlaceholder: 'https://api.anthropic.com/v1',
+    keyLabel: 'API Key',
+    keyPlaceholder: '请输入 API Key (sk-ant-...)',
+    hint: '官方地址或支持 /v1/messages 的中转均可，Base URL 需包含 /v1，如 https://api.anthropic.com/v1。只用于文本卡。',
+    adapterReady: true,
+    textOnly: true,
+  },
   apimart: {
     label: 'APIMart',
     title: 'APIMart 聚合 API',
@@ -114,5 +130,16 @@ export const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
   },
 };
 
-/** Protocols users can add custom providers for (the backend enforces the same list). */
-export const CREATABLE_PROTOCOLS: Protocol[] = ['openai_compatible'];
+/**
+ * Protocols users can add custom providers for: every one with an adapter, relays first
+ * (the backend enforces the same list).
+ */
+export const CREATABLE_PROTOCOLS: Protocol[] = [
+  'openai_compatible',
+  'anthropic',
+  'gemini',
+  'apimart',
+  'ark',
+  'minimax',
+  'midjourney',
+];

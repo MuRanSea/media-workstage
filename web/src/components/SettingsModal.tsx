@@ -550,6 +550,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   isConfigured={current.is_configured ?? false}
                   models={form.models}
                   presets={current.presets}
+                  defaultType={meta.textOnly ? 'chat' : undefined}
                   onChange={(models) => patchForm(channel.id, { models, modelsDirty: true })}
                 />
               </section>

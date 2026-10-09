@@ -126,3 +126,16 @@ describe('APIMart video readiness', () => {
     expect(resolveVideoModelDef('minimax', 'MiniMax-H3')).toMatchObject({ resolutions: ['768P', '2K'], maxRefs: 2 });
   });
 });
+
+describe('Anthropic readiness', () => {
+  it('runs Claude models on text cards only', () => {
+    const anthropic = channel({
+      id: 'anthropic',
+      is_configured: true,
+      models: [{ id: 'claude-sonnet-x', type: 'chat' }],
+    });
+    const text = buildProviderGroups([anthropic], 'text');
+    expect(text.map((g) => [g.provider, g.name, g.ready])).toEqual([['anthropic', 'Anthropic', true]]);
+    expect(buildProviderGroups([anthropic], 'image').every((g) => !g.ready)).toBe(true);
+  });
+});
