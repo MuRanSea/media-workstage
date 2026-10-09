@@ -158,6 +158,7 @@ export function compileVideoTaskPayload(
 
   // Images and videos are numbered separately: 图1, 图2, … and 视频1, …
   const counters = { 图: 0, 视频: 0 };
+  const cloudIndexOf = { 图: new Map<number, number>(), 视频: new Map<number, number>() };
   references.forEach((ref) => {
     const noun = refNoun(ref.role);
     const cloudIndex = ++counters[noun];
@@ -173,11 +174,18 @@ export function compileVideoTaskPayload(
       remote_url: resolved.remoteUrl,
     });
 
-    const tagRegex = new RegExp(`@?${noun}${ref.tagIndex}\\b`, 'g');
-    compiledPrompt = compiledPrompt.replace(tagRegex, `${noun}${cloudIndex}`);
+    if (!cloudIndexOf[noun].has(ref.tagIndex)) cloudIndexOf[noun].set(ref.tagIndex, cloudIndex);
   });
 
-  compiledPrompt = compiledPrompt.replace(/@(图|视频)(\d+)/g, '$1$2').trim();
+  // One pass, so a renumbered mention is never matched again: with @图5 linked before
+  // @图1, @图5 becomes 图1 and must not then turn into 图2 along with @图1.
+  compiledPrompt = compiledPrompt
+    .replace(/@?(图|视频)(\d+)\b/g, (mention, noun: '图' | '视频', n: string) => {
+      const cloudIndex = cloudIndexOf[noun].get(Number(n));
+      return cloudIndex === undefined ? mention : `${noun}${cloudIndex}`;
+    })
+    .replace(/@(图|视频)(\d+)/g, '$1$2')
+    .trim();
 
   // Asset-library items (Seedance, multi-reference): numbered after the connected cards of their kind.
   const assetRefs = mode === 'all_modal' ? card.assetRefs ?? [] : [];

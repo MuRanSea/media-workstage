@@ -12,7 +12,7 @@ import {
 } from '../types/canvas.ts';
 import type { ModelOption } from './channelModels.ts';
 import { protocolOf } from './providers.ts';
-import { refTag } from './refTags.ts';
+import { withoutRefTag } from './refTags.ts';
 import { inferVideoProvider } from './videoCompiler.ts';
 
 /**
@@ -137,7 +137,7 @@ function dropUnsupportedVideoRefs(card: SpatialCard, option: ModelOption): Parti
   const kept = videos.slice(0, limit);
   let prompt = card.prompt;
   for (const dropped of videos.slice(limit)) {
-    prompt = prompt.replace(new RegExp(`${refTag(dropped)}\\b`, 'g'), '').replace(/\s{2,}/g, ' ').trim();
+    prompt = withoutRefTag(prompt, dropped);
   }
   const base = videoModePatch(card, card.mode ?? 'all_modal', Infinity).references ?? [];
   return { prompt, references: base.filter((r) => r.role !== 'reference_video' || kept.some((k) => k.cardId === r.cardId)) };
@@ -171,7 +171,7 @@ export function videoModelPatch(card: SpatialCard, option: ModelOption): Partial
 /** Removing a reference also removes its @图N tags from the prompt. */
 export function removeReferencePatch(card: SpatialCard, refCardId: string): Partial<SpatialCard> {
   const ref = card.references?.find((r) => r.cardId === refCardId);
-  const prompt = ref ? card.prompt.replace(new RegExp(`${refTag(ref)}\\b`, 'g'), '').replace(/\s{2,}/g, ' ').trim() : card.prompt;
+  const prompt = ref ? withoutRefTag(card.prompt, ref) : card.prompt;
   return { prompt, references: (card.references ?? []).filter((r) => r.cardId !== refCardId) };
 }
 

@@ -26,6 +26,8 @@ interface UseSpatialCanvasProps {
   initialPanY?: number;
   /** Called once before a user edit changes card positions (drag, align), for undo. */
   onBeforeEdit?: () => void;
+  /** False while a dialog covers the canvas, so its keys do not move the canvas. */
+  keyboardEnabled?: boolean;
 }
 
 export function useSpatialCanvas({
@@ -36,6 +38,7 @@ export function useSpatialCanvas({
   initialPanX = 60,
   initialPanY = 40,
   onBeforeEdit,
+  keyboardEnabled = true,
 }: UseSpatialCanvasProps) {
   const [transform, setTransform] = useState<CanvasTransform>({
     zoom: initialZoom,
@@ -64,6 +67,8 @@ export function useSpatialCanvas({
   const startPanRef = useRef<Point>({ x: 0, y: 0 });
   const mousePosRef = useRef<Point>({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
   const isSpacePressedRef = useRef(false);
+  // Holding space borrows the hand tool; letting go gives back the tool picked before.
+  const toolBeforeSpaceRef = useRef<CanvasTool>('select');
 
   // Zoom anchored at screen point
   const zoomAtPoint = useCallback(
@@ -183,10 +188,14 @@ export function useSpatialCanvas({
       if (
         tag === 'input' ||
         tag === 'textarea' ||
+        tag === 'select' ||
         (activeEl as HTMLElement)?.isContentEditable
       ) {
         return;
       }
+      if (!keyboardEnabled) return;
+      // Modifier combinations belong to the browser (Ctrl+F finds, Ctrl+0 resets the page zoom).
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       if (e.key === '0') {
         e.preventDefault();
@@ -205,26 +214,35 @@ export function useSpatialCanvas({
         focusSelection();
       } else if (e.key === ' ' && !isSpacePressedRef.current) {
         isSpacePressedRef.current = true;
-        setActiveTool('hand');
+        setActiveTool((prev) => {
+          toolBeforeSpaceRef.current = prev;
+          return 'hand';
+        });
       } else if (e.key === 'Escape') {
         setSelectedCardIds(new Set());
       }
     };
 
+    // Only a space that took the hand tool gives it back: one typed into a prompt did not.
+    const releaseSpace = () => {
+      if (!isSpacePressedRef.current) return;
+      isSpacePressedRef.current = false;
+      setActiveTool(toolBeforeSpaceRef.current);
+    };
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === ' ') {
-        isSpacePressedRef.current = false;
-        setActiveTool('select');
-      }
+      if (e.key === ' ') releaseSpace();
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    // Switching windows while holding space never delivers its keyup.
+    window.addEventListener('blur', releaseSpace);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', releaseSpace);
     };
-  }, [fitView, resetZoom100, zoomIn, zoomOut, focusSelection]);
+  }, [fitView, resetZoom100, zoomIn, zoomOut, focusSelection, keyboardEnabled]);
 
   // Canvas background mouse down
   const handleMouseDownCanvas = useCallback(

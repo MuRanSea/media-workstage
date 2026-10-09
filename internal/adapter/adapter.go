@@ -50,9 +50,24 @@ type ConfigurableAdapter interface {
 	UpdateConfig(baseURL string, apiKey string, extra map[string]string) error
 }
 
-// PollTimeoutHinter lets an adapter extend the poller's default timeout for slow providers.
+// PollTimeoutHinter lets an adapter extend the poller's default timeout for slow providers;
+// a hint shorter than the default is ignored.
 type PollTimeoutHinter interface {
 	PollTimeout(task *model.MediaTask) time.Duration
+}
+
+// downloadTimeout bounds one result download, far above the API calls' timeouts: a
+// long 1080p video runs to hundreds of MB, which takes minutes over a slow link.
+const downloadTimeout = 30 * time.Minute
+
+// downloadClient is client with room for a large download, on the same transport.
+func downloadClient(client *http.Client) *http.Client {
+	if client.Timeout == 0 || client.Timeout >= downloadTimeout {
+		return client
+	}
+	c := *client
+	c.Timeout = downloadTimeout
+	return &c
 }
 
 // ChannelConfig is the credential set shared by the image channel adapters.

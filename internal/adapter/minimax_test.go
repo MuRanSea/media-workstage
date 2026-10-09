@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"media-workstage/internal/model"
 )
@@ -384,5 +385,20 @@ func TestMiniMaxAdapter_DoubleDownloadStrategy(t *testing.T) {
 	}
 	if retrieveHits != 1 {
 		t.Errorf("expected 1 retrieve hit, got %d", retrieveHits)
+	}
+}
+
+// A result download is not cut off by the API calls' timeout.
+func TestMiniMaxAdapter_DownloadOutlastsAPITimeout(t *testing.T) {
+	const apiTimeout = 100 * time.Millisecond
+	server := slowFileServer(t, apiTimeout)
+	a := NewMiniMaxAdapter(MiniMaxConfig{BaseURL: server.URL, HTTPClient: &http.Client{Timeout: apiTimeout}})
+
+	target := filepath.Join(t.TempDir(), "videos", "task1", "output.mp4")
+	if err := a.DownloadAsset(context.Background(), server.URL+"/output.mp4", target); err != nil {
+		t.Fatalf("download failed: %v", err)
+	}
+	if content, _ := os.ReadFile(target); string(content) != "FIRST_HALF_SECOND_HALF" {
+		t.Errorf("unexpected content %q", content)
 	}
 }

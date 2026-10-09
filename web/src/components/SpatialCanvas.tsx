@@ -171,6 +171,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     initialPanX: initialViewport?.panX,
     initialPanY: initialViewport?.panY,
     onBeforeEdit: recordEdit,
+    keyboardEnabled: !isSettingsOpen && !viewer && !showShortcuts,
   });
 
   useEffect(() => {

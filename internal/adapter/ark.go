@@ -547,6 +547,7 @@ func (a *ArkAdapter) submitVideoTask(ctx context.Context, task *model.MediaTask,
 		})
 	}
 
+	frames := 0 // images placed so far, for unlabelled first/last frames
 	for _, ref := range params.ReferenceAssets {
 		resolve := resolveAssetURL
 		if ref.Role == "reference_video" || ref.Role == "video" {
@@ -559,9 +560,9 @@ func (a *ArkAdapter) submitVideoTask(ctx context.Context, task *model.MediaTask,
 
 		role := ref.Role
 		if task.TaskMode == "first_last_frame" && role == "" {
-			if len(content) == 1 {
-				role = "first_frame"
-			} else {
+			// Counted rather than read off len(content): the prompt is optional in this mode.
+			role = "first_frame"
+			if frames > 0 {
 				role = "last_frame"
 			}
 		}
@@ -581,6 +582,7 @@ func (a *ArkAdapter) submitVideoTask(ctx context.Context, task *model.MediaTask,
 			})
 		default:
 			// Image reference
+			frames++
 			content = append(content, videoContentItem{
 				Type:     "image_url",
 				ImageURL: &mediaURLField{URL: url},
@@ -1102,7 +1104,7 @@ func (a *ArkAdapter) DownloadAsset(ctx context.Context, remoteURL string, target
 		return fmt.Errorf("failed to create download request: %w", err)
 	}
 
-	resp, err := a.client.Do(req)
+	resp, err := downloadClient(a.client).Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download remote asset from %s: %w", remoteURL, err)
 	}

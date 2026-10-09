@@ -322,7 +322,8 @@ func (b *channelImageBase) DownloadAsset(ctx context.Context, remoteURL string, 
 	if baseURL, apiKey := b.credentials(); apiKey != "" && sameOrigin(baseURL, req.URL) {
 		b.setKey(req, apiKey)
 	}
-	resp, err := b.client.Do(req)
+	// APIMart's Kling videos come through here too.
+	resp, err := downloadClient(b.client).Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download %s: %w", remoteURL, err)
 	}

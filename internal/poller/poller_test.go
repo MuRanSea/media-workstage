@@ -456,6 +456,213 @@ func TestTaskPoller_TaskTimeout(t *testing.T) {
 	}
 }
 
+// waitForStatus polls the task's stored status until it is want or the deadline passes.
+func waitForStatus(t *testing.T, database *gorm.DB, taskID, want string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var task model.MediaTask
+	for time.Now().Before(deadline) {
+		if err := database.First(&task, "id = ?", taskID).Error; err == nil && task.Status == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("task %s never reached %s (last %s)", taskID, want, task.Status)
+}
+
+// A desktop restart stops the poller; the task it was polling must stay running so
+// startup recovery resumes it, not be expired as if it had timed out.
+func TestTaskPoller_StopLeavesPollingTaskForRecovery(t *testing.T) {
+	database := setupTestDB(t)
+	fakeAdapter := adapter.NewFakeProviderAdapter("ark")
+	poller := NewTaskPoller(TaskPollerConfig{
+		DB:                database,
+		Adapters:          map[string]adapter.ProviderAdapter{"ark": fakeAdapter},
+		VideoPollInterval: 10 * time.Millisecond,
+		VideoInitialDelay: 10 * time.Millisecond,
+		VideoTimeout:      time.Minute,
+	})
+
+	taskID := "stop-task-1"
+	database.Create(&model.MediaTask{
+		ID:        taskID,
+		Provider:  "ark",
+		Model:     "doubao-seedance-2-5-260628",
+		TaskType:  "video_generation",
+		TaskMode:  "text_to_video",
+		Prompt:    "Still rendering",
+		Status:    model.TaskStatusQueued,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	fakeAdapter.SetNextPollResult(taskID, &adapter.PollResult{Status: model.TaskStatusRunning, Progress: 20})
+
+	poller.Start(context.Background())
+	waitForStatus(t, database, taskID, model.TaskStatusRunning)
+	poller.Stop()
+
+	var stopped model.MediaTask
+	if err := database.First(&stopped, "id = ?", taskID).Error; err != nil {
+		t.Fatalf("failed to query task: %v", err)
+	}
+	if stopped.Status != model.TaskStatusRunning || stopped.ErrorCode != "" {
+		t.Errorf("expected the task to stay running for recovery, got %s (%s)", stopped.Status, stopped.ErrorCode)
+	}
+	if stopped.ProviderTaskID == "" || stopped.SubmittedAt == nil {
+		t.Errorf("expected the provider task ID and submit time to be stored for recovery, got %q / %v", stopped.ProviderTaskID, stopped.SubmittedAt)
+	}
+}
+
+// A video polling for hours holds no worker: with more long videos polling than there
+// are submission slots, a task queued after them still runs to completion.
+func TestTaskPoller_LongPollsDoNotBlockOtherTasks(t *testing.T) {
+	database := setupTestDB(t)
+	fakeAdapter := adapter.NewFakeProviderAdapter("ark")
+	poller := NewTaskPoller(TaskPollerConfig{
+		DB:                 database,
+		Adapters:           map[string]adapter.ProviderAdapter{"ark": fakeAdapter},
+		AssetDir:           t.TempDir(),
+		VideoPollInterval:  10 * time.Millisecond,
+		VideoInitialDelay:  10 * time.Millisecond,
+		ConcurrencyWorkers: 2,
+	})
+	newTask := func(id string) {
+		database.Create(&model.MediaTask{
+			ID:        id,
+			Provider:  "ark",
+			Model:     "doubao-seedance-2-5-260628",
+			TaskType:  "video_generation",
+			TaskMode:  "text_to_video",
+			Prompt:    id,
+			Status:    model.TaskStatusQueued,
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		})
+	}
+	// More than the 16 workers the poller used to run, all polling at once.
+	const long = 17
+	for i := range long {
+		id := fmt.Sprintf("long-%02d", i)
+		newTask(id)
+		fakeAdapter.SetNextPollResult(id, &adapter.PollResult{Status: model.TaskStatusRunning, Progress: 20})
+	}
+
+	// Startup recovery picks up the long videos.
+	poller.Start(context.Background())
+	defer poller.Stop()
+	for i := range long {
+		waitForStatus(t, database, fmt.Sprintf("long-%02d", i), model.TaskStatusRunning)
+	}
+
+	newTask("next-video")
+	poller.Enqueue("next-video")
+	waitForStatus(t, database, "next-video", model.TaskStatusSucceeded)
+}
+
+// A task resumed after the app was closed past its deadline is polled once: a result
+// that arrived meanwhile is collected, one still running expires instead of getting
+// a fresh deadline.
+func TestTaskPoller_ResumedTaskKeepsItsDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		poll adapter.PollResult
+		want string
+	}{
+		{"finished while closed", adapter.PollResult{Status: model.TaskStatusSucceeded, Progress: 100}, model.TaskStatusSucceeded},
+		{"still running", adapter.PollResult{Status: model.TaskStatusRunning, Progress: 50}, model.TaskStatusExpired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			database := setupTestDB(t)
+			fakeAdapter := adapter.NewFakeProviderAdapter("ark")
+			poller := NewTaskPoller(TaskPollerConfig{
+				DB:                database,
+				Adapters:          map[string]adapter.ProviderAdapter{"ark": fakeAdapter},
+				AssetDir:          t.TempDir(),
+				VideoPollInterval: 10 * time.Millisecond,
+				VideoInitialDelay: 10 * time.Millisecond,
+				VideoTimeout:      time.Hour,
+			})
+			submitted := time.Now().UTC().Add(-2 * time.Hour)
+			database.Create(&model.MediaTask{
+				ID:             "resumed",
+				Provider:       "ark",
+				ProviderTaskID: "prov-resumed",
+				Model:          "doubao-seedance-2-5-260628",
+				TaskType:       "video_generation",
+				TaskMode:       "text_to_video",
+				Prompt:         "Submitted before the app closed",
+				Status:         model.TaskStatusRunning,
+				CreatedAt:      submitted,
+				SubmittedAt:    &submitted,
+				UpdatedAt:      submitted,
+			})
+			poll := tc.poll
+			fakeAdapter.SetNextPollResult("prov-resumed", &poll)
+
+			started := time.Now()
+			poller.ProcessTask(context.Background(), "resumed")
+			if elapsed := time.Since(started); elapsed > time.Second {
+				t.Fatalf("expected the overdue task to settle at once, took %v", elapsed)
+			}
+
+			var task model.MediaTask
+			if err := database.First(&task, "id = ?", "resumed").Error; err != nil {
+				t.Fatalf("failed to query task: %v", err)
+			}
+			if task.Status != tc.want {
+				t.Errorf("expected %s, got %s", tc.want, task.Status)
+			}
+		})
+	}
+}
+
+// Failing a deleted provider's tasks stops the worker polling one, so its later poll
+// results cannot overwrite the failure.
+func TestTaskPoller_FailProviderTasksStopsWorker(t *testing.T) {
+	database := setupTestDB(t)
+	fakeAdapter := adapter.NewFakeProviderAdapter("custom-abc")
+	poller := NewTaskPoller(TaskPollerConfig{
+		DB:                database,
+		Adapters:          map[string]adapter.ProviderAdapter{"custom-abc": fakeAdapter},
+		AssetDir:          t.TempDir(),
+		VideoPollInterval: 10 * time.Millisecond,
+		VideoInitialDelay: 10 * time.Millisecond,
+		VideoTimeout:      time.Minute,
+	})
+
+	taskID := "deleted-provider-task"
+	database.Create(&model.MediaTask{
+		ID:        taskID,
+		Provider:  "custom-abc",
+		Model:     "some-video-model",
+		TaskType:  "video_generation",
+		Prompt:    "Orphaned",
+		Status:    model.TaskStatusQueued,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	})
+	fakeAdapter.SetNextPollResult(taskID, &adapter.PollResult{Status: model.TaskStatusRunning, Progress: 20})
+
+	poller.Start(context.Background())
+	defer poller.Stop()
+	waitForStatus(t, database, taskID, model.TaskStatusRunning)
+
+	if n := poller.FailProviderTasks("custom-abc", "ProviderDeleted", "服务商已删除"); n != 1 {
+		t.Fatalf("expected 1 failed task, got %d", n)
+	}
+	// Were the worker still polling, this result would turn the task succeeded.
+	fakeAdapter.SetNextPollResult(taskID, &adapter.PollResult{Status: model.TaskStatusSucceeded, Progress: 100})
+	time.Sleep(100 * time.Millisecond)
+
+	var task model.MediaTask
+	if err := database.First(&task, "id = ?", taskID).Error; err != nil {
+		t.Fatalf("failed to query task: %v", err)
+	}
+	if task.Status != model.TaskStatusFailed || task.ErrorCode != "ProviderDeleted" {
+		t.Errorf("expected the task to stay failed, got %s (%s)", task.Status, task.ErrorCode)
+	}
+}
+
 // failingDownloadAdapter reports success but cannot fetch the result files,
 // like a relay that rejects the download request.
 type failingDownloadAdapter struct {

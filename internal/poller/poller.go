@@ -25,16 +25,17 @@ type TaskPollerConfig struct {
 	AssetDir string
 	// AssetRoot, when set, picks the download root per task (a project's assets
 	// folder). An empty result falls back to AssetDir.
-	AssetRoot          func(task *model.MediaTask) string
-	Limiter            *IPMLimiter
-	Broadcaster        EventBroadcaster
-	ImagePollInterval  time.Duration
-	ImageTimeout       time.Duration
-	VideoPollInterval  time.Duration
-	VideoTimeout       time.Duration
-	VideoInitialDelay  time.Duration
-	ImageInitialDelay  time.Duration
-	WorkerQueueSize    int
+	AssetRoot         func(task *model.MediaTask) string
+	Limiter           *IPMLimiter
+	Broadcaster       EventBroadcaster
+	ImagePollInterval time.Duration
+	ImageTimeout      time.Duration
+	VideoPollInterval time.Duration
+	VideoTimeout      time.Duration
+	VideoInitialDelay time.Duration
+	ImageInitialDelay time.Duration
+	WorkerQueueSize   int
+	// ConcurrencyWorkers is how many tasks may submit at once (default 16); any number poll.
 	ConcurrencyWorkers int
 }
 
@@ -52,10 +53,13 @@ type TaskPoller struct {
 	videoTimeout      time.Duration
 	videoInitialDelay time.Duration
 	imageInitialDelay time.Duration
-	taskQueue         chan string
-	activeTasks       sync.Map // map[string]context.CancelFunc
-	cancelWorkerCtx   context.CancelFunc
-	workerWg          sync.WaitGroup
+	// submitSlots bounds how many tasks submit at once (a synchronous image provider
+	// holds its slot for minutes). Polling holds none, since a video may poll for days.
+	submitSlots     chan struct{}
+	taskQueue       chan string
+	activeTasks     sync.Map // map[string]context.CancelFunc
+	cancelWorkerCtx context.CancelFunc
+	workerWg        sync.WaitGroup
 }
 
 // NewTaskPoller creates and initializes a new TaskPoller instance.
@@ -77,7 +81,9 @@ func NewTaskPoller(cfg TaskPollerConfig) *TaskPoller {
 
 	videoTimeout := cfg.VideoTimeout
 	if videoTimeout <= 0 {
-		videoTimeout = 600 * time.Second
+		// As long as Ark lets a Seedance task run (execution_expires_after): a task
+		// queued for hours on the provider is still paid for, so it is still awaited.
+		videoTimeout = 48 * time.Hour
 	}
 
 	imageInitDelay := cfg.ImageInitialDelay
@@ -135,6 +141,7 @@ func NewTaskPoller(cfg TaskPollerConfig) *TaskPoller {
 		videoTimeout:      videoTimeout,
 		videoInitialDelay: videoInitDelay,
 		imageInitialDelay: imageInitDelay,
+		submitSlots:       make(chan struct{}, concurrency),
 		taskQueue:         make(chan string, queueSize),
 	}
 }
@@ -159,11 +166,8 @@ func (p *TaskPoller) Start(ctx context.Context) {
 	workerCtx, cancel := context.WithCancel(ctx)
 	p.cancelWorkerCtx = cancel
 
-	concurrency := 16
-	for range concurrency {
-		p.workerWg.Add(1)
-		go p.workerLoop(workerCtx)
-	}
+	p.workerWg.Add(1)
+	go p.dispatchLoop(workerCtx)
 
 	// Startup Recovery: resume uncompleted tasks from SQLite
 	p.StartRecovery(workerCtx)
@@ -202,7 +206,9 @@ func (p *TaskPoller) Enqueue(taskID string) {
 	}
 }
 
-func (p *TaskPoller) workerLoop(ctx context.Context) {
+// dispatchLoop runs each queued task on its own goroutine, so a task polling for hours
+// never keeps the others waiting; submitSlots bounds how many submit at once.
+func (p *TaskPoller) dispatchLoop(ctx context.Context) {
 	defer p.workerWg.Done()
 	for {
 		select {
@@ -212,7 +218,7 @@ func (p *TaskPoller) workerLoop(ctx context.Context) {
 			if !ok {
 				return
 			}
-			p.ProcessTask(ctx, taskID)
+			p.workerWg.Go(func() { p.ProcessTask(ctx, taskID) })
 		}
 	}
 }
@@ -259,40 +265,34 @@ func (p *TaskPoller) ProcessTask(ctx context.Context, taskID string) {
 		}
 	}
 
+	// A cancelled worker (shutdown, a desktop restart, or its provider deleted) leaves
+	// the task as it is: startup recovery picks it up again, so nothing is failed or
+	// expired just because the process is going away.
+
 	// 1. If task is still queued, perform rate limiting & submit
 	if task.Status == model.TaskStatusQueued {
-		if isImage {
-			if isLayerDecomp {
-				if err := p.limiter.PreDeductLayerDecomposition(taskCtx); err != nil {
-					p.failTask(taskCtx, &task, "RateLimitError", "rate limit acquisition cancelled")
-					return
-				}
-			} else {
-				if err := p.limiter.Wait(taskCtx, 1); err != nil {
-					p.failTask(taskCtx, &task, "RateLimitError", "rate limit acquisition cancelled")
-					return
-				}
-			}
+		select {
+		case p.submitSlots <- struct{}{}:
+		case <-taskCtx.Done():
+			return
 		}
-
-		providerTaskID, err := provAdapter.SubmitTask(taskCtx, &task)
+		providerTaskID, err := p.submit(taskCtx, provAdapter, &task, isImage, isLayerDecomp)
+		<-p.submitSlots
 		if err != nil {
-			// Refund on submit failure
-			if isImage {
-				if isLayerDecomp {
-					p.limiter.FullRefundLayerDecomposition()
-				} else {
-					p.limiter.Refund(1)
-				}
+			if taskCtx.Err() == nil {
+				p.failTask(taskCtx, &task, "SubmitFailed", err.Error())
 			}
-			p.failTask(taskCtx, &task, "SubmitFailed", err.Error())
 			return
 		}
 
+		// The provider's task ID is stored right away, so a task the app was closed on
+		// (even by a crash) is polled again on the next start instead of resubmitted.
+		now := time.Now().UTC()
 		task.ProviderTaskID = providerTaskID
+		task.SubmittedAt = &now
 		task.Status = model.TaskStatusRunning
 		task.Progress = 10
-		task.UpdatedAt = time.Now().UTC()
+		task.UpdatedAt = now
 		if err := p.db.Save(&task).Error; err != nil {
 			log.Printf("[TaskPoller] Error saving running task %s: %v", task.ID, err)
 		}
@@ -310,18 +310,29 @@ func (p *TaskPoller) ProcessTask(ctx context.Context, taskID string) {
 		initDelay = p.imageInitialDelay
 	}
 	if hinter, ok := provAdapter.(adapter.PollTimeoutHinter); ok {
-		if d := hinter.PollTimeout(&task); d > 0 {
+		if d := hinter.PollTimeout(&task); d > timeoutDuration {
 			timeoutDuration = d
 		}
 	}
 
-	pollCtx, pollCancel := context.WithTimeout(taskCtx, timeoutDuration)
+	// The deadline counts from the submission, so a task resumed after a restart keeps
+	// its original one. It is still polled at least once, to collect a result that
+	// arrived while the app was closed.
+	start := task.CreatedAt
+	if task.SubmittedAt != nil {
+		start = *task.SubmittedAt
+	}
+	deadline := start.Add(timeoutDuration)
+	if earliest := time.Now().Add(initDelay + pollInterval); deadline.Before(earliest) {
+		deadline = earliest
+	}
+	pollCtx, pollCancel := context.WithDeadline(taskCtx, deadline)
 	defer pollCancel()
 
 	// Initial delay before first poll
 	select {
 	case <-pollCtx.Done():
-		p.handleTimeout(taskCtx, &task, isLayerDecomp)
+		p.handlePollEnd(taskCtx, &task, isLayerDecomp)
 		return
 	case <-time.After(initDelay):
 	}
@@ -362,11 +373,48 @@ func (p *TaskPoller) ProcessTask(ctx context.Context, taskID string) {
 
 		select {
 		case <-pollCtx.Done():
-			p.handleTimeout(taskCtx, &task, isLayerDecomp)
+			p.handlePollEnd(taskCtx, &task, isLayerDecomp)
 			return
 		case <-ticker.C:
 		}
 	}
+}
+
+// handlePollEnd handles the poll context ending: a timeout expires the task, a
+// cancelled worker leaves it running for startup recovery.
+func (p *TaskPoller) handlePollEnd(taskCtx context.Context, task *model.MediaTask, isLayerDecomp bool) {
+	if taskCtx.Err() != nil {
+		if isLayerDecomp {
+			p.limiter.FullRefundLayerDecomposition()
+		}
+		return
+	}
+	p.handleTimeout(taskCtx, task, isLayerDecomp)
+}
+
+// submit rate-limits a queued image task, then submits the task, refunding the limiter
+// when the submission fails. An error while ctx is cancelled means the worker stopped.
+func (p *TaskPoller) submit(ctx context.Context, provAdapter adapter.ProviderAdapter, task *model.MediaTask, isImage, isLayerDecomp bool) (string, error) {
+	if isImage {
+		// The wait only ends early when the worker is cancelled.
+		wait := func() error { return p.limiter.Wait(ctx, 1) }
+		if isLayerDecomp {
+			wait = func() error { return p.limiter.PreDeductLayerDecomposition(ctx) }
+		}
+		if err := wait(); err != nil {
+			return "", err
+		}
+	}
+
+	providerTaskID, err := provAdapter.SubmitTask(ctx, task)
+	if err != nil && isImage {
+		if isLayerDecomp {
+			p.limiter.FullRefundLayerDecomposition()
+		} else {
+			p.limiter.Refund(1)
+		}
+	}
+	return providerTaskID, err
 }
 
 // assetRootFor returns the folder a task's outputs are downloaded into.
@@ -423,6 +471,12 @@ func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, r
 		}
 
 		downloadedAssets = append(downloadedAssets, taskAsset)
+	}
+
+	// Downloads cut off by a shutdown are retried: the task stays running and is polled
+	// again after the restart.
+	if ctx.Err() != nil && downloadedCount < len(res.Assets) {
+		return
 	}
 
 	// Refund unused IPM tokens for layer decomposition
@@ -483,6 +537,10 @@ func (p *TaskPoller) FailProviderTasks(provider, errCode, errMsg string) int {
 		return 0
 	}
 	for i := range tasks {
+		// Stop a worker still polling the task, or it could later overwrite the failure.
+		if cancel, ok := p.activeTasks.Load(tasks[i].ID); ok {
+			cancel.(context.CancelFunc)()
+		}
 		p.failTask(context.Background(), &tasks[i], errCode, errMsg)
 	}
 	return len(tasks)

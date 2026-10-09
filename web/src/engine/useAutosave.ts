@@ -5,6 +5,8 @@ import { apiSaveProject, ProjectConflictError, type ProjectViewport } from '../s
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict';
 
 const AUTOSAVE_DELAY_MS = 1000;
+/** Browsers refuse keepalive requests whose bodies add up to over 64 KiB; leave room for others. */
+const KEEPALIVE_MAX_BYTES = 60 * 1024;
 
 interface UseAutosaveArgs {
   projectId: string;
@@ -116,22 +118,27 @@ export function useAutosave({ projectId, initialRevision, cards }: UseAutosaveAr
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [flush]);
 
-  // Closing the tab or leaving the project: write pending changes with keepalive.
+  // Closing the tab or leaving the project: write pending changes. Leaving within the
+  // app needs a plain request, which outlives the canvas; keepalive, which lets a save
+  // outlive the page, fails outright for a project over the browser's 64 KiB limit.
   useEffect(() => {
-    const saveOnExit = () => {
+    const saveOnExit = (unloading: boolean) => {
       if (!dirtyRef.current || inFlightRef.current || conflictRef.current || revisionRef.current === null) return;
       dirtyRef.current = false;
-      void apiSaveProject(
-        projectId,
-        { revision: revisionRef.current, viewport: viewportRef.current ?? { zoom: 0.85, panX: 60, panY: 40 }, cards: cardsRef.current },
-        { keepalive: true }
-      ).catch(() => {});
+      const body = {
+        revision: revisionRef.current,
+        viewport: viewportRef.current ?? { zoom: 0.85, panX: 60, panY: 40 },
+        cards: cardsRef.current,
+      };
+      const keepalive = unloading && new TextEncoder().encode(JSON.stringify(body)).length <= KEEPALIVE_MAX_BYTES;
+      void apiSaveProject(projectId, body, { keepalive }).catch(() => {});
     };
-    window.addEventListener('beforeunload', saveOnExit);
+    const onBeforeUnload = () => saveOnExit(true);
+    window.addEventListener('beforeunload', onBeforeUnload);
     return () => {
-      window.removeEventListener('beforeunload', saveOnExit);
+      window.removeEventListener('beforeunload', onBeforeUnload);
       window.clearTimeout(timerRef.current);
-      saveOnExit();
+      saveOnExit(false);
     };
   }, [projectId]);
 
