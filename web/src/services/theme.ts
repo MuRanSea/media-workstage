@@ -8,7 +8,7 @@ export type ThemeChoice = 'system' | 'light' | 'dark';
 export type Theme = 'light' | 'dark';
 
 const KEY = 'mw-theme';
-const listeners = new Set<(choice: ThemeChoice) => void>();
+const listeners = new Set<() => void>();
 const media = typeof window !== 'undefined' ? window.matchMedia('(prefers-color-scheme: light)') : null;
 
 export function readThemeChoice(): ThemeChoice {
@@ -37,23 +37,27 @@ export function setThemeChoice(choice: ThemeChoice) {
     // Storage blocked: the choice still applies for this session.
   }
   apply(choice);
-  listeners.forEach((fn) => fn(choice));
+  listeners.forEach((fn) => fn());
 }
 
 media?.addEventListener('change', () => {
   if (readThemeChoice() === 'system') apply('system');
+  listeners.forEach((fn) => fn());
 });
 
-export function useThemeChoice(): [ThemeChoice, (choice: ThemeChoice) => void] {
-  const [choice, setChoice] = useState(readThemeChoice);
+/** The user's choice and the theme it resolves to right now. */
+export function useTheme(): { choice: ThemeChoice; theme: Theme; setChoice: (choice: ThemeChoice) => void } {
+  const read = () => {
+    const choice = readThemeChoice();
+    return { choice, theme: resolveTheme(choice) };
+  };
+  const [state, setState] = useState(read);
   useEffect(() => {
-    listeners.add(setChoice);
+    const update = () => setState(read());
+    listeners.add(update);
     return () => {
-      listeners.delete(setChoice);
+      listeners.delete(update);
     };
   }, []);
-  return [choice, setThemeChoice];
+  return { ...state, setChoice: setThemeChoice };
 }
-
-/** The order the header button steps through. */
-export const NEXT_THEME: Record<ThemeChoice, ThemeChoice> = { system: 'light', light: 'dark', dark: 'system' };

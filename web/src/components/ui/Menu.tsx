@@ -1,4 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Check } from 'lucide-react';
 
 export type MenuEntry =
   | {
@@ -8,13 +10,15 @@ export type MenuEntry =
       hint?: string;
       danger?: boolean;
       disabled?: boolean;
+      /** Marks the selected option in a choice menu. */
+      checked?: boolean;
       onSelect: () => void;
     }
   | 'separator';
 
 interface MenuProps {
-  /** Viewport point the menu opens at (top-left corner). */
-  at: { x: number; y: number };
+  /** Viewport point the menu opens at: its top-left corner, or its top-right with alignRight. */
+  at: { x: number; y: number; alignRight?: boolean };
   items: MenuEntry[];
   onClose: () => void;
   /** Optional heading shown above the items. */
@@ -31,8 +35,9 @@ export const Menu: React.FC<MenuProps> = ({ at, items, onClose, title }) => {
     const el = ref.current;
     if (!el) return;
     const { width, height } = el.getBoundingClientRect();
+    const x = at.alignRight ? at.x - width : at.x;
     setPos({
-      x: Math.max(8, Math.min(at.x, window.innerWidth - width - 8)),
+      x: Math.max(8, Math.min(x, window.innerWidth - width - 8)),
       y: Math.max(8, Math.min(at.y, window.innerHeight - height - 8)),
     });
   }, [at]);
@@ -83,6 +88,11 @@ export const Menu: React.FC<MenuProps> = ({ at, items, onClose, title }) => {
             {item.icon && <span className="w-4 flex justify-center text-slate-400">{item.icon}</span>}
             <span className="flex-1 whitespace-nowrap">{item.label}</span>
             {item.hint && <span className="text-[11px] text-slate-500 whitespace-nowrap">{item.hint}</span>}
+            {item.checked !== undefined && (
+              <span className="w-3.5 flex justify-center text-indigo-400">
+                {item.checked && <Check className="w-3.5 h-3.5" />}
+              </span>
+            )}
           </button>
         )
       )}
@@ -97,7 +107,7 @@ export const MenuButton: React.FC<{
   align?: 'left' | 'right';
   children: (props: { open: boolean; toggle: (e: React.MouseEvent<HTMLElement>) => void }) => React.ReactNode;
 }> = ({ items, title, align = 'left', children }) => {
-  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  const [at, setAt] = useState<{ x: number; y: number; alignRight?: boolean } | null>(null);
   // Clicking the button while open first closes the menu via its outside-mousedown
   // handler; remember that so the click does not reopen it.
   const closedAtRef = useRef(0);
@@ -109,13 +119,15 @@ export const MenuButton: React.FC<{
     if (at) return close();
     if (Date.now() - closedAtRef.current < 250) return;
     const r = e.currentTarget.getBoundingClientRect();
-    // Right-aligned menus start at an estimate; Menu clamps them into the viewport.
-    setAt({ x: align === 'right' ? r.right - 240 : r.left, y: r.bottom + 6 });
+    setAt(align === 'right' ? { x: r.right, y: r.bottom + 6, alignRight: true } : { x: r.left, y: r.bottom + 6 });
   };
   return (
     <>
       {children({ open: !!at, toggle })}
-      {at && <Menu at={at} items={items} title={title} onClose={close} />}
+      {/* Portaled to <body>: an ancestor with backdrop-filter or a transform (the
+          canvas header, the canvas itself) would otherwise become the origin of
+          the menu's fixed position. */}
+      {at && createPortal(<Menu at={at} items={items} title={title} onClose={close} />, document.body)}
     </>
   );
 };
