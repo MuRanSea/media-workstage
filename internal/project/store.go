@@ -56,6 +56,8 @@ type Document struct {
 	Revision  int64           `json:"revision"`
 	Viewport  Viewport        `json:"viewport"`
 	Cards     json.RawMessage `json:"cards"`
+	// Sections are labelled regions of the canvas (ADR 0009), opaque like cards.
+	Sections json.RawMessage `json:"sections,omitempty"`
 }
 
 // Summary is a project list entry.
@@ -169,10 +171,14 @@ func (s *Store) Get(id string) (*Document, error) {
 }
 
 // Save replaces the canvas state. baseRevision must match the stored revision,
-// otherwise ErrConflict is returned and nothing is written.
-func (s *Store) Save(id string, baseRevision int64, viewport Viewport, cards json.RawMessage) (*Document, error) {
+// otherwise ErrConflict is returned and nothing is written. Nil sections (a
+// client that does not know them) keep the stored ones.
+func (s *Store) Save(id string, baseRevision int64, viewport Viewport, cards, sections json.RawMessage) (*Document, error) {
 	if !isJSONArray(cards) {
 		return nil, errors.New("cards must be a JSON array")
+	}
+	if sections != nil && !isJSONArray(sections) {
+		return nil, errors.New("sections must be a JSON array")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -189,6 +195,9 @@ func (s *Store) Save(id string, baseRevision int64, viewport Viewport, cards jso
 	}
 	doc.Viewport = viewport
 	doc.Cards = cards
+	if sections != nil {
+		doc.Sections = sections
+	}
 	doc.Revision++
 	doc.UpdatedAt = time.Now().UTC()
 	if err := writeDocument(dir, doc); err != nil {

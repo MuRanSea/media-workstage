@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type ResultActionDto, type SpatialCard } from '../types/canvas.ts';
+import { type CanvasSection, type ResultActionDto, type SpatialCard } from '../types/canvas.ts';
 import { SpatialCanvas } from './SpatialCanvas.tsx';
 import { ProjectSwitcher } from './ProjectSwitcher.tsx';
 import {
@@ -35,6 +35,7 @@ import { cardsAwaitingTask, normalizeCards, normalizeViewport, restoredAwaitingT
 import { setActiveProjectId } from '../engine/assetPaths.ts';
 import { useAutosave } from '../engine/useAutosave.ts';
 import { createCardMetrics } from '../engine/cardMetrics.ts';
+import { normalizeSections } from '../engine/sections.ts';
 import { CardMetricsContext } from './cards/CardMetricsContext.tsx';
 
 /** Loads a project, then mounts its canvas. */
@@ -76,6 +77,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   setActiveProjectId(projectId);
 
   const [cards, setCards] = useState<SpatialCard[]>(() => normalizeCards(doc.cards));
+  const [sections, setSections] = useState<CanvasSection[]>(() => normalizeSections(doc.sections));
   const [initialViewport] = useState(() => normalizeViewport(doc.viewport));
   const [name, setName] = useState(doc.name);
   const toast = useToast();
@@ -85,6 +87,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     projectId,
     initialRevision: doc.revision,
     cards,
+    sections,
   });
 
   useEffect(() => {
@@ -294,6 +297,8 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     <SpatialCanvas
       cards={cards}
       setCards={setCards}
+      sections={sections}
+      setSections={setSections}
       metrics={metrics}
       onTriggerGenerate={handleTriggerGenerate}
       onRunAction={(sourceId, action) => void handleRunAction(sourceId, action)}

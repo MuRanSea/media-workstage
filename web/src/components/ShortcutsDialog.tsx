@@ -12,6 +12,7 @@ const GROUPS: { title: string; items: [string, string][] }[] = [
       ['Ctrl+C / Ctrl+V', '复制 / 粘贴到光标处'],
       ['Ctrl+D', '复制一份'],
       ['Ctrl+A', '全选'],
+      ['Ctrl+G', '用分区框住选中的卡片'],
       ['Ctrl+S', '立即保存'],
     ],
   },

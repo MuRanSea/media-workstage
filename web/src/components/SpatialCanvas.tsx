@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Copy, FileText, Film, Image as ImageIcon, ScanText, Sparkles, Trash2, Upload } from 'lucide-react';
-import type { CardType, ResultActionDto, SpatialCard, UploadKind } from '../types/canvas.ts';
+import { Copy, FileText, Film, Image as ImageIcon, ScanText, SquareDashed, Sparkles, Trash2, Upload } from 'lucide-react';
+import type { CanvasSection, CardType, ResultActionDto, SpatialCard, UploadKind } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
 import { cardHeight, type CardMetrics } from '../engine/cardMetrics.ts';
 import { screenToWorld, type CanvasTransform, type Point } from '../engine/matrix.ts';
@@ -15,6 +15,8 @@ import { refTag } from '../engine/refTags.ts';
 import { PORT_Y, type ConnectHint, type SlotKind } from './cards/CardPorts.tsx';
 import { CanvasCard, type CardActions } from './CanvasCard.tsx';
 import { Minimap, useMinimapVisible } from './Minimap.tsx';
+import { SectionLayer } from './SectionLayer.tsx';
+import { SECTION_MIN_HEIGHT, SECTION_MIN_WIDTH, duplicateSections, emptySection, membersBySection, sectionAround } from '../engine/sections.ts';
 import { cardsToRender, isAwaitingTask, lineMayCross, visibleWorldRect } from '../engine/culling.ts';
 import { dropOptions, type DropCardType, type DropRole } from '../engine/dropToCreate.ts';
 import { InspectorPanel, INSPECTOR_WIDTH } from './inspector/InspectorPanel.tsx';
@@ -28,6 +30,9 @@ import { Menu, useToast, type MenuEntry } from './ui/index.ts';
 interface SpatialCanvasProps {
   cards: SpatialCard[];
   setCards: React.Dispatch<React.SetStateAction<SpatialCard[]>>;
+  /** Labelled regions of the canvas (ADR 0009). */
+  sections: CanvasSection[];
+  setSections: React.Dispatch<React.SetStateAction<CanvasSection[]>>;
   /** Rendered heights the cards report. */
   metrics: CardMetrics;
   onTriggerGenerate: (cardId: string) => void;
@@ -133,6 +138,8 @@ const COALESCE_MS = 1000;
 export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   cards,
   setCards,
+  sections,
+  setSections,
   metrics,
   onTriggerGenerate,
   onRunAction,
@@ -160,12 +167,15 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   const { record, undo: undoHistory, redo: redoHistory, canUndo, canRedo } = useHistory();
   const cardsRef = useRef(cards);
   cardsRef.current = cards;
+  const sectionsRef = useRef(sections);
+  sectionsRef.current = sections;
+  const snapshot = useCallback(() => ({ cards: cardsRef.current, sections: sectionsRef.current }), []);
   const lastCoalesce = useRef<{ key: string; at: number } | null>(null);
 
   const recordEdit = useCallback(() => {
     lastCoalesce.current = null;
-    record(cardsRef.current);
-  }, [record]);
+    record(snapshot());
+  }, [record, snapshot]);
 
   /** A user edit: records an undo step, then applies the change. */
   const editCards = useCallback(
@@ -285,12 +295,12 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         const key = `${cardId}:${Object.keys(patch).sort().join(',')}`;
         const now = Date.now();
         const last = lastCoalesce.current;
-        if (!last || last.key !== key || now - last.at > COALESCE_MS) record(cardsRef.current);
+        if (!last || last.key !== key || now - last.at > COALESCE_MS) record(snapshot());
         lastCoalesce.current = { key, at: now };
       }
       setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, ...patch } : c)));
     },
-    [record, setCards]
+    [record, setCards, snapshot]
   );
 
   const addCard = useCallback(
@@ -302,25 +312,30 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     [editCards, viewportCenter, setSelectedCardIds]
   );
 
+  const undoRef = useRef<() => void>(() => {});
   const undo = useCallback(() => {
-    const before = cardsRef.current;
+    const before = snapshot();
     const restored = undoHistory(before);
     if (restored) {
       lastCoalesce.current = null;
-      setCards(restored);
-      onRestore?.(restored, before);
+      setCards(restored.cards);
+      setSections(restored.sections);
+      onRestore?.(restored.cards, before.cards);
     }
-  }, [undoHistory, setCards, onRestore]);
+  }, [undoHistory, setCards, setSections, onRestore, snapshot]);
+
+  undoRef.current = undo;
 
   const redo = useCallback(() => {
-    const before = cardsRef.current;
+    const before = snapshot();
     const restored = redoHistory(before);
     if (restored) {
       lastCoalesce.current = null;
-      setCards(restored);
-      onRestore?.(restored, before);
+      setCards(restored.cards);
+      setSections(restored.sections);
+      onRestore?.(restored.cards, before.cards);
     }
-  }, [redoHistory, setCards, onRestore]);
+  }, [redoHistory, setCards, setSections, onRestore, snapshot]);
 
   const deleteCards = useCallback(
     (ids: string[]) => {
@@ -333,29 +348,150 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     [editCards, setSelectedCardIds, toast, undo]
   );
 
-  const duplicate = useCallback(
-    (source: SpatialCard[], at?: Point) => {
-      if (source.length === 0) return;
-      const minX = Math.min(...source.map((c) => c.x));
-      const minY = Math.min(...source.map((c) => c.y));
-      const copies = duplicateCards(source, at ?? { x: minX + 40, y: minY + 40 }, cardsRef.current);
-      if (copies.length < source.length) toast('生成中的结果卡不能复制', { tone: 'warning' });
-      if (copies.length === 0) return;
-      editCards((prev) => [...prev, ...copies]);
-      setSelectedCardIds(new Set(copies.map((c) => c.id)));
+  // --- Sections --------------------------------------------------------------
+
+  const [selectedSectionIds, setSelectedSectionIds] = useState<ReadonlySet<string>>(() => new Set());
+
+  /** Draws a section around `source` cards. */
+  const wrapInSection = useCallback(
+    (source: SpatialCard[]) => {
+      const section = sectionAround(source, heightOf);
+      if (!section) return;
+      recordEdit();
+      setSections((prev) => [...prev, section]);
+      setSelectedSectionIds(new Set([section.id]));
+      setSelectedCardIds(new Set());
     },
-    [editCards, setSelectedCardIds, toast]
+    [heightOf, recordEdit, setSections, setSelectedCardIds]
+  );
+
+  const addSection = useCallback(
+    (at: Point) => {
+      const section = emptySection(at);
+      recordEdit();
+      setSections((prev) => [...prev, section]);
+      setSelectedSectionIds(new Set([section.id]));
+      setSelectedCardIds(new Set());
+    },
+    [recordEdit, setSections, setSelectedCardIds]
+  );
+
+  /** Deletes sections; the cards in them stay where they are. */
+  const deleteSections = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      const gone = new Set(ids);
+      recordEdit();
+      setSections((prev) => prev.filter((s) => !gone.has(s.id)));
+      setSelectedSectionIds(new Set());
+      toast(`已删除 ${ids.length} 个分区，卡片保留`, { action: { label: '撤销', onClick: () => undoRef.current() } });
+    },
+    [recordEdit, setSections, toast]
+  );
+
+  const renameSection = useCallback(
+    (id: string, title: string) => {
+      recordEdit();
+      setSections((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
+    },
+    [recordEdit, setSections]
+  );
+
+  const sectionMembers = useMemo(() => membersBySection(cards, sections, heightOf), [cards, sections, heightOf]);
+  const memberCounts = useMemo(() => new Map([...sectionMembers].map(([id, ids]) => [id, ids.length])), [sectionMembers]);
+
+  /** Moving a section by its title bar (with the cards in it), or resizing it by its corner. */
+  const startSectionGesture = (mode: 'move' | 'resize', e: React.MouseEvent, section: CanvasSection) => {
+    if (e.button !== 0 || activeTool === 'hand') return;
+    e.stopPropagation();
+    e.preventDefault();
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+    setSelectedSectionIds((prev) => {
+      if (!additive) return prev.has(section.id) && prev.size === 1 ? prev : new Set([section.id]);
+      const next = new Set(prev);
+      if (next.has(section.id)) next.delete(section.id);
+      else next.add(section.id);
+      return next;
+    });
+    if (!additive) setSelectedCardIds(new Set());
+    const zoom = transform.zoom;
+    const start = { x: e.clientX, y: e.clientY };
+    const members = new Set(sectionMembers.get(section.id) ?? []);
+    const memberStart = new Map(cardsRef.current.filter((c) => members.has(c.id)).map((c) => [c.id, { x: c.x, y: c.y }]));
+    let recorded = false;
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = (ev.clientX - start.x) / zoom;
+      const dy = (ev.clientY - start.y) / zoom;
+      if (!recorded) {
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+        recorded = true;
+        recordEdit();
+      }
+      if (mode === 'move') {
+        setSections((prev) => prev.map((s) => (s.id === section.id ? { ...s, x: Math.round(section.x + dx), y: Math.round(section.y + dy) } : s)));
+        setCards((prev) =>
+          prev.map((c) => {
+            const p = memberStart.get(c.id);
+            return p ? { ...c, x: Math.round(p.x + dx), y: Math.round(p.y + dy) } : c;
+          })
+        );
+      } else {
+        setSections((prev) =>
+          prev.map((s) =>
+            s.id === section.id
+              ? { ...s, width: Math.max(SECTION_MIN_WIDTH, Math.round(section.width + dx)), height: Math.max(SECTION_MIN_HEIGHT, Math.round(section.height + dy)) }
+              : s
+          )
+        );
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  /**
+   * Copies `source` cards (and `sourceSections`, kept in place relative to the
+   * cards) with their top-left corner at `at`, or 40px down-right of the originals.
+   */
+  const duplicate = useCallback(
+    (source: SpatialCard[], at?: Point, sourceSections: CanvasSection[] = []) => {
+      if (source.length === 0 && sourceSections.length === 0) return;
+      // The copy is placed by its cards' corner; sections alone are placed by theirs.
+      const anchor = source.length ? source : sourceSections;
+      const minX = Math.min(...anchor.map((c) => c.x));
+      const minY = Math.min(...anchor.map((c) => c.y));
+      // Sections are copied beside the originals: an overlapping copy would take over their cards.
+      const sectionsRight = sourceSections.length ? Math.max(...sourceSections.map((s) => s.x + s.width)) : 0;
+      const target =
+        at ?? (sourceSections.length ? { x: minX + (sectionsRight - Math.min(...sourceSections.map((s) => s.x))) + 80, y: minY } : { x: minX + 40, y: minY + 40 });
+      const copies = duplicateCards(source, target, cardsRef.current);
+      if (copies.length < source.length) toast('生成中的结果卡不能复制', { tone: 'warning' });
+      const sectionCopies = duplicateSections(sourceSections, { x: Math.round(target.x) - minX, y: Math.round(target.y) - minY });
+      if (copies.length === 0 && sectionCopies.length === 0) return;
+      recordEdit();
+      if (copies.length) setCards((prev) => [...prev, ...copies]);
+      if (sectionCopies.length) setSections((prev) => [...prev, ...sectionCopies]);
+      setSelectedCardIds(new Set(copies.map((c) => c.id)));
+      setSelectedSectionIds(new Set(sectionCopies.map((s) => s.id)));
+    },
+    [recordEdit, setCards, setSections, setSelectedCardIds, toast]
   );
 
   // In-app clipboard for Ctrl+C / Ctrl+V.
-  const clipboardRef = useRef<SpatialCard[]>([]);
+  const clipboardRef = useRef<{ cards: SpatialCard[]; sections: CanvasSection[] }>({ cards: [], sections: [] });
+  const clipboardSize = () => clipboardRef.current.cards.length + clipboardRef.current.sections.length;
 
   const pasteAtPointer = useCallback(() => {
-    if (clipboardRef.current.length === 0) return;
+    if (clipboardSize() === 0) return;
     const rect = containerRef.current?.getBoundingClientRect();
     const p = pointerRef.current;
     const inside = rect && p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom;
-    duplicate(clipboardRef.current, inside ? toWorld(p.x, p.y) : viewportCenter());
+    duplicate(clipboardRef.current.cards, inside ? toWorld(p.x, p.y) : viewportCenter(), clipboardRef.current.sections);
   }, [duplicate, pointerRef, toWorld, viewportCenter]);
 
   const cardMenuItems = useCallback(
@@ -382,13 +518,21 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         at: { x: clientX, y: clientY },
         title: '在这里添加',
         items: ADD_CARD_ITEMS((type, kind) => addCard(type, world, kind)).concat(
-          clipboardRef.current.length
-            ? ['separator', { label: `粘贴 ${clipboardRef.current.length} 张卡片`, hint: 'Ctrl+V', onSelect: () => duplicate(clipboardRef.current, world) }]
+          [{ label: '分区', hint: '圈出一块区域', icon: <SquareDashed className="w-4 h-4 text-slate-400" />, onSelect: () => addSection(world) }],
+          clipboardSize()
+            ? [
+                'separator',
+                {
+                  label: clipboardRef.current.cards.length ? `粘贴 ${clipboardRef.current.cards.length} 张卡片` : `粘贴 ${clipboardRef.current.sections.length} 个分区`,
+                  hint: 'Ctrl+V',
+                  onSelect: () => duplicate(clipboardRef.current.cards, world, clipboardRef.current.sections),
+                },
+              ]
             : []
         ),
       });
     },
-    [toWorld, addCard, duplicate]
+    [toWorld, addCard, duplicate, addSection]
   );
 
   // --- Keyboard shortcuts ----------------------------------------------------
@@ -398,6 +542,10 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       const selected = cardsRef.current.filter((c) => selectedCardIds.has(c.id));
+      const selectedSections = sectionsRef.current.filter((s) => selectedSectionIds.has(s.id));
+      // Copying a section copies the cards in it too.
+      const inSelectedSections = new Set(selectedSections.flatMap((s) => sectionMembers.get(s.id) ?? []));
+      const toCopy = cardsRef.current.filter((c) => selectedCardIds.has(c.id) || inSelectedSections.has(c.id));
 
       if (mod && key === 'z') {
         e.preventDefault();
@@ -409,20 +557,24 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       } else if (mod && key === 'a') {
         e.preventDefault();
         setSelectedCardIds(new Set(cardsRef.current.map((c) => c.id)));
+      } else if (mod && key === 'g') {
+        e.preventDefault();
+        wrapInSection(selected);
       } else if (mod && key === 'd') {
         e.preventDefault();
-        duplicate(selected);
+        duplicate(toCopy, undefined, selectedSections);
       } else if (mod && key === 'c') {
-        if (selected.length) {
-          clipboardRef.current = selected;
-          toast(`已复制 ${selected.length} 张卡片`);
+        if (toCopy.length || selectedSections.length) {
+          clipboardRef.current = { cards: toCopy, sections: selectedSections };
+          toast(selectedSections.length ? `已复制 ${selectedSections.length} 个分区` : `已复制 ${toCopy.length} 张卡片`);
         }
       } else if (mod && key === 'v') {
         e.preventDefault();
         pasteAtPointer();
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selected.length) {
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && (selected.length || selectedSections.length)) {
         e.preventDefault();
-        deleteCards(selected.map((c) => c.id));
+        if (selectedSections.length) deleteSections(selectedSections.map((s) => s.id));
+        if (selected.length) deleteCards(selected.map((c) => c.id));
       } else if (!mod && key === 'v') {
         setActiveTool('select');
       } else if (!mod && key === 'h') {
@@ -433,7 +585,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedCardIds, undo, redo, duplicate, pasteAtPointer, deleteCards, setSelectedCardIds, setActiveTool, toast, isSettingsOpen, viewer, showShortcuts]);
+  }, [selectedCardIds, selectedSectionIds, sectionMembers, undo, redo, duplicate, pasteAtPointer, deleteCards, deleteSections, wrapInSection, setSelectedCardIds, setActiveTool, toast, isSettingsOpen, viewer, showShortcuts]);
 
   // --- Drag-to-connect ------------------------------------------------------
 
@@ -668,7 +820,10 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   // Handlers cards call: one object for the canvas's lifetime that always calls the latest.
   const actionsRef = useRef<CardActions>(null!);
   actionsRef.current = {
-    select: handleSelectCard,
+    select: (e, card) => {
+      if (!(e.shiftKey || e.ctrlKey || e.metaKey)) setSelectedSectionIds((prev) => (prev.size ? new Set() : prev));
+      handleSelectCard(e, card);
+    },
     startDrag: handleStartDragCard,
     startConnect,
     updateCard: handleUpdateCard,
@@ -767,6 +922,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         onUpdateCard={handleUpdateCard}
         onAlign={alignSelected}
         onArrangeGrid={() => arrangeSelectedGrid(40, 2)}
+        onWrapInSection={() => wrapInSection(selectedCards)}
         onClose={() => setSelectedCardIds(new Set())}
         linkedPromptFor={linkedPromptFor}
       />
@@ -807,7 +963,10 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       {/* Main Canvas Viewport Container */}
       <div
         ref={containerRef}
-        onMouseDown={handleMouseDownCanvas}
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget && !(e.shiftKey || e.ctrlKey || e.metaKey)) setSelectedSectionIds((prev) => (prev.size ? new Set() : prev));
+          handleMouseDownCanvas(e);
+        }}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
@@ -830,6 +989,15 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           }}
           className="absolute top-0 left-0 w-full h-full pointer-events-none"
         >
+          <SectionLayer
+            sections={sections}
+            selectedIds={selectedSectionIds}
+            memberCounts={memberCounts}
+            onStartMove={(e, s) => startSectionGesture('move', e, s)}
+            onStartResize={(e, s) => startSectionGesture('resize', e, s)}
+            onRename={renameSection}
+          />
+
           {/* SVG Connection Rays Layer */}
           <svg className="absolute top-0 left-0 w-[50000px] h-[50000px] pointer-events-none overflow-visible -translate-x-[25000px] -translate-y-[25000px]">
             <g transform="translate(25000, 25000)">

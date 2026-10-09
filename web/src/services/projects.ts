@@ -15,6 +15,8 @@ export interface ProjectDocument {
   revision: number;
   viewport: ProjectViewport;
   cards: SpatialCard[];
+  /** Absent in projects saved before sections existed. */
+  sections?: unknown[];
 }
 
 export interface ProjectSummary {
@@ -74,6 +76,7 @@ export interface SaveProjectBody {
   revision: number;
   viewport: ProjectViewport;
   cards: unknown[];
+  sections: unknown[];
 }
 
 /** Saves the canvas; `keepalive` lets a save started during page unload finish. */

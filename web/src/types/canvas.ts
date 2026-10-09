@@ -84,6 +84,21 @@ export interface ResultSnapshot {
   references?: Pick<ReferenceItem, 'cardId' | 'tagIndex' | 'role' | 'label'>[];
 }
 
+/**
+ * A labelled region of the canvas (ADR 0009). Not a card: no ports, no tags.
+ * Cards belong to it by position, so it stores no member list.
+ */
+export interface CanvasSection {
+  id: string;
+  title: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Shrunk to its title bar, its cards hidden. */
+  collapsed?: boolean;
+}
+
 export interface SpatialCard {
   id: string;
   role: CardRole;

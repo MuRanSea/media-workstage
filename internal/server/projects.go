@@ -24,6 +24,7 @@ type saveProjectPayload struct {
 	Revision int64            `json:"revision"`
 	Viewport project.Viewport `json:"viewport"`
 	Cards    json.RawMessage  `json:"cards" binding:"required"`
+	Sections json.RawMessage  `json:"sections"`
 }
 
 type renameProjectPayload struct {
@@ -101,7 +102,7 @@ func (s *Server) handleSaveProject(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	doc, err := s.projects.Save(c.Param("id"), payload.Revision, payload.Viewport, payload.Cards)
+	doc, err := s.projects.Save(c.Param("id"), payload.Revision, payload.Viewport, payload.Cards, payload.Sections)
 	if errors.Is(err, project.ErrConflict) {
 		c.JSON(http.StatusConflict, gin.H{"error": "工程已在其他窗口中被修改", "revision": doc.Revision})
 		return

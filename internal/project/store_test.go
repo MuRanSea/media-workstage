@@ -70,7 +70,7 @@ func TestStore_SaveBumpsRevisionAndDetectsConflict(t *testing.T) {
 	doc, _ := s.Create("p")
 	cards := json.RawMessage(`[{"id":"c0","type":"image","resultUrl":"https://remote/x.png"},{"id":"c1","type":"image","resultUrl":"/assets/images/t/base.png"},{"id":"c2","type":"video"}]`)
 
-	saved, err := s.Save(doc.ID, 1, Viewport{Zoom: 1.2, PanX: 5, PanY: 6}, cards)
+	saved, err := s.Save(doc.ID, 1, Viewport{Zoom: 1.2, PanX: 5, PanY: 6}, cards, nil)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestStore_SaveBumpsRevisionAndDetectsConflict(t *testing.T) {
 	}
 
 	// A second tab still holding revision 1 must not overwrite.
-	if _, err := s.Save(doc.ID, 1, Viewport{}, json.RawMessage(`[]`)); !errors.Is(err, ErrConflict) {
+	if _, err := s.Save(doc.ID, 1, Viewport{}, json.RawMessage(`[]`), nil); !errors.Is(err, ErrConflict) {
 		t.Fatalf("expected ErrConflict, got %v", err)
 	}
 	got, _ := s.Get(doc.ID)
@@ -95,7 +95,7 @@ func TestStore_SaveBumpsRevisionAndDetectsConflict(t *testing.T) {
 		t.Fatalf("expected the first local image result as cover, got %q", list[0].Cover)
 	}
 
-	if _, err := s.Save(doc.ID, 2, Viewport{}, json.RawMessage(`{}`)); err == nil {
+	if _, err := s.Save(doc.ID, 2, Viewport{}, json.RawMessage(`{}`), nil); err == nil {
 		t.Fatal("expected non-array cards to be rejected")
 	}
 }
@@ -114,11 +114,42 @@ func TestStore_SaveViewportKeepsRevision(t *testing.T) {
 		t.Fatalf("viewport not stored: %+v", got.Viewport)
 	}
 	// A tab that only panned still saves its cards on the original revision.
-	if _, err := s.Save(doc.ID, doc.Revision, got.Viewport, json.RawMessage(`[]`)); err != nil {
+	if _, err := s.Save(doc.ID, doc.Revision, got.Viewport, json.RawMessage(`[]`), nil); err != nil {
 		t.Fatalf("Save after viewport save: %v", err)
 	}
 	if err := s.SaveViewport("missing", Viewport{}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestStore_SaveSections(t *testing.T) {
+	s := newTestStore(t)
+	doc, _ := s.Create("p")
+	sections := json.RawMessage(`[{"id":"s1","title":"分镜","x":0,"y":0,"width":800,"height":600}]`)
+	saved, err := s.Save(doc.ID, doc.Revision, Viewport{Zoom: 1}, json.RawMessage(`[]`), sections)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	// A client that does not know sections sends none: the stored ones stay.
+	saved, err = s.Save(doc.ID, saved.Revision, Viewport{Zoom: 1}, json.RawMessage(`[]`), nil)
+	if err != nil {
+		t.Fatalf("Save without sections: %v", err)
+	}
+	got, _ := s.Get(doc.ID)
+	var kept []map[string]any
+	if err := json.Unmarshal(got.Sections, &kept); err != nil || len(kept) != 1 || kept[0]["title"] != "分镜" {
+		t.Fatalf("sections not kept: %s", got.Sections)
+	}
+	// An empty list clears them.
+	if _, err := s.Save(doc.ID, saved.Revision, Viewport{Zoom: 1}, json.RawMessage(`[]`), json.RawMessage(`[]`)); err != nil {
+		t.Fatalf("Save with empty sections: %v", err)
+	}
+	got, _ = s.Get(doc.ID)
+	if err := json.Unmarshal(got.Sections, &kept); err != nil || len(kept) != 0 {
+		t.Fatalf("sections not cleared: %s", got.Sections)
+	}
+	if _, err := s.Save(doc.ID, got.Revision, Viewport{}, json.RawMessage(`[]`), json.RawMessage(`{}`)); err == nil {
+		t.Fatal("expected non-array sections to be rejected")
 	}
 }
 
