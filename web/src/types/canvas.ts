@@ -117,11 +117,10 @@ export interface SpatialCard {
   promptSourceId?: string;
 
   // Upload card fields: the picked file lives in the project (resultUrl); the remote
-  // fields are what a provider's upload API returned for it.
+  // fields are what the Upload Platform returned for it. Older projects may still carry
+  // an unused uploadProvider: uploads no longer go through a provider (ADR 0008).
   mediaKind?: UploadKind;
   uploadName?: string;
-  /** Provider whose upload API the file goes to. */
-  uploadProvider?: ProviderId;
   /** Asset library id (referenced as asset://<id> once status is Active). */
   assetId?: string;
   assetStatus?: AssetStatus;
@@ -239,7 +238,7 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     name: 'MiniMax H3',
     tag: '海螺2K高动态',
     protocol: 'minimax',
-    resolutions: ['720P', '1080P', '2K'],
+    resolutions: ['768P', '2K'],
     durations: [5, 6, 10, 15],
     ratios: ['16:9', '9:16', '1:1'],
     supportsAudio: true,

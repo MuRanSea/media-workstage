@@ -14,12 +14,27 @@ export const connectHintRing = (hint: ConnectHint): string =>
     ? 'ring-4 ring-red-500/40 border-red-500/70'
     : '';
 
-/** Left-edge dot: drop another card's output onto this card. */
-export const InputPort: React.FC = () => (
+/** What an input slot takes: text into the prompt, or images / videos as references. */
+export type SlotKind = 'prompt' | 'reference';
+
+const SLOT_TITLE: Record<SlotKind, string> = {
+  prompt: '提示词输入：从文本卡片右侧的圆点拖线到这张卡片，它的输出就是这里的提示词',
+  reference: '参考输入：从图片、视频或上传卡片右侧的圆点拖线到这张卡片',
+};
+
+/**
+ * Left-edge dot beside the field it feeds. Place it inside a `relative` element in the
+ * card body; it sits on the card's edge (body padding 12px + border 1px + half the dot).
+ * The canvas reads `data-slot` to end connection lines here.
+ */
+export const InputSlot: React.FC<{ kind: SlotKind; title?: string }> = ({ kind, title }) => (
   <div
-    title="输入：从其他卡片右侧的圆点拖线到这张卡片"
-    style={{ top: PORT_Y - 7 }}
-    className="absolute -left-[8px] w-3.5 h-3.5 rounded-full border-2 border-slate-500 bg-canvas-surface shadow"
+    data-slot={kind}
+    title={title ?? SLOT_TITLE[kind]}
+    style={{ left: -20 }}
+    className={`absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full border-2 bg-canvas-surface shadow ${
+      kind === 'prompt' ? 'border-emerald-400' : 'border-pink-400'
+    }`}
   />
 );
 

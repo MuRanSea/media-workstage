@@ -5,6 +5,7 @@ package llm
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,7 +23,15 @@ type Request struct {
 	Model  string
 	System string
 	Prompt string
+	// Images go with the user turn, in order, as data URIs or public http(s) URLs.
+	Images []string
 }
+
+// MaxImages caps how many images one text run sends.
+const MaxImages = 6
+
+// maxRemoteImageBytes caps an image fetched to inline it (Gemini takes no plain URLs).
+const maxRemoteImageBytes = 20 << 20
 
 // Supported reports whether providers speaking protocol can run text generation.
 func Supported(protocol model.Protocol) bool {
@@ -65,9 +74,32 @@ func Generate(ctx context.Context, client *http.Client, protocol model.Protocol,
 	return text, nil
 }
 
+// chatMessage content is a string, or with images an array of text / image_url parts.
 type chatMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+type chatImageURL struct {
+	URL string `json:"url"`
+}
+
+type chatPart struct {
+	Type     string        `json:"type"`
+	Text     string        `json:"text,omitempty"`
+	ImageURL *chatImageURL `json:"image_url,omitempty"`
+}
+
+// userContent is the user turn: plain text, or the OpenAI vision form when images go along.
+func userContent(req Request) any {
+	if len(req.Images) == 0 {
+		return req.Prompt
+	}
+	parts := []chatPart{{Type: "text", Text: req.Prompt}}
+	for _, img := range req.Images {
+		parts = append(parts, chatPart{Type: "image_url", ImageURL: &chatImageURL{URL: img}})
+	}
+	return parts
 }
 
 // chatCompletions calls an OpenAI-style endpoint; extra adds provider-specific body fields.
@@ -76,7 +108,7 @@ func chatCompletions(ctx context.Context, client *http.Client, endpoint, apiKey 
 	if strings.TrimSpace(req.System) != "" {
 		messages = append(messages, chatMessage{Role: "system", Content: req.System})
 	}
-	messages = append(messages, chatMessage{Role: "user", Content: req.Prompt})
+	messages = append(messages, chatMessage{Role: "user", Content: userContent(req)})
 	payload := map[string]any{"model": req.Model, "messages": messages}
 	for k, v := range extra {
 		payload[k] = v
@@ -115,15 +147,28 @@ func chatCompletions(ctx context.Context, client *http.Client, endpoint, apiKey 
 }
 
 func geminiGenerate(ctx context.Context, client *http.Client, baseURL, apiKey string, req Request) (string, error) {
+	type inlineData struct {
+		MimeType string `json:"mimeType"`
+		Data     string `json:"data"`
+	}
 	type part struct {
-		Text string `json:"text"`
+		Text       string      `json:"text,omitempty"`
+		InlineData *inlineData `json:"inlineData,omitempty"`
 	}
 	type content struct {
 		Role  string `json:"role,omitempty"`
 		Parts []part `json:"parts"`
 	}
+	userParts := []part{{Text: req.Prompt}}
+	for _, img := range req.Images {
+		mime, data, err := inlineImage(ctx, client, img)
+		if err != nil {
+			return "", err
+		}
+		userParts = append(userParts, part{InlineData: &inlineData{MimeType: mime, Data: data}})
+	}
 	payload := map[string]any{
-		"contents": []content{{Role: "user", Parts: []part{{Text: req.Prompt}}}},
+		"contents": []content{{Role: "user", Parts: userParts}},
 	}
 	if strings.TrimSpace(req.System) != "" {
 		payload["systemInstruction"] = content{Parts: []part{{Text: req.System}}}
@@ -171,6 +216,45 @@ func geminiGenerate(ctx context.Context, client *http.Client, baseURL, apiKey st
 		}
 	}
 	return sb.String(), nil
+}
+
+// inlineImage turns an image into Gemini's inline form (MIME type + Base64): a data URI is
+// split, a URL is downloaded.
+func inlineImage(ctx context.Context, client *http.Client, img string) (mime, data string, err error) {
+	if rest, ok := strings.CutPrefix(img, "data:"); ok {
+		meta, payload, found := strings.Cut(rest, ",")
+		if !found || !strings.HasSuffix(meta, ";base64") {
+			return "", "", errors.New("图片 data URI 格式不对，需要 Base64 编码")
+		}
+		return strings.TrimSuffix(meta, ";base64"), payload, nil
+	}
+	if !strings.HasPrefix(img, "http://") && !strings.HasPrefix(img, "https://") {
+		return "", "", fmt.Errorf("Gemini 读不了这个图片地址: %.60s", img)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, img, nil)
+	if err != nil {
+		return "", "", err
+	}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return "", "", fmt.Errorf("下载参考图失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", "", fmt.Errorf("下载参考图失败: HTTP %d", resp.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxRemoteImageBytes+1))
+	if err != nil {
+		return "", "", fmt.Errorf("下载参考图失败: %w", err)
+	}
+	if len(raw) > maxRemoteImageBytes {
+		return "", "", errors.New("参考图超过 20 MiB")
+	}
+	mime = strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+	if !strings.HasPrefix(mime, "image/") {
+		mime = http.DetectContentType(raw)
+	}
+	return mime, base64.StdEncoding.EncodeToString(raw), nil
 }
 
 var thinkBlock = regexp.MustCompile(`(?s)<think>.*?</think>`)

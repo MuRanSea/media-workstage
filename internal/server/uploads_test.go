@@ -63,6 +63,8 @@ func fakePlatform(t *testing.T) *httptest.Server {
 			_, _ = w.Write([]byte(`{"success":true,"data":{"id":"asset-1","uri":"asset://asset-1","status":"Active"}}`))
 		case "/api/files/upload":
 			_, _ = w.Write([]byte(`{"success":true,"data":{"file_url":"https://tos.example/v.mp4?sig=1","expires_at":1700000000}}`))
+		case "/api/volcengine/assets/list":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"items":[],"total":0,"page":1,"page_size":1}}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -75,10 +77,10 @@ func TestUploads_LocalThenRemote(t *testing.T) {
 	r, srv, store := setupUploadServer(t)
 	platform := fakePlatform(t)
 
-	// The preset OpenAI provider stands in for "a provider on the platform".
+	// Uploads use the Upload Platform's own settings, not any provider's.
 	require.NoError(t, upsertConfigs(srv.db, map[string]string{
-		"openai_base_url": platform.URL + "/v1",
-		"openai_api_key":  "sk-test",
+		uploadBaseURLKey: platform.URL,
+		uploadAPIKeyKey:  "sk-test",
 	}))
 
 	doc, err := store.Create("上传")
@@ -100,7 +102,7 @@ func TestUploads_LocalThenRemote(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "video-bytes", string(onDisk))
 
-	fields := map[string]string{"provider": "openai", "project_id": doc.ID, "local_path": saved.LocalPath}
+	fields := map[string]string{"project_id": doc.ID, "local_path": saved.LocalPath}
 
 	// Asset library: returns the asset id while review is still pending.
 	w = httptest.NewRecorder()
@@ -112,7 +114,7 @@ func TestUploads_LocalThenRemote(t *testing.T) {
 	assert.Equal(t, "asset://asset-1", asset["uri"])
 	assert.Equal(t, "Processing", asset["status"])
 
-	w = sendJSON(r, http.MethodPost, "/api/uploads/asset/status", map[string]string{"provider": "openai", "asset_id": "asset-1"})
+	w = sendJSON(r, http.MethodPost, "/api/uploads/asset/status", map[string]string{"asset_id": "asset-1"})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), `"status":"Active"`)
 
@@ -133,15 +135,56 @@ func TestUploads_Rejections(t *testing.T) {
 	r.ServeHTTP(w, multipartRequest(t, "/api/projects/"+doc.ID+"/uploads", map[string]string{"kind": "image"}, "clip.mp4", []byte("x")))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
-	// Path traversal out of the project folder.
-	require.NoError(t, upsertConfigs(srv.db, map[string]string{"openai_base_url": "http://127.0.0.1:1", "openai_api_key": "sk"}))
+	// No Upload Platform key yet, even with providers configured.
+	t.Setenv("UPLOAD_API_KEY", "")
+	require.NoError(t, upsertConfigs(srv.db, map[string]string{"ark_base_url": "http://127.0.0.1:1", "ark_api_key": "sk"}))
 	w = httptest.NewRecorder()
-	r.ServeHTTP(w, multipartRequest(t, "/api/uploads/file", map[string]string{"provider": "openai", "project_id": doc.ID, "local_path": "/assets/../../x.png"}, "", nil))
+	r.ServeHTTP(w, multipartRequest(t, "/api/uploads/file", nil, "a.png", []byte("x")))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "上传平台")
 
-	// Provider without a key.
+	// Path traversal out of the project folder.
+	require.NoError(t, upsertConfigs(srv.db, map[string]string{uploadBaseURLKey: "http://127.0.0.1:1", uploadAPIKeyKey: "sk"}))
 	w = httptest.NewRecorder()
-	r.ServeHTTP(w, multipartRequest(t, "/api/uploads/file", map[string]string{"provider": "google"}, "a.png", []byte("x")))
+	r.ServeHTTP(w, multipartRequest(t, "/api/uploads/file", map[string]string{"project_id": doc.ID, "local_path": "/assets/../../x.png"}, "", nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "API Key")
+}
+
+func TestUploadPlatformConfig(t *testing.T) {
+	t.Setenv("UPLOAD_BASE_URL", "")
+	t.Setenv("UPLOAD_API_KEY", "")
+	r, _, _ := setupUploadServer(t)
+	platform := fakePlatform(t)
+
+	// Unset: the Heighliner default address, no key.
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/uploads/config", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+	var view map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &view))
+	assert.Equal(t, defaultUploadBaseURL, view["base_url"])
+	assert.Equal(t, false, view["is_configured"])
+	assert.Equal(t, uploadPlatformDocsURL, view["docs_url"])
+
+	// Testing a key before saving it, then a wrong address.
+	w = sendJSON(r, http.MethodPost, "/api/uploads/config/test", map[string]string{"base_url": platform.URL, "api_key": "sk-test"})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"ok":true`)
+	w = sendJSON(r, http.MethodPost, "/api/uploads/config/test", map[string]string{"base_url": "http://127.0.0.1:1", "api_key": "sk-test"})
+	assert.Contains(t, w.Body.String(), `"ok":false`)
+
+	// Saving keeps the key server-side and shows it masked; a path on the address is kept as typed.
+	w = sendJSON(r, http.MethodPost, "/api/uploads/config", map[string]string{"base_url": platform.URL + "/", "api_key": "sk-test-1234567890"})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &view))
+	assert.Equal(t, platform.URL, view["base_url"])
+	assert.Equal(t, true, view["is_configured"])
+	assert.NotContains(t, w.Body.String(), "sk-test-1234567890")
+
+	// Clearing falls back to the default.
+	w = sendJSON(r, http.MethodPost, "/api/uploads/config", map[string]any{"clear": true})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &view))
+	assert.Equal(t, defaultUploadBaseURL, view["base_url"])
+	assert.Equal(t, false, view["is_configured"])
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { connectCards, effectivePrompt, hasInputPort, hasOutputPort, removeCards, withEffectivePrompt } from './connections.ts';
+import { TEXT_MAX_IMAGES, connectCards, effectivePrompt, hasInputPort, hasOutputPort, removeCards, withEffectivePrompt } from './connections.ts';
 import { buildProviderGroups } from './channelModels.ts';
 import type { SpatialCard } from '../types/canvas.ts';
 import type { ProviderConfigItem } from '../services/api.ts';
@@ -66,7 +66,7 @@ describe('connectCards', () => {
     });
     for (const [src, tgt, reason] of [
       [img, { ...img, id: 'i2', role: 'generation' }, '只有 Midjourney 图片卡片'],
-      [text, { ...text, id: 't2', role: 'generation' }, '文本卡片之间'],
+      [card({ id: 'vr', type: 'video', role: 'result', tagIndex: 2 }), { ...text, id: 't2', role: 'generation' }, '只接收图片'],
       [img, img, '不能连接到自己'],
       [img, text, '没有输入端口'],
       [video(), img, '没有输出端口'],
@@ -119,9 +119,27 @@ describe('connecting result cards', () => {
   const textResult = card({ id: 'rt', type: 'text', role: 'result', sourceId: 'gt', tagIndex: undefined, textOutput: '雨夜' });
   const videoResult = video({ id: 'rv', role: 'result', sourceId: 'gv', tagIndex: undefined });
 
-  it('makes a text result card the prompt source of image and video generation cards', () => {
+  it('makes a text result card the prompt source of image, video and text generation cards', () => {
     expect(connectCards(textResult, genImg)).toEqual({ ok: true, patch: { promptSourceId: 'rt' } });
     expect(connectCards(textResult, genVideo)).toEqual({ ok: true, patch: { promptSourceId: 'rt' } });
+    expect(connectCards(textResult, genText)).toEqual({ ok: true, patch: { promptSourceId: 'rt' } });
+  });
+
+  it('gives a text generation card images to read, tagged in its prompt, up to the LLM limit', () => {
+    const res = connectCards(imgResult, { ...genText, prompt: '照着图写提示词' });
+    expect(res.ok && res.patch.references).toEqual([{ cardId: 'ri', tagIndex: 5, role: 'reference_image', label: '第一张' }]);
+    expect(res.ok && res.patch.prompt).toBe('照着图写提示词 @图5');
+
+    const upload = card({ id: 'up', type: 'upload', role: 'result', mediaKind: 'image', tagIndex: 7, resultUrl: '/assets/uploads/a.png' });
+    expect(connectCards(upload, genText).ok).toBe(true);
+
+    const full = {
+      ...genText,
+      references: Array.from({ length: TEXT_MAX_IMAGES }, (_, i) => ({ cardId: `x${i}`, tagIndex: 10 + i, role: 'reference_image' as const, label: '' })),
+    };
+    const res2 = connectCards(imgResult, full);
+    expect(res2.ok).toBe(false);
+    if (!res2.ok) expect(res2.reason).toContain(`最多 ${TEXT_MAX_IMAGES} 张`);
   });
 
   it('makes an image result card a reference of a video generation card, without saving its address', () => {
@@ -135,8 +153,7 @@ describe('connecting result cards', () => {
   it('refuses every other pairing, and repeats, with a reason', () => {
     const cases: [SpatialCard, SpatialCard, string][] = [
       [imgResult, genImg, '只有 Midjourney 图片卡片'],
-      [imgResult, genText, '没有输入端口'],
-      [textResult, genText, '文本卡片之间'],
+      [videoResult, genText, '只接收图片'],
       [videoResult, genImg, '视频只能连接到视频卡片'],
       [videoResult, genVideo, '没有 @视频 编号'],
       [genImg, genVideo, '没有输出端口'],
@@ -153,12 +170,12 @@ describe('connecting result cards', () => {
     }
   });
 
-  it('gives every result card an output port, and only image and video generation cards an input port', () => {
+  it('gives every result card an output port, and every generation card input slots', () => {
     const ports = [genImg, genVideo, genText, imgResult, textResult, videoResult].map((c) => [c.id, hasOutputPort(c), hasInputPort(c)]);
     expect(ports).toEqual([
       ['gi', false, true],
       ['gv', false, true],
-      ['gt', false, false],
+      ['gt', false, true],
       ['ri', true, false],
       ['rt', true, false],
       ['rv', true, false],

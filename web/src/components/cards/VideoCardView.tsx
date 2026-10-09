@@ -18,7 +18,7 @@ import { useChannels } from '../../services/channels.ts';
 import { assetUrl } from '../../engine/assetPaths.ts';
 import { Button } from '../ui/Button.tsx';
 import { Menu } from '../ui/Menu.tsx';
-import { InputPort, LinkedPromptBox, OutputPort } from './CardPorts.tsx';
+import { InputSlot, LinkedPromptBox, OutputPort } from './CardPorts.tsx';
 import { UploadPanel } from './UploadPanel.tsx';
 import {
   AutoTextarea,
@@ -175,7 +175,8 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
     <>
       {/* Reference chips: click to insert the tag into the prompt */}
       {card.mode !== 'text_to_video' && (
-        <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
+        <div className="relative flex items-center gap-1.5 flex-wrap text-[11px]">
+          <InputSlot kind="reference" />
           <span className="text-slate-500">参考</span>
           {refs.map((ref) => {
             const src = availableImageCards.find((c) => c.id === ref.cardId);
@@ -250,9 +251,13 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       )}
 
       {linkedPrompt ? (
-        <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
+        <div className="relative">
+          <InputSlot kind="prompt" />
+          <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
+        </div>
       ) : (
         <div className="relative">
+          <InputSlot kind="prompt" />
           <AutoTextarea
             accent="indigo"
             textareaRef={promptRef}
@@ -323,8 +328,16 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
 
   // Generation cards only configure runs; each run's video lands on its own result card.
   return (
-    <CardShell {...shell} badges={<RunsBadge count={runsInProgress} accent="indigo" />} ports={<InputPort />}>
-      {summary}
+    <CardShell {...shell} badges={<RunsBadge count={runsInProgress} accent="indigo" />}>
+      {card.mode === 'text_to_video' ? (
+        // No reference row in text-only mode; connecting an image switches the mode.
+        <div className="relative">
+          <InputSlot kind="reference" />
+          {summary}
+        </div>
+      ) : (
+        summary
+      )}
       {referencesAndPrompt}
       {card.errorMessage && <ErrorBox message={card.errorMessage} />}
       <Button

@@ -17,7 +17,7 @@ import { isMidjourney } from '../../engine/midjourney.ts';
 import { actionLabel, groupActions } from '../../engine/resultCards.ts';
 import { refTag } from '../../engine/refTags.ts';
 import { Button } from '../ui/Button.tsx';
-import { InputPort, OutputPort, LinkedPromptBox } from './CardPorts.tsx';
+import { InputSlot, OutputPort, LinkedPromptBox } from './CardPorts.tsx';
 import {
   AutoTextarea,
   CardShell,
@@ -120,15 +120,20 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
     <p className="rounded-xl border border-dashed border-pink-500/30 bg-pink-500/5 px-2.5 py-2 text-[11px] leading-relaxed text-pink-100/80">
       Blend：把连入的 {card.references?.length ?? 0} 张图片混合成一张，不用提示词。
     </p>
-  ) : linkedPrompt ? (
-    <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
   ) : (
-    <AutoTextarea
-      accent="pink"
-      value={card.prompt}
-      onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
-      placeholder="描述画面：主体、场景、风格、光线…"
-    />
+    <div className="relative">
+      <InputSlot kind="prompt" />
+      {linkedPrompt ? (
+        <LinkedPromptBox sourceTitle={linkedPrompt.title} text={linkedPrompt.text} onUnlink={() => onUnlinkPrompt?.()} />
+      ) : (
+        <AutoTextarea
+          accent="pink"
+          value={card.prompt}
+          onChange={(e) => onUpdateCard(card.id, { prompt: e.target.value })}
+          placeholder="描述画面：主体、场景、风格、光线…"
+        />
+      )}
+    </div>
   );
 
   // Generation cards only configure runs; each run's output lands on its own result card.
@@ -145,17 +150,18 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         onRename={(title) => onUpdateCard(card.id, { title })}
         badges={<RunsBadge count={runsInProgress} accent="pink" />}
         menuItems={menuItems}
-        ports={<InputPort />}
       >
         <SummaryRow model={modelLabel} spec={imageSizeSummary(card)} />
-        {mj && !!card.references?.length && (
-          <div className="flex items-center gap-1.5 flex-wrap text-[11px]" title="在属性面板里管理参考图">
+        {mj && (
+          <div className="relative flex items-center gap-1.5 flex-wrap text-[11px]" title="在属性面板里管理参考图">
+            <InputSlot kind="reference" title="参考图输入：从图片或上传卡片右侧的圆点拖线到这张卡片" />
             <span className="text-slate-500">参考图</span>
-            {card.references.map((ref) => (
+            {card.references?.map((ref) => (
               <span key={ref.cardId} className="font-mono px-1.5 py-px rounded-md border bg-pink-500/15 text-pink-300 border-pink-500/30">
                 {refTag(ref)}
               </span>
             ))}
+            {!card.references?.length && <span className="text-slate-600">从左侧圆点连入图片</span>}
           </div>
         )}
         {promptInput}

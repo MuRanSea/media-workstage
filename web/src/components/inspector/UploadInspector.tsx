@@ -1,29 +1,31 @@
 import React from 'react';
 import type { SpatialCard } from '../../types/canvas.ts';
-import { useChannels } from '../../services/channels.ts';
-import { Field, Section, inputClass } from '../ui/index.ts';
+import { useUploadPlatform } from '../../services/uploadPlatform.ts';
+import { Section } from '../ui/index.ts';
 
 /** Where an upload card sends its file, and how video cards will reference it. */
-export const UploadInspector: React.FC<{ card: SpatialCard; update: (patch: Partial<SpatialCard>) => void }> = ({ card, update }) => {
-  const providers = useChannels().filter((p) => p.is_configured);
-  const provider = card.uploadProvider && providers.some((p) => p.id === card.uploadProvider) ? card.uploadProvider : providers[0]?.id ?? '';
+export const UploadInspector: React.FC<{ card: SpatialCard; update: (patch: Partial<SpatialCard>) => void }> = ({ card }) => {
+  const platform = useUploadPlatform();
 
   return (
     <>
-      <Section title="上传到">
-        <Field
-          label="服务商"
-          hint="使用该服务商 Base URL 所在站点的素材库（/api/volcengine/assets）和文件存储（/api/files/upload）接口，密钥同服务商设置。"
-        >
-          <select value={provider} onChange={(e) => update({ uploadProvider: e.target.value })} className={inputClass}>
-            {providers.length === 0 && <option value="">还没有配置好的服务商</option>}
-            {providers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </Field>
+      <Section title="上传平台">
+        <p className="text-[11px] leading-relaxed text-slate-400">
+          「上传素材库」和「获取链接」都发到上传平台
+          {platform && <span className="font-mono text-slate-300"> {platform.base_url}</span>}
+          {platform && !platform.is_configured && <span className="text-amber-300">（还没有填 API Key）</span>}
+          ，在「设置 → 上传平台」里配置，与服务商无关。
+          {platform && (
+            <>
+              {' '}
+              接口说明见{' '}
+              <a href={platform.docs_url} target="_blank" rel="noreferrer" className="underline hover:text-slate-200">
+                平台文档
+              </a>
+              。
+            </>
+          )}
+        </p>
       </Section>
       <Section title="引用方式">
         <p className="text-[11px] leading-relaxed text-slate-400">

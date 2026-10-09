@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -448,6 +449,46 @@ func TestGenerateText_UsesStoredProviderCredentials(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, postJSON(r, "/api/llm/generate", map[string]string{
 		"provider": "kling", "model": "x", "prompt": "p",
 	}).Code)
+}
+
+// A text card's connected images go along: project files as data URIs, links as they are.
+func TestGenerateText_SendsConnectedImages(t *testing.T) {
+	var gotBody map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"少女，花瓣，逆光"}}]}`)
+	}))
+	defer upstream.Close()
+
+	r, srv, store := setupUploadServer(t)
+	doc, err := store.Create("看图")
+	require.NoError(t, err)
+	dir, _ := store.Dir(doc.ID)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "assets", "images", "a"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets", "images", "a", "base.png"), []byte("PNG"), 0o644))
+	require.NoError(t, upsertConfigs(srv.db, map[string]string{"openai_api_key": "sk", "openai_base_url": upstream.URL + "/v1"}))
+
+	body := map[string]any{
+		"project_id": doc.ID, "provider": "openai", "model": "gpt-5", "prompt": "描述图1和图2",
+		"images": []map[string]any{
+			{"card_id": "a", "tag_index": 1, "role": "reference_image", "label": "图1", "local_path": "/assets/images/a/base.png"},
+			{"card_id": "b", "tag_index": 2, "role": "reference_image", "label": "图2", "url": "https://cdn.example.com/b.jpg"},
+		},
+	}
+	w := postJSON(r, "/api/llm/generate", body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	user := gotBody["messages"].([]any)[0].(map[string]any)["content"].([]any)
+	require.Len(t, user, 3)
+	assert.Equal(t, "data:image/png;base64,UE5H", user[1].(map[string]any)["image_url"].(map[string]any)["url"])
+	assert.Equal(t, "https://cdn.example.com/b.jpg", user[2].(map[string]any)["image_url"].(map[string]any)["url"])
+
+	// A path outside the project, and an asset-library id, are refused.
+	body["images"] = []map[string]any{{"label": "x", "local_path": "/assets/../../secret.png"}}
+	assert.Equal(t, http.StatusBadRequest, postJSON(r, "/api/llm/generate", body).Code)
+	body["images"] = []map[string]any{{"label": "素材", "url": "asset://asset-1"}}
+	w = postJSON(r, "/api/llm/generate", body)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "素材库")
 }
 
 // Ark binds its Doubao chat presets by default and, when its /models is absent,

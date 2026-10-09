@@ -10,11 +10,9 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"media-workstage/internal/project"
 
@@ -42,6 +40,7 @@ func (s *Server) registerUploadRoutes(api *gin.RouterGroup) {
 	uploads.POST("/asset", s.handleUploadAsset)
 	uploads.POST("/asset/status", s.handleAssetStatus)
 	uploads.POST("/file", s.handleUploadFile)
+	s.registerUploadPlatformRoutes(api)
 }
 
 // handleLocalUpload stores a picked file under the project's assets/uploads folder and
@@ -119,36 +118,12 @@ func saveFormFile(header *multipart.FileHeader, target string) error {
 	return err
 }
 
-// platformClient is a Provider's platform: the origin of its base URL plus its key.
+// platformClient is the Upload Platform: the origin of its base URL plus its key.
 // The upload endpoints live at the origin's root (/api/...), not under /v1.
 type platformClient struct {
 	origin string
 	apiKey string
 	http   *http.Client
-}
-
-func (s *Server) platformFor(providerID string) (*platformClient, error) {
-	stored := s.storedConfig()
-	spec, ok := findProvider(stored, strings.ToLower(strings.TrimSpace(providerID)))
-	if !ok {
-		return nil, fmt.Errorf("未知的服务商 %q", providerID)
-	}
-	baseURL, apiKey := ProviderCredentials(stored, spec.ID)
-	if apiKey == "" {
-		return nil, fmt.Errorf("服务商 %s 未配置 API Key", providerName(spec, stored))
-	}
-	if err := validateBaseURL(baseURL); err != nil {
-		return nil, fmt.Errorf("服务商 Base URL 无效: %w", err)
-	}
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return nil, err
-	}
-	return &platformClient{
-		origin: u.Scheme + "://" + u.Host,
-		apiKey: apiKey,
-		http:   newSafeClient(10 * time.Minute),
-	}, nil
 }
 
 // uploadSource is the file being sent: bytes from a multipart upload, or a file
@@ -270,7 +245,7 @@ func (p *platformClient) do(ctx context.Context, path, contentType string, body 
 			msg = msg[:300]
 		}
 		if isHTMLResponse(resp) {
-			msg = "返回的是网页而不是 API，这个服务商可能没有素材/文件上传接口"
+			msg = "返回的是网页而不是 API，请检查上传平台地址"
 		}
 		return nil, fmt.Errorf("上传服务返回 HTTP %d: %s", resp.StatusCode, msg)
 	}
@@ -293,7 +268,7 @@ type assetResult struct {
 // returns its asset id (usable as asset://<id>). Review can still be pending: poll
 // /uploads/asset/status until status is Active.
 func (s *Server) handleUploadAsset(c *gin.Context) {
-	platform, err := s.platformFor(c.PostForm("provider"))
+	platform, err := s.uploadPlatform()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -336,8 +311,7 @@ func respondAsset(a assetResult) gin.H {
 }
 
 type assetStatusPayload struct {
-	Provider string `json:"provider" binding:"required"`
-	AssetID  string `json:"asset_id" binding:"required"`
+	AssetID string `json:"asset_id" binding:"required"`
 }
 
 func (s *Server) handleAssetStatus(c *gin.Context) {
@@ -346,7 +320,7 @@ func (s *Server) handleAssetStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	platform, err := s.platformFor(payload.Provider)
+	platform, err := s.uploadPlatform()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -370,7 +344,7 @@ func (s *Server) handleAssetStatus(c *gin.Context) {
 // handleUploadFile stores the file on the platform and returns a download URL that stays
 // valid for 7 days: the way to hand a video to a model that only takes URLs.
 func (s *Server) handleUploadFile(c *gin.Context) {
-	platform, err := s.platformFor(c.PostForm("provider"))
+	platform, err := s.uploadPlatform()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
