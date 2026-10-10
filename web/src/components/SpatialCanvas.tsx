@@ -1,5 +1,19 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Copy, FileText, Film, Image as ImageIcon, Network, ScanText, SquareDashed, Sparkles, Trash2, Upload } from 'lucide-react';
+import {
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Copy,
+  FileText,
+  Film,
+  Image as ImageIcon,
+  Network,
+  Pencil,
+  ScanText,
+  SquareDashed,
+  Sparkles,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import type { CanvasSection, CardType, ResultActionDto, SpatialCard, UploadKind } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
 import { cardHeight, type CardMetrics } from '../engine/cardMetrics.ts';
@@ -36,7 +50,7 @@ import { ADD_CARD_ITEMS, CanvasHeader } from './CanvasHeader.tsx';
 import { SettingsModal } from './SettingsModal.tsx';
 import { MediaViewer, type ViewerMedia } from './MediaViewer.tsx';
 import { ShortcutsDialog } from './ShortcutsDialog.tsx';
-import { Menu, useToast, type MenuEntry } from './ui/index.ts';
+import { Menu, useDialogs, useToast, type MenuEntry } from './ui/index.ts';
 
 interface SpatialCanvasProps {
   cards: SpatialCard[];
@@ -583,6 +597,48 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     [onTriggerGenerate, onDescribe, describer, duplicate, deleteCards]
   );
 
+  const { prompt } = useDialogs();
+
+  /** A section's ⋯ / right-click menu. */
+  const sectionMenuItems = useCallback(
+    (section: CanvasSection): MenuEntry[] => {
+      const members = sectionMembers.get(section.id) ?? [];
+      return [
+        {
+          label: '重命名',
+          icon: <Pencil className="w-3.5 h-3.5" />,
+          onSelect: () =>
+            void prompt({ title: '重命名分区', label: '分区名称', defaultValue: section.title, confirmText: '保存' }).then(
+              (name) => name && name.trim() && name.trim() !== section.title && renameSection(section.id, name.trim())
+            ),
+        },
+        {
+          label: section.collapsed ? '展开分区' : '折叠分区',
+          icon: section.collapsed ? <ChevronsUpDown className="w-3.5 h-3.5" /> : <ChevronsDownUp className="w-3.5 h-3.5" />,
+          onSelect: () => toggleSectionCollapse(section.id),
+        },
+        ...(!section.collapsed && members.length > 1
+          ? [{ label: '整理分区内的卡片', icon: <Network className="w-3.5 h-3.5" />, onSelect: () => arrange(new Set(members)) }]
+          : []),
+        {
+          label: '复制分区',
+          hint: 'Ctrl+D',
+          icon: <Copy className="w-3.5 h-3.5" />,
+          onSelect: () => duplicate(cardsRef.current.filter((c) => members.includes(c.id)), undefined, [section]),
+        },
+        'separator',
+        {
+          label: members.length ? `删除分区（保留 ${members.length} 张卡片）` : '删除分区',
+          hint: 'Delete',
+          icon: <Trash2 className="w-3.5 h-3.5" />,
+          danger: true,
+          onSelect: () => deleteSections([section.id]),
+        },
+      ];
+    },
+    [sectionMembers, prompt, renameSection, toggleSectionCollapse, arrange, duplicate, deleteSections]
+  );
+
   const addMenuAt = useCallback(
     (clientX: number, clientY: number) => {
       const world = toWorld(clientX, clientY);
@@ -961,7 +1017,14 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     e.preventDefault();
     const cardId = target.closest('[data-card-id]')?.getAttribute('data-card-id');
     const card = cardId ? cards.find((c) => c.id === cardId) : undefined;
-    if (card) {
+    // Only a section's title bar takes the mouse, so this is a right-click on it.
+    const sectionId = !card ? target.closest('[data-section-id]')?.getAttribute('data-section-id') : undefined;
+    const section = sectionId ? sections.find((s) => s.id === sectionId) : undefined;
+    if (section) {
+      setSelectedSectionIds(new Set([section.id]));
+      setSelectedCardIds(new Set());
+      setContextMenu({ at: { x: e.clientX, y: e.clientY }, title: section.title, items: sectionMenuItems(section) });
+    } else if (card) {
       if (!selectedCardIds.has(card.id)) setSelectedCardIds(new Set([card.id]));
       setContextMenu({ at: { x: e.clientX, y: e.clientY }, items: cardMenuItems(card) });
     } else {
@@ -1098,6 +1161,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
             onStartMove={(e, s) => startSectionGesture('move', e, s)}
             onStartResize={(e, s) => startSectionGesture('resize', e, s)}
             onToggleCollapse={toggleSectionCollapse}
+            menuItems={sectionMenuItems}
             onRename={renameSection}
           />
 
