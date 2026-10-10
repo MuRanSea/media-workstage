@@ -2,11 +2,10 @@ import type { SpatialCard } from '../types/canvas.ts';
 import type { ProjectViewport } from '../services/projects.ts';
 import { isTerminalStatus } from './taskSync.ts';
 import { migrateLegacyCards, type SavedCard } from './migration.ts';
+import { MAX_ZOOM, MIN_ZOOM } from './matrix.ts';
 
 export const DEFAULT_VIEWPORT: ProjectViewport = { zoom: 0.85, panX: 60, panY: 40 };
 
-const MIN_ZOOM = 0.05;
-const MAX_ZOOM = 8;
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v);

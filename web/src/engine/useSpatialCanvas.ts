@@ -5,22 +5,29 @@ import {
   type Rect,
   calculateZoomAtPoint,
   calculateFitView,
-  calculateFocusSelection,
+  calculateFocusRects,
   screenToWorld,
+  wheelZoomFactor,
 } from './matrix.ts';
 import {
   isRectIntersecting,
   getMarqueeRect,
+  getCardsBoundingBox,
   alignCards,
   autoArrangeGrid,
   type AlignmentType,
 } from './layout.ts';
 import type { CanvasTool, SpatialCard } from '../types/canvas.ts';
+import type { CardHeightOf } from './layout.ts';
+import { sameIds } from './culling.ts';
+import { snapBox, SNAP_THRESHOLD_PX, type SnapGuide } from './snapping.ts';
 
 interface UseSpatialCanvasProps {
   cards: SpatialCard[];
   setCards: React.Dispatch<React.SetStateAction<SpatialCard[]>>;
   containerRef: React.RefObject<HTMLDivElement | null>;
+  /** A card's rendered height: measured when on screen, estimated otherwise. */
+  heightOf: CardHeightOf<SpatialCard>;
   initialZoom?: number;
   initialPanX?: number;
   initialPanY?: number;
@@ -28,17 +35,27 @@ interface UseSpatialCanvasProps {
   onBeforeEdit?: () => void;
   /** False while a dialog covers the canvas, so its keys do not move the canvas. */
   keyboardEnabled?: boolean;
+  /** Cards inside collapsed sections: not selectable, not snapped to, not framed by fit view. */
+  hiddenIds?: ReadonlySet<string>;
+  /** Section rectangles, so fit view frames sections too (a collapsed one may hold every card). */
+  sectionRects?: Rect[];
 }
+
+const NO_IDS: ReadonlySet<string> = new Set();
+const NO_RECTS: Rect[] = [];
 
 export function useSpatialCanvas({
   cards,
   setCards,
   containerRef,
+  heightOf,
   initialZoom = 0.85,
   initialPanX = 60,
   initialPanY = 40,
   onBeforeEdit,
   keyboardEnabled = true,
+  hiddenIds = NO_IDS,
+  sectionRects = NO_RECTS,
 }: UseSpatialCanvasProps) {
   const [transform, setTransform] = useState<CanvasTransform>({
     zoom: initialZoom,
@@ -63,6 +80,10 @@ export function useSpatialCanvas({
   const initialCardPositionsRef = useRef<Map<string, Point>>(new Map());
   // A drag records its undo step on the first actual move, so plain clicks add none.
   const dragRecordedRef = useRef(false);
+  // Snapping: the dragged cards' box when the drag began, and the cards it can snap to.
+  const dragBoxRef = useRef<Rect | null>(null);
+  const snapTargetsRef = useRef<Rect[]>([]);
+  const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
 
   const startPanRef = useRef<Point>({ x: 0, y: 0 });
   const mousePosRef = useRef<Point>({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
@@ -106,51 +127,46 @@ export function useSpatialCanvas({
 
   const fitView = useCallback(() => {
     const container = containerRef.current;
-    if (!container || cards.length === 0) return;
+    if (!container) return;
 
     const viewport = {
       width: container.clientWidth,
       height: container.clientHeight,
     };
 
-    const cardRects: Rect[] = cards.map((c) => ({
-      x: c.x,
-      y: c.y,
-      width: c.width,
-      height: 380,
-    }));
+    const rects: Rect[] = cards
+      .filter((c) => !hiddenIds.has(c.id))
+      .map((c) => ({
+        x: c.x,
+        y: c.y,
+        width: c.width,
+        height: heightOf(c),
+      }))
+      .concat(sectionRects);
+    if (rects.length === 0) return;
 
-    const nextTransform = calculateFitView(cardRects, viewport, 140);
+    const nextTransform = calculateFitView(rects, viewport, 140);
     setTransform(nextTransform);
-  }, [cards, containerRef]);
+  }, [cards, containerRef, heightOf, hiddenIds, sectionRects]);
 
   const focusSelection = useCallback(
     (cardId?: string) => {
       const container = containerRef.current;
       if (!container) return;
 
-      const targetId = cardId ?? (selectedCardIds.size > 0 ? Array.from(selectedCardIds)[0] : null);
-      if (!targetId) return;
-
-      const target = cards.find((c) => c.id === targetId);
-      if (!target) return;
+      const ids = cardId ? new Set([cardId]) : selectedCardIds;
+      const rects: Rect[] = cards
+        .filter((c) => ids.has(c.id))
+        .map((c) => ({ x: c.x, y: c.y, width: c.width, height: heightOf(c) }));
 
       const viewport = {
         width: container.clientWidth,
         height: container.clientHeight,
       };
-
-      const rect: Rect = {
-        x: target.x,
-        y: target.y,
-        width: target.width,
-        height: 380,
-      };
-
-      const nextTransform = calculateFocusSelection(rect, viewport, 1.0);
-      setTransform(nextTransform);
+      const nextTransform = calculateFocusRects(rects, viewport);
+      if (nextTransform) setTransform(nextTransform);
     },
-    [cards, selectedCardIds, containerRef]
+    [cards, selectedCardIds, containerRef, heightOf]
   );
 
   // Wheel listener
@@ -163,7 +179,7 @@ export function useSpatialCanvas({
       mousePosRef.current = { x: e.clientX, y: e.clientY };
 
       if (e.ctrlKey || e.metaKey) {
-        const factor = e.deltaY < 0 ? 1.06 : 0.94;
+        const factor = wheelZoomFactor(e.deltaY, e.deltaMode);
         zoomAtPoint((z) => z * factor, e.clientX, e.clientY);
       } else {
         const deltaX = e.shiftKey ? e.deltaY : e.deltaX;
@@ -301,26 +317,38 @@ export function useSpatialCanvas({
         );
 
         for (const card of cards) {
+          if (hiddenIds.has(card.id)) continue;
           const cardBox: Rect = {
             x: card.x,
             y: card.y,
             width: card.width,
-            height: 380,
+            height: heightOf(card),
           };
           if (isRectIntersecting(cardBox, marqueeWorldBox)) {
             newSelected.add(card.id);
           }
         }
 
-        setSelectedCardIds(newSelected);
+        // Most moves change nothing: keep the same set so nothing re-renders.
+        setSelectedCardIds((prev) => (sameIds(prev, newSelected) ? prev : newSelected));
       } else if (isDraggingCards) {
         const currentWorld = screenToWorld(
           { x: e.clientX, y: e.clientY },
           transform,
           origin
         );
-        const dx = currentWorld.x - dragStartWorldRef.current.x;
-        const dy = currentWorld.y - dragStartWorldRef.current.y;
+        let dx = currentWorld.x - dragStartWorldRef.current.x;
+        let dy = currentWorld.y - dragStartWorldRef.current.y;
+        // Snap the dragged box to other cards' edges and centres; Alt drags freely.
+        let guides: SnapGuide[] = [];
+        const box = dragBoxRef.current;
+        if (box && !e.altKey && (dx !== 0 || dy !== 0)) {
+          const snap = snapBox({ ...box, x: box.x + dx, y: box.y + dy }, snapTargetsRef.current, SNAP_THRESHOLD_PX / transform.zoom);
+          dx += snap.dx;
+          dy += snap.dy;
+          guides = snap.guides;
+        }
+        setSnapGuides((prev) => (prev.length === 0 && guides.length === 0 ? prev : guides));
         if (!dragRecordedRef.current && (dx !== 0 || dy !== 0)) {
           dragRecordedRef.current = true;
           onBeforeEdit?.();
@@ -345,6 +373,7 @@ export function useSpatialCanvas({
       transform,
       containerRef,
       cards,
+      heightOf,
       selectedCardIds,
       setCards,
       onBeforeEdit,
@@ -357,6 +386,7 @@ export function useSpatialCanvas({
     setMarqueeStartScreen(null);
     setMarqueeCurrentScreen(null);
     setIsDraggingCards(false);
+    setSnapGuides([]);
   }, []);
 
   // Shift/Ctrl toggles a card in the selection; a plain click selects it alone
@@ -404,31 +434,40 @@ export function useSpatialCanvas({
       dragStartWorldRef.current = worldMouse;
 
       const initialPositions = new Map<string, Point>();
+      const moving: Rect[] = [];
+      const others: Rect[] = [];
       for (const c of cards) {
+        const r = { x: c.x, y: c.y, width: c.width, height: heightOf(c) };
         if (nextSelectedIds.has(c.id)) {
           initialPositions.set(c.id, { x: c.x, y: c.y });
+          moving.push(r);
+        } else if (!hiddenIds.has(c.id)) {
+          others.push(r);
         }
       }
       initialCardPositionsRef.current = initialPositions;
+      // A group snaps as one box: its bounding box.
+      dragBoxRef.current = getCardsBoundingBox(moving.map((r, i) => ({ id: String(i), ...r })));
+      snapTargetsRef.current = others;
     },
-    [activeTool, nextSelection, transform, containerRef, cards]
+    [activeTool, nextSelection, transform, containerRef, cards, heightOf, hiddenIds]
   );
 
   // Multi-card layout commands
   const alignSelected = useCallback(
     (alignment: AlignmentType) => {
       onBeforeEdit?.();
-      setCards((prev) => alignCards(prev, selectedCardIds, alignment));
+      setCards((prev) => alignCards(prev, selectedCardIds, alignment, heightOf));
     },
-    [selectedCardIds, setCards, onBeforeEdit]
+    [selectedCardIds, setCards, onBeforeEdit, heightOf]
   );
 
   const arrangeSelectedGrid = useCallback(
     (gap = 40, columns = 3) => {
       onBeforeEdit?.();
-      setCards((prev) => autoArrangeGrid(prev, selectedCardIds, gap, columns));
+      setCards((prev) => autoArrangeGrid(prev, selectedCardIds, gap, columns, heightOf));
     },
-    [selectedCardIds, setCards, onBeforeEdit]
+    [selectedCardIds, setCards, onBeforeEdit, heightOf]
   );
 
   // Calculate screen-space marquee box for rendering
@@ -446,6 +485,8 @@ export function useSpatialCanvas({
     selectedCardIds,
     setSelectedCardIds,
     marqueeScreenBox,
+    /** Alignment lines to draw while a drag is snapped (world coordinates). */
+    snapGuides,
     isDraggingCards,
     zoomIn,
     zoomOut,

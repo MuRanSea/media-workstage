@@ -1,9 +1,24 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Copy, FileText, Film, Image as ImageIcon, ScanText, Sparkles, Trash2, Upload } from 'lucide-react';
-import type { CardType, ResultActionDto, SpatialCard, UploadKind } from '../types/canvas.ts';
+import {
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Copy,
+  FileText,
+  Film,
+  Image as ImageIcon,
+  Network,
+  Pencil,
+  ScanText,
+  SquareDashed,
+  Sparkles,
+  Trash2,
+  Upload,
+} from 'lucide-react';
+import type { CanvasSection, CardType, ResultActionDto, SpatialCard, UploadKind } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
+import { cardHeight, type CardMetrics } from '../engine/cardMetrics.ts';
 import { screenToWorld, type CanvasTransform, type Point } from '../engine/matrix.ts';
-import { connectCards, hasOutputPort, removeCards } from '../engine/connections.ts';
+import { connectCards, removeCards } from '../engine/connections.ts';
 import { createCard, duplicateCards } from '../engine/cardFactory.ts';
 import { useHistory } from '../engine/useHistory.ts';
 import { removeReferencePatch } from '../engine/cardParams.ts';
@@ -11,23 +26,40 @@ import { actionKey, runningActionIds, runsInProgress } from '../engine/resultCar
 import { findDescribeProvider, savedImageOf } from '../engine/midjourney.ts';
 import { useChannels } from '../services/channels.ts';
 import { refTag } from '../engine/refTags.ts';
-import { ImageCardView } from './cards/ImageCardView.tsx';
-import { VideoCardView } from './cards/VideoCardView.tsx';
-import { TextCardView } from './cards/TextCardView.tsx';
-import { UploadCardView } from './cards/UploadCardView.tsx';
 import { PORT_Y, type ConnectHint, type SlotKind } from './cards/CardPorts.tsx';
-import type { CardViewProps } from './cards/cardProps.ts';
+import { CanvasCard, type CardActions } from './CanvasCard.tsx';
+import { Minimap, useMinimapVisible } from './Minimap.tsx';
+import { SectionLayer } from './SectionLayer.tsx';
+import {
+  SECTION_MIN_HEIGHT,
+  SECTION_MIN_WIDTH,
+  collapsedSectionOf,
+  duplicateSections,
+  emptySection,
+  hiddenCardIds,
+  membersBySection,
+  sectionAround,
+  sectionRect,
+} from '../engine/sections.ts';
+import { cardsToRender, isAwaitingTask, lineMayCross, visibleWorldRect } from '../engine/culling.ts';
+import { dropOptions, type DropCardType, type DropRole } from '../engine/dropToCreate.ts';
+import { arrangeCards } from '../engine/arrange.ts';
 import { InspectorPanel, INSPECTOR_WIDTH } from './inspector/InspectorPanel.tsx';
 import { NavigationDock } from './NavigationDock.tsx';
 import { ADD_CARD_ITEMS, CanvasHeader } from './CanvasHeader.tsx';
 import { SettingsModal } from './SettingsModal.tsx';
 import { MediaViewer, type ViewerMedia } from './MediaViewer.tsx';
 import { ShortcutsDialog } from './ShortcutsDialog.tsx';
-import { Menu, useToast, type MenuEntry } from './ui/index.ts';
+import { Menu, useDialogs, useToast, type MenuEntry } from './ui/index.ts';
 
 interface SpatialCanvasProps {
   cards: SpatialCard[];
   setCards: React.Dispatch<React.SetStateAction<SpatialCard[]>>;
+  /** Labelled regions of the canvas (ADR 0009). */
+  sections: CanvasSection[];
+  setSections: React.Dispatch<React.SetStateAction<CanvasSection[]>>;
+  /** Rendered heights the cards report. */
+  metrics: CardMetrics;
   onTriggerGenerate: (cardId: string) => void;
   /** Runs a result action (Midjourney U/V/reroll) on a result card. */
   onRunAction?: (sourceId: string, action: ResultActionDto) => void;
@@ -57,6 +89,10 @@ interface Ray {
   pathData: string;
   midX: number;
   midY: number;
+  /** End points, for skipping lines far off screen. */
+  ends: [number, number, number, number];
+  /** The two cards it joins. */
+  cardIds: [string, string];
   /** Label pill with a disconnect button; source lines (generation → result) have none. */
   label?: string;
   onRemove?: () => void;
@@ -94,9 +130,27 @@ const RAY_COLORS = {
 
 const RAY_TONE = { image: 'pink', video: 'indigo', upload: 'amber', text: 'emerald' } as const;
 
+/** How far a connection curve bulges sideways past its end points. */
+const bulgeOf = (srcX: number, tgtX: number) => Math.max(80, Math.abs(tgtX - srcX) * 0.5);
+
 const bezier = (srcX: number, srcY: number, tgtX: number, tgtY: number) => {
-  const dx = Math.max(80, Math.abs(tgtX - srcX) * 0.5);
+  const dx = bulgeOf(srcX, tgtX);
   return `M ${srcX} ${srcY} C ${srcX + dx} ${srcY}, ${tgtX - dx} ${tgtY}, ${tgtX} ${tgtY}`;
+};
+
+const NO_CARDS: SpatialCard[] = [];
+
+const DROP_CARD_LABEL: Record<DropCardType, string> = { text: '文本卡片', image: '图片卡片', video: '视频卡片' };
+const DROP_CARD_ICON: Record<DropCardType, React.ReactNode> = {
+  text: <FileText className="w-4 h-4 text-emerald-400" />,
+  image: <ImageIcon className="w-4 h-4 text-pink-400" />,
+  video: <Film className="w-4 h-4 text-indigo-400" />,
+};
+const DROP_ROLE_HINT: Record<DropRole, string> = {
+  prompt: '作为提示词',
+  reference_image: '作为参考图',
+  reference_video: '作为参考视频',
+  read_image: '让模型读图',
 };
 
 const isTyping = () => {
@@ -111,6 +165,9 @@ const COALESCE_MS = 1000;
 export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   cards,
   setCards,
+  sections,
+  setSections,
+  metrics,
   onTriggerGenerate,
   onRunAction,
   onDescribe,
@@ -122,11 +179,19 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   onRestore,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const heightOf = useCallback((card: SpatialCard) => cardHeight(metrics, card), [metrics]);
+  const sectionMembers = useMemo(() => membersBySection(cards, sections, heightOf), [cards, sections, heightOf]);
+  const memberCounts = useMemo(() => new Map([...sectionMembers].map(([id, ids]) => [id, ids.length])), [sectionMembers]);
+  // Cards inside collapsed sections are not drawn, selected or snapped to.
+  const hiddenIds = useMemo(() => hiddenCardIds(sections, sectionMembers), [sections, sectionMembers]);
+  const sectionRects = useMemo(() => sections.map(sectionRect), [sections]);
+  const collapsedBars = useMemo(() => sections.filter((s) => s.collapsed).map(sectionRect), [sections]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [linkDrag, setLinkDrag] = useState<LinkDrag | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [viewer, setViewer] = useState<ViewerMedia | null>(null);
+  const [minimapVisible, setMinimapVisible] = useMinimapVisible();
   const toast = useToast();
   const channels = useChannels();
   const describer = useMemo(() => findDescribeProvider(channels), [channels]);
@@ -135,12 +200,15 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   const { record, undo: undoHistory, redo: redoHistory, canUndo, canRedo } = useHistory();
   const cardsRef = useRef(cards);
   cardsRef.current = cards;
+  const sectionsRef = useRef(sections);
+  sectionsRef.current = sections;
+  const snapshot = useCallback(() => ({ cards: cardsRef.current, sections: sectionsRef.current }), []);
   const lastCoalesce = useRef<{ key: string; at: number } | null>(null);
 
   const recordEdit = useCallback(() => {
     lastCoalesce.current = null;
-    record(cardsRef.current);
-  }, [record]);
+    record(snapshot());
+  }, [record, snapshot]);
 
   /** A user edit: records an undo step, then applies the change. */
   const editCards = useCallback(
@@ -153,12 +221,14 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   const {
     transform,
+    setTransform,
     activeTool,
     setActiveTool,
     isPanning,
     selectedCardIds,
     setSelectedCardIds,
     marqueeScreenBox,
+    snapGuides,
     zoomIn,
     zoomOut,
     resetZoom100,
@@ -176,47 +246,72 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     cards,
     setCards,
     containerRef,
+    heightOf,
     initialZoom: initialViewport?.zoom,
     initialPanX: initialViewport?.panX,
     initialPanY: initialViewport?.panY,
     onBeforeEdit: recordEdit,
     keyboardEnabled: !isSettingsOpen && !viewer && !showShortcuts,
+    hiddenIds,
+    sectionRects,
   });
+
+  const transformRef = useRef(transform);
+  transformRef.current = transform;
+  const selectedCardIdsRef = useRef(selectedCardIds);
+  selectedCardIdsRef.current = selectedCardIds;
 
   useEffect(() => {
     onViewportChange?.(transform);
   }, [transform, onViewportChange]);
 
   // A video takes minutes and its result card may be off screen by the time it is done: say so, and offer to jump to it.
-  const finishedVideoIds = useRef<Set<string> | null>(null);
+  // A result finishing inside a collapsed section cannot be seen at all: say so too, and open the section to show it.
+  const finishedIds = useRef<Set<string> | null>(null);
   useEffect(() => {
-    const isFinishedVideo = (c: SpatialCard) => c.type === 'video' && c.role === 'result' && c.status === 'succeeded';
-    const seen = finishedVideoIds.current;
-    finishedVideoIds.current = new Set(cards.filter(isFinishedVideo).map((c) => c.id));
+    const isFinished = (c: SpatialCard) => c.role === 'result' && (c.status === 'succeeded' || c.status === 'failed');
+    const seen = finishedIds.current;
+    finishedIds.current = new Set(cards.filter(isFinished).map((c) => c.id));
     if (!seen) return;
     for (const card of cards) {
-      if (!isFinishedVideo(card) || seen.has(card.id) || !card.sourceId) continue;
+      if (!isFinished(card) || seen.has(card.id)) continue;
+      const hiddenIn = collapsedSectionOf(card.id, sections, sectionMembers);
+      const isVideo = card.type === 'video' && card.status === 'succeeded' && !!card.sourceId;
+      if (!isVideo && !hiddenIn) continue;
       const source = cards.find((c) => c.id === card.sourceId);
-      toast(`「${source?.title ?? '视频'}」生成完成，结果在卡片「${card.title}」`, {
-        tone: 'success',
+      const message = isVideo
+        ? `「${source?.title ?? '视频'}」生成完成，结果在卡片「${card.title}」`
+        : `折叠的分区「${hiddenIn!.title}」里，「${card.title}」${card.status === 'failed' ? '生成失败' : '已生成'}`;
+      toast(message, {
+        tone: card.status === 'failed' ? 'warning' : 'success',
         durationMs: 8000,
         action: {
           label: '查看',
           onClick: () => {
+            const section = collapsedSectionOf(card.id, sectionsRef.current, sectionMembersRef.current);
+            if (section) toggleSectionCollapseRef.current(section.id);
             setSelectedCardIds(new Set([card.id]));
             focusSelection(card.id);
           },
         },
       });
     }
-  }, [cards, toast, focusSelection, setSelectedCardIds]);
+  }, [cards, sections, sectionMembers, toast, focusSelection, setSelectedCardIds]);
+  const sectionMembersRef = useRef(sectionMembers);
+  sectionMembersRef.current = sectionMembers;
+  const toggleSectionCollapseRef = useRef<(id: string) => void>(() => {});
 
   const selectedCards = useMemo(() => cards.filter((c) => selectedCardIds.has(c.id)), [cards, selectedCardIds]);
   // Cards a video card can take as references: image and video results, uploads included. Generation cards hold none.
-  const availableImageCards = useMemo(
-    () => cards.filter((c) => c.role === 'result' && c.type !== 'text' && c.tagIndex !== undefined),
-    [cards]
-  );
+  const availableRef = useRef<SpatialCard[]>([]);
+  const availableImageCards = useMemo(() => {
+    const next = cards.filter((c) => c.role === 'result' && c.type !== 'text' && c.tagIndex !== undefined);
+    // Keep the old array while it holds the same card objects, so video cards do not re-render for nothing.
+    const prev = availableRef.current;
+    if (next.length === prev.length && next.every((c, i) => c === prev[i])) return prev;
+    availableRef.current = next;
+    return next;
+  }, [cards]);
 
   const toWorld = useCallback(
     (clientX: number, clientY: number) => {
@@ -249,12 +344,12 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         const key = `${cardId}:${Object.keys(patch).sort().join(',')}`;
         const now = Date.now();
         const last = lastCoalesce.current;
-        if (!last || last.key !== key || now - last.at > COALESCE_MS) record(cardsRef.current);
+        if (!last || last.key !== key || now - last.at > COALESCE_MS) record(snapshot());
         lastCoalesce.current = { key, at: now };
       }
       setCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, ...patch } : c)));
     },
-    [record, setCards]
+    [record, setCards, snapshot]
   );
 
   const addCard = useCallback(
@@ -266,25 +361,30 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     [editCards, viewportCenter, setSelectedCardIds]
   );
 
+  const undoRef = useRef<() => void>(() => {});
   const undo = useCallback(() => {
-    const before = cardsRef.current;
+    const before = snapshot();
     const restored = undoHistory(before);
     if (restored) {
       lastCoalesce.current = null;
-      setCards(restored);
-      onRestore?.(restored, before);
+      setCards(restored.cards);
+      setSections(restored.sections);
+      onRestore?.(restored.cards, before.cards);
     }
-  }, [undoHistory, setCards, onRestore]);
+  }, [undoHistory, setCards, setSections, onRestore, snapshot]);
+
+  undoRef.current = undo;
 
   const redo = useCallback(() => {
-    const before = cardsRef.current;
+    const before = snapshot();
     const restored = redoHistory(before);
     if (restored) {
       lastCoalesce.current = null;
-      setCards(restored);
-      onRestore?.(restored, before);
+      setCards(restored.cards);
+      setSections(restored.sections);
+      onRestore?.(restored.cards, before.cards);
     }
-  }, [redoHistory, setCards, onRestore]);
+  }, [redoHistory, setCards, setSections, onRestore, snapshot]);
 
   const deleteCards = useCallback(
     (ids: string[]) => {
@@ -297,29 +397,187 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     [editCards, setSelectedCardIds, toast, undo]
   );
 
-  const duplicate = useCallback(
-    (source: SpatialCard[], at?: Point) => {
-      if (source.length === 0) return;
-      const minX = Math.min(...source.map((c) => c.x));
-      const minY = Math.min(...source.map((c) => c.y));
-      const copies = duplicateCards(source, at ?? { x: minX + 40, y: minY + 40 }, cardsRef.current);
-      if (copies.length < source.length) toast('生成中的结果卡不能复制', { tone: 'warning' });
-      if (copies.length === 0) return;
-      editCards((prev) => [...prev, ...copies]);
-      setSelectedCardIds(new Set(copies.map((c) => c.id)));
+  // --- Sections --------------------------------------------------------------
+
+  const [selectedSectionIds, setSelectedSectionIds] = useState<ReadonlySet<string>>(() => new Set());
+
+  /** Draws a section around `source` cards. */
+  const wrapInSection = useCallback(
+    (source: SpatialCard[]) => {
+      const section = sectionAround(source, heightOf);
+      if (!section) return;
+      recordEdit();
+      setSections((prev) => [...prev, section]);
+      setSelectedSectionIds(new Set([section.id]));
+      setSelectedCardIds(new Set());
     },
-    [editCards, setSelectedCardIds, toast]
+    [heightOf, recordEdit, setSections, setSelectedCardIds]
+  );
+
+  /** Tidies the given cards by their links, as one undo step. */
+  const arrange = useCallback(
+    (ids: ReadonlySet<string>) => {
+      const { positions, sections: grown } = arrangeCards(cardsRef.current, ids, sectionsRef.current, heightOf);
+      const moved = cardsRef.current.some((c) => {
+        const p = positions.get(c.id);
+        return p && (p.x !== c.x || p.y !== c.y);
+      });
+      if (!moved && grown.length === 0) {
+        toast('已经整理好了');
+        return;
+      }
+      recordEdit();
+      setCards((prev) => prev.map((c) => (positions.has(c.id) ? { ...c, ...positions.get(c.id)! } : c)));
+      if (grown.length) {
+        const byId = new Map(grown.map((s) => [s.id, s]));
+        setSections((prev) => prev.map((s) => byId.get(s.id) ?? s));
+      }
+    },
+    [heightOf, recordEdit, setCards, setSections, toast]
+  );
+
+  const addSection = useCallback(
+    (at: Point) => {
+      const section = emptySection(at);
+      recordEdit();
+      setSections((prev) => [...prev, section]);
+      setSelectedSectionIds(new Set([section.id]));
+      setSelectedCardIds(new Set());
+    },
+    [recordEdit, setSections, setSelectedCardIds]
+  );
+
+  /** Deletes sections; the cards in them stay where they are. */
+  const deleteSections = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      const gone = new Set(ids);
+      recordEdit();
+      setSections((prev) => prev.filter((s) => !gone.has(s.id)));
+      setSelectedSectionIds(new Set());
+      toast(`已删除 ${ids.length} 个分区，卡片保留`, { action: { label: '撤销', onClick: () => undoRef.current() } });
+    },
+    [recordEdit, setSections, toast]
+  );
+
+  const renameSection = useCallback(
+    (id: string, title: string) => {
+      recordEdit();
+      setSections((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
+    },
+    [recordEdit, setSections]
+  );
+
+  /** Shows or hides a section's cards. Collapsing drops them from the selection. */
+  const toggleSectionCollapse = useCallback(
+    (id: string) => {
+      const section = sectionsRef.current.find((s) => s.id === id);
+      if (!section) return;
+      recordEdit();
+      const collapsed = !section.collapsed;
+      setSections((prev) => prev.map((s) => (s.id === id ? { ...s, collapsed: collapsed || undefined } : s)));
+      if (collapsed) {
+        const gone = new Set(sectionMembers.get(id) ?? []);
+        setSelectedCardIds((prev) => (([...prev].some((c) => gone.has(c)) ? new Set([...prev].filter((c) => !gone.has(c))) : prev)));
+      }
+    },
+    [recordEdit, setSections, sectionMembers, setSelectedCardIds]
+  );
+
+  toggleSectionCollapseRef.current = toggleSectionCollapse;
+
+  /** Moving a section by its title bar (with the cards in it), or resizing it by its corner. */
+  const startSectionGesture = (mode: 'move' | 'resize', e: React.MouseEvent, section: CanvasSection) => {
+    if (e.button !== 0 || activeTool === 'hand') return;
+    e.stopPropagation();
+    e.preventDefault();
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+    setSelectedSectionIds((prev) => {
+      if (!additive) return prev.has(section.id) && prev.size === 1 ? prev : new Set([section.id]);
+      const next = new Set(prev);
+      if (next.has(section.id)) next.delete(section.id);
+      else next.add(section.id);
+      return next;
+    });
+    if (!additive) setSelectedCardIds(new Set());
+    const zoom = transform.zoom;
+    const start = { x: e.clientX, y: e.clientY };
+    const members = new Set(sectionMembers.get(section.id) ?? []);
+    const memberStart = new Map(cardsRef.current.filter((c) => members.has(c.id)).map((c) => [c.id, { x: c.x, y: c.y }]));
+    let recorded = false;
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = (ev.clientX - start.x) / zoom;
+      const dy = (ev.clientY - start.y) / zoom;
+      if (!recorded) {
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+        recorded = true;
+        recordEdit();
+      }
+      if (mode === 'move') {
+        setSections((prev) => prev.map((s) => (s.id === section.id ? { ...s, x: Math.round(section.x + dx), y: Math.round(section.y + dy) } : s)));
+        setCards((prev) =>
+          prev.map((c) => {
+            const p = memberStart.get(c.id);
+            return p ? { ...c, x: Math.round(p.x + dx), y: Math.round(p.y + dy) } : c;
+          })
+        );
+      } else {
+        setSections((prev) =>
+          prev.map((s) =>
+            s.id === section.id
+              ? { ...s, width: Math.max(SECTION_MIN_WIDTH, Math.round(section.width + dx)), height: Math.max(SECTION_MIN_HEIGHT, Math.round(section.height + dy)) }
+              : s
+          )
+        );
+      }
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  /**
+   * Copies `source` cards (and `sourceSections`, kept in place relative to the
+   * cards) with their top-left corner at `at`, or 40px down-right of the originals.
+   */
+  const duplicate = useCallback(
+    (source: SpatialCard[], at?: Point, sourceSections: CanvasSection[] = []) => {
+      if (source.length === 0 && sourceSections.length === 0) return;
+      // The copy is placed by its cards' corner; sections alone are placed by theirs.
+      const anchor = source.length ? source : sourceSections;
+      const minX = Math.min(...anchor.map((c) => c.x));
+      const minY = Math.min(...anchor.map((c) => c.y));
+      // Sections are copied beside the originals: an overlapping copy would take over their cards.
+      const sectionsRight = sourceSections.length ? Math.max(...sourceSections.map((s) => s.x + s.width)) : 0;
+      const target =
+        at ?? (sourceSections.length ? { x: minX + (sectionsRight - Math.min(...sourceSections.map((s) => s.x))) + 80, y: minY } : { x: minX + 40, y: minY + 40 });
+      const copies = duplicateCards(source, target, cardsRef.current);
+      if (copies.length < source.length) toast('生成中的结果卡不能复制', { tone: 'warning' });
+      const sectionCopies = duplicateSections(sourceSections, { x: Math.round(target.x) - minX, y: Math.round(target.y) - minY });
+      if (copies.length === 0 && sectionCopies.length === 0) return;
+      recordEdit();
+      if (copies.length) setCards((prev) => [...prev, ...copies]);
+      if (sectionCopies.length) setSections((prev) => [...prev, ...sectionCopies]);
+      setSelectedCardIds(new Set(copies.map((c) => c.id)));
+      setSelectedSectionIds(new Set(sectionCopies.map((s) => s.id)));
+    },
+    [recordEdit, setCards, setSections, setSelectedCardIds, toast]
   );
 
   // In-app clipboard for Ctrl+C / Ctrl+V.
-  const clipboardRef = useRef<SpatialCard[]>([]);
+  const clipboardRef = useRef<{ cards: SpatialCard[]; sections: CanvasSection[] }>({ cards: [], sections: [] });
+  const clipboardSize = () => clipboardRef.current.cards.length + clipboardRef.current.sections.length;
 
   const pasteAtPointer = useCallback(() => {
-    if (clipboardRef.current.length === 0) return;
+    if (clipboardSize() === 0) return;
     const rect = containerRef.current?.getBoundingClientRect();
     const p = pointerRef.current;
     const inside = rect && p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom;
-    duplicate(clipboardRef.current, inside ? toWorld(p.x, p.y) : viewportCenter());
+    duplicate(clipboardRef.current.cards, inside ? toWorld(p.x, p.y) : viewportCenter(), clipboardRef.current.sections);
   }, [duplicate, pointerRef, toWorld, viewportCenter]);
 
   const cardMenuItems = useCallback(
@@ -339,20 +597,85 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     [onTriggerGenerate, onDescribe, describer, duplicate, deleteCards]
   );
 
+  const { prompt } = useDialogs();
+
+  /** A section's ⋯ / right-click menu. */
+  const sectionMenuItems = useCallback(
+    (section: CanvasSection): MenuEntry[] => {
+      const members = sectionMembers.get(section.id) ?? [];
+      return [
+        {
+          label: '重命名',
+          icon: <Pencil className="w-3.5 h-3.5" />,
+          onSelect: () =>
+            void prompt({ title: '重命名分区', label: '分区名称', defaultValue: section.title, confirmText: '保存' }).then(
+              (name) => name && name.trim() && name.trim() !== section.title && renameSection(section.id, name.trim())
+            ),
+        },
+        {
+          label: section.collapsed ? '展开分区' : '折叠分区',
+          icon: section.collapsed ? <ChevronsUpDown className="w-3.5 h-3.5" /> : <ChevronsDownUp className="w-3.5 h-3.5" />,
+          onSelect: () => toggleSectionCollapse(section.id),
+        },
+        ...(!section.collapsed && members.length > 1
+          ? [{ label: '整理分区内的卡片', icon: <Network className="w-3.5 h-3.5" />, onSelect: () => arrange(new Set(members)) }]
+          : []),
+        {
+          label: '复制分区',
+          hint: 'Ctrl+D',
+          icon: <Copy className="w-3.5 h-3.5" />,
+          onSelect: () => duplicate(cardsRef.current.filter((c) => members.includes(c.id)), undefined, [section]),
+        },
+        'separator',
+        {
+          label: members.length ? `删除分区（保留 ${members.length} 张卡片）` : '删除分区',
+          hint: 'Delete',
+          icon: <Trash2 className="w-3.5 h-3.5" />,
+          danger: true,
+          onSelect: () => deleteSections([section.id]),
+        },
+      ];
+    },
+    [sectionMembers, prompt, renameSection, toggleSectionCollapse, arrange, duplicate, deleteSections]
+  );
+
   const addMenuAt = useCallback(
     (clientX: number, clientY: number) => {
       const world = toWorld(clientX, clientY);
+      const selection = selectedCardIdsRef.current;
+      const tidy: MenuEntry[] = cardsRef.current.length
+        ? [
+            'separator',
+            selection.size > 1
+              ? { label: `整理选中的 ${selection.size} 张卡片`, hint: '按连线排列', icon: <Network className="w-4 h-4 text-slate-400" />, onSelect: () => arrange(selection) }
+              : {
+                  label: '整理全部卡片',
+                  hint: '按连线排列',
+                  icon: <Network className="w-4 h-4 text-slate-400" />,
+                  onSelect: () => arrange(new Set(cardsRef.current.map((c) => c.id))),
+                },
+          ]
+        : [];
       setContextMenu({
         at: { x: clientX, y: clientY },
         title: '在这里添加',
         items: ADD_CARD_ITEMS((type, kind) => addCard(type, world, kind)).concat(
-          clipboardRef.current.length
-            ? ['separator', { label: `粘贴 ${clipboardRef.current.length} 张卡片`, hint: 'Ctrl+V', onSelect: () => duplicate(clipboardRef.current, world) }]
+          [{ label: '分区', hint: '圈出一块区域', icon: <SquareDashed className="w-4 h-4 text-slate-400" />, onSelect: () => addSection(world) }],
+          tidy,
+          clipboardSize()
+            ? [
+                'separator',
+                {
+                  label: clipboardRef.current.cards.length ? `粘贴 ${clipboardRef.current.cards.length} 张卡片` : `粘贴 ${clipboardRef.current.sections.length} 个分区`,
+                  hint: 'Ctrl+V',
+                  onSelect: () => duplicate(clipboardRef.current.cards, world, clipboardRef.current.sections),
+                },
+              ]
             : []
         ),
       });
     },
-    [toWorld, addCard, duplicate]
+    [toWorld, addCard, duplicate, addSection, arrange]
   );
 
   // --- Keyboard shortcuts ----------------------------------------------------
@@ -362,6 +685,10 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       const selected = cardsRef.current.filter((c) => selectedCardIds.has(c.id));
+      const selectedSections = sectionsRef.current.filter((s) => selectedSectionIds.has(s.id));
+      // Copying a section copies the cards in it too.
+      const inSelectedSections = new Set(selectedSections.flatMap((s) => sectionMembers.get(s.id) ?? []));
+      const toCopy = cardsRef.current.filter((c) => selectedCardIds.has(c.id) || inSelectedSections.has(c.id));
 
       if (mod && key === 'z') {
         e.preventDefault();
@@ -372,21 +699,25 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         redo();
       } else if (mod && key === 'a') {
         e.preventDefault();
-        setSelectedCardIds(new Set(cardsRef.current.map((c) => c.id)));
+        setSelectedCardIds(new Set(cardsRef.current.filter((c) => !hiddenIds.has(c.id)).map((c) => c.id)));
+      } else if (mod && key === 'g') {
+        e.preventDefault();
+        wrapInSection(selected);
       } else if (mod && key === 'd') {
         e.preventDefault();
-        duplicate(selected);
+        duplicate(toCopy, undefined, selectedSections);
       } else if (mod && key === 'c') {
-        if (selected.length) {
-          clipboardRef.current = selected;
-          toast(`已复制 ${selected.length} 张卡片`);
+        if (toCopy.length || selectedSections.length) {
+          clipboardRef.current = { cards: toCopy, sections: selectedSections };
+          toast(selectedSections.length ? `已复制 ${selectedSections.length} 个分区` : `已复制 ${toCopy.length} 张卡片`);
         }
       } else if (mod && key === 'v') {
         e.preventDefault();
         pasteAtPointer();
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selected.length) {
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && (selected.length || selectedSections.length)) {
         e.preventDefault();
-        deleteCards(selected.map((c) => c.id));
+        if (selectedSections.length) deleteSections(selectedSections.map((s) => s.id));
+        if (selected.length) deleteCards(selected.map((c) => c.id));
       } else if (!mod && key === 'v') {
         setActiveTool('select');
       } else if (!mod && key === 'h') {
@@ -397,7 +728,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedCardIds, undo, redo, duplicate, pasteAtPointer, deleteCards, setSelectedCardIds, setActiveTool, toast, isSettingsOpen, viewer, showShortcuts]);
+  }, [selectedCardIds, selectedSectionIds, sectionMembers, hiddenIds, undo, redo, duplicate, pasteAtPointer, deleteCards, deleteSections, wrapInSection, setSelectedCardIds, setActiveTool, toast, isSettingsOpen, viewer, showShortcuts]);
 
   // --- Drag-to-connect ------------------------------------------------------
 
@@ -414,6 +745,38 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   const showNotice = useCallback((msg: string) => toast(msg, { tone: 'warning' }), [toast]);
 
+  /** Whether a point is on the canvas background: not on a card, a panel or the header. */
+  const isEmptyCanvasAt = (clientX: number, clientY: number): boolean => {
+    const el = document.elementFromPoint(clientX, clientY);
+    return !!el && !!containerRef.current?.contains(el) && !el.closest('[data-card-id]');
+  };
+
+  /** A connection dropped on empty canvas: offer the cards it could feed, created there and wired up. */
+  const offerNewCardAt = (source: SpatialCard, clientX: number, clientY: number) => {
+    const at = toWorld(clientX, clientY);
+    const options = dropOptions(source, at, cardsRef.current);
+    if (options.length === 0) {
+      showNotice('这张卡片的输出不能接到新卡片上');
+      return;
+    }
+    setContextMenu({
+      at: { x: clientX, y: clientY },
+      title: '新建卡片并连接',
+      items: options.map(({ type, role }) => ({
+        label: DROP_CARD_LABEL[type],
+        hint: DROP_ROLE_HINT[role],
+        icon: DROP_CARD_ICON[type],
+        onSelect: () => {
+          // Recomputed now: the canvas may have changed while the menu was open.
+          const option = dropOptions(source, at, cardsRef.current).find((o) => o.type === type);
+          if (!option) return;
+          editCards((prev) => [...prev, option.card]);
+          setSelectedCardIds(new Set([option.card.id]));
+        },
+      })),
+    });
+  };
+
   useEffect(() => {
     if (!linkDrag) return;
     const sourceId = linkDrag.sourceId;
@@ -425,8 +788,11 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     const onUp = (e: MouseEvent) => {
       setLinkDrag(null);
       const targetId = cardIdAt(e.clientX, e.clientY, sourceId);
-      if (!targetId) return;
       const source = cards.find((c) => c.id === sourceId);
+      if (!targetId) {
+        if (source && isEmptyCanvasAt(e.clientX, e.clientY)) offerNewCardAt(source, e.clientX, e.clientY);
+        return;
+      }
       const target = cards.find((c) => c.id === targetId);
       if (!source || !target) return;
       const res = connectCards(source, target);
@@ -453,8 +819,38 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
   // --- Connection lines -----------------------------------------------------
 
+  // --- Viewport culling ------------------------------------------------------
+
+  const [viewSize, setViewSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const measure = () => setViewSize({ width: el.clientWidth, height: el.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const visibleArea = useMemo(() => visibleWorldRect(transform, viewSize), [transform, viewSize]);
+  const linkSourceId = linkDrag?.sourceId;
+  // Off-screen cards are not mounted. Selected (so dragged) cards, a connection's source
+  // and cards waiting on a task stay mounted wherever they are.
+  const renderedCards = useMemo(
+    () =>
+      cardsToRender(
+        hiddenIds.size ? cards.filter((c) => !hiddenIds.has(c.id)) : cards,
+        visibleArea,
+        heightOf,
+        (c) => selectedCardIds.has(c.id) || c.id === linkSourceId || isAwaitingTask(c)
+      ),
+    [cards, hiddenIds, visibleArea, heightOf, selectedCardIds, linkSourceId]
+  );
+  const renderedKey = useMemo(() => renderedCards.map((c) => c.id).join(','), [renderedCards]);
+
   // Where each card's input slots sit (world px below the card's top), read from the
-  // rendered cards: slots follow their fields, which grow with the prompt.
+  // rendered cards: slots follow their fields, which grow with the prompt. Panning and
+  // zooming move nothing inside a card, so this reruns only when cards change or mount.
   const [slotOffsets, setSlotOffsets] = useState<SlotOffsets>({});
   useLayoutEffect(() => {
     const root = containerRef.current;
@@ -466,10 +862,16 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       if (!cardEl || !id) return;
       const s = slot.getBoundingClientRect();
       const top = cardEl.getBoundingClientRect().top;
-      (next[id] ??= {})[slot.dataset.slot as SlotKind] = Math.round((s.top + s.height / 2 - top) / transform.zoom);
+      (next[id] ??= {})[slot.dataset.slot as SlotKind] = Math.round((s.top + s.height / 2 - top) / transformRef.current.zoom);
     });
-    setSlotOffsets((prev) => (sameSlotOffsets(prev, next) ? prev : next));
-  });
+    // Cards scrolled out of view keep their last known slots; deleted ones are dropped.
+    setSlotOffsets((prev) => {
+      const ids = new Set(cardsRef.current.map((c) => c.id));
+      const merged: SlotOffsets = {};
+      for (const [id, offsets] of Object.entries({ ...prev, ...next })) if (ids.has(id)) merged[id] = offsets;
+      return sameSlotOffsets(prev, merged) ? prev : merged;
+    });
+  }, [cards, renderedKey]);
 
   const connectionRays = useMemo(() => {
     const rays: Ray[] = [];
@@ -487,9 +889,11 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         const srcY = src.y + PORT_Y;
         rays.push({
           id: `ref:${src.id}->${card.id}`,
+          cardIds: [src.id, card.id],
           kind: 'reference',
           tone: RAY_TONE[src.type],
           pathData: bezier(srcX, srcY, tgtX, tgtY),
+          ends: [srcX, srcY, tgtX, tgtY],
           midX: (srcX + tgtX) / 2,
           midY: (srcY + tgtY) / 2,
           label: refTag(ref),
@@ -505,9 +909,11 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         const resultY = card.y + PORT_Y;
         rays.push({
           id: `source:${generation.id}->${card.id}`,
+          cardIds: [generation.id, card.id],
           kind: 'source',
           sourceLabel: card.origin?.label,
           pathData: bezier(srcX, srcY, tgtX, resultY),
+          ends: [srcX, srcY, tgtX, resultY],
           midX: (srcX + tgtX) / 2,
           midY: (srcY + resultY) / 2,
         });
@@ -520,9 +926,11 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         const promptY = slotY('prompt');
         rays.push({
           id: `prompt:${textSrc.id}->${card.id}`,
+          cardIds: [textSrc.id, card.id],
           kind: 'prompt',
           tone: 'emerald',
           pathData: bezier(srcX, srcY, tgtX, promptY),
+          ends: [srcX, srcY, tgtX, promptY],
           midX: (srcX + tgtX) / 2,
           midY: (srcY + promptY) / 2,
           label: '提示词',
@@ -532,6 +940,15 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     }
     return rays;
   }, [cards, handleUpdateCard, slotOffsets]);
+
+  const visibleRays = useMemo(
+    () =>
+      connectionRays.filter(
+        ({ ends: [x1, y1, x2, y2], cardIds: [from, to] }) =>
+          !hiddenIds.has(from) && !hiddenIds.has(to) && lineMayCross(visibleArea, x1, y1, x2, y2, bulgeOf(x1, x2))
+      ),
+    [connectionRays, visibleArea, hiddenIds]
+  );
 
   const dragSource = linkDrag ? cards.find((c) => c.id === linkDrag.sourceId) : undefined;
   const dragPath =
@@ -554,6 +971,39 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     [cards]
   );
 
+  const cardsById = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
+
+  // Handlers cards call: one object for the canvas's lifetime that always calls the latest.
+  const actionsRef = useRef<CardActions>(null!);
+  actionsRef.current = {
+    select: (e, card) => {
+      if (!(e.shiftKey || e.ctrlKey || e.metaKey)) setSelectedSectionIds((prev) => (prev.size ? new Set() : prev));
+      handleSelectCard(e, card);
+    },
+    startDrag: handleStartDragCard,
+    startConnect,
+    updateCard: handleUpdateCard,
+    triggerGenerate: onTriggerGenerate,
+    menuItems: cardMenuItems,
+    openViewer: setViewer,
+    notice: showNotice,
+    runAction: onRunAction,
+  };
+  const cardActions = useMemo<CardActions>(
+    () => ({
+      select: (e, card) => actionsRef.current.select(e, card),
+      startDrag: (e, card) => actionsRef.current.startDrag(e, card),
+      startConnect: (card, e) => actionsRef.current.startConnect(card, e),
+      updateCard: (id, patch, opts) => actionsRef.current.updateCard(id, patch, opts),
+      triggerGenerate: (id) => actionsRef.current.triggerGenerate(id),
+      menuItems: (card) => actionsRef.current.menuItems(card),
+      openViewer: (media) => actionsRef.current.openViewer(media),
+      notice: (msg) => actionsRef.current.notice(msg),
+      runAction: (id, action) => actionsRef.current.runAction?.(id, action),
+    }),
+    []
+  );
+
   // --- Canvas mouse --------------------------------------------------------
 
   const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -567,7 +1017,14 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     e.preventDefault();
     const cardId = target.closest('[data-card-id]')?.getAttribute('data-card-id');
     const card = cardId ? cards.find((c) => c.id === cardId) : undefined;
-    if (card) {
+    // Only a section's title bar takes the mouse, so this is a right-click on it.
+    const sectionId = !card ? target.closest('[data-section-id]')?.getAttribute('data-section-id') : undefined;
+    const section = sectionId ? sections.find((s) => s.id === sectionId) : undefined;
+    if (section) {
+      setSelectedSectionIds(new Set([section.id]));
+      setSelectedCardIds(new Set());
+      setContextMenu({ at: { x: e.clientX, y: e.clientY }, title: section.title, items: sectionMenuItems(section) });
+    } else if (card) {
       if (!selectedCardIds.has(card.id)) setSelectedCardIds(new Set([card.id]));
       setContextMenu({ at: { x: e.clientX, y: e.clientY }, items: cardMenuItems(card) });
     } else {
@@ -607,7 +1064,21 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         onFocusSelection={() => focusSelection()}
         onToggleTool={setActiveTool}
         onShowShortcuts={() => setShowShortcuts(true)}
+        minimapVisible={minimapVisible}
+        onToggleMinimap={() => setMinimapVisible(!minimapVisible)}
       />
+
+      {minimapVisible && cards.length > 0 && (
+        <Minimap
+          cards={hiddenIds.size ? cards.filter((c) => !hiddenIds.has(c.id)) : cards}
+          bars={collapsedBars}
+          heightOf={heightOf}
+          transform={transform}
+          viewport={viewSize}
+          right={inspectorOpen ? INSPECTOR_WIDTH + 32 : 16}
+          onPan={setTransform}
+        />
+      )}
 
       <InspectorPanel
         selected={selectedCards}
@@ -615,6 +1086,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
         onUpdateCard={handleUpdateCard}
         onAlign={alignSelected}
         onArrangeGrid={() => arrangeSelectedGrid(40, 2)}
+        onWrapInSection={() => wrapInSection(selectedCards)}
+        onAutoArrange={() => arrange(selectedCardIds)}
         onClose={() => setSelectedCardIds(new Set())}
         linkedPromptFor={linkedPromptFor}
       />
@@ -655,7 +1128,10 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       {/* Main Canvas Viewport Container */}
       <div
         ref={containerRef}
-        onMouseDown={handleMouseDownCanvas}
+        onMouseDown={(e) => {
+          if (e.target === e.currentTarget && !(e.shiftKey || e.ctrlKey || e.metaKey)) setSelectedSectionIds((prev) => (prev.size ? new Set() : prev));
+          handleMouseDownCanvas(e);
+        }}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
@@ -678,10 +1154,21 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           }}
           className="absolute top-0 left-0 w-full h-full pointer-events-none"
         >
+          <SectionLayer
+            sections={sections}
+            selectedIds={selectedSectionIds}
+            memberCounts={memberCounts}
+            onStartMove={(e, s) => startSectionGesture('move', e, s)}
+            onStartResize={(e, s) => startSectionGesture('resize', e, s)}
+            onToggleCollapse={toggleSectionCollapse}
+            menuItems={sectionMenuItems}
+            onRename={renameSection}
+          />
+
           {/* SVG Connection Rays Layer */}
           <svg className="absolute top-0 left-0 w-[50000px] h-[50000px] pointer-events-none overflow-visible -translate-x-[25000px] -translate-y-[25000px]">
             <g transform="translate(25000, 25000)">
-              {connectionRays.map((ray) => {
+              {visibleRays.map((ray) => {
                 if (ray.kind === 'source') {
                   return (
                     <g key={ray.id}>
@@ -724,6 +1211,20 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                 );
               })}
 
+              {/* Alignment lines while a dragged card is snapped */}
+              {snapGuides.map((g, i) => (
+                <line
+                  key={i}
+                  x1={g.axis === 'x' ? g.at : g.from}
+                  y1={g.axis === 'x' ? g.from : g.at}
+                  x2={g.axis === 'x' ? g.at : g.to}
+                  y2={g.axis === 'x' ? g.to : g.at}
+                  style={{ stroke: 'rgb(var(--c-pink-400))' }}
+                  strokeWidth={1 / transform.zoom}
+                  strokeDasharray={`${4 / transform.zoom} ${3 / transform.zoom}`}
+                />
+              ))}
+
               {/* Line following the cursor while connecting */}
               {dragPath && (
                 <path d={dragPath} fill="none" style={{ stroke: RAY_COLORS[RAY_TONE[dragSource?.type ?? 'image']].stroke }} strokeWidth="2" strokeDasharray="6 4" />
@@ -733,60 +1234,25 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
           {/* Cards Render Layer */}
           <div className="pointer-events-auto">
-            {cards.map((card) => {
-              const common: CardViewProps = {
-                card,
-                isSelected: selectedCardIds.has(card.id),
-                connectHint: connectHintFor(card),
-                onSelect: (e) => handleSelectCard(e, card),
-                onStartDrag: (e) => handleStartDragCard(e, card),
-                onUpdateCard: handleUpdateCard,
-                onTriggerGenerate,
-                menuItems: cardMenuItems(card),
-                onOpenViewer: setViewer,
-              };
-              if (card.type === 'text') {
-                return (
-                  <TextCardView
-                    key={card.id}
-                    {...common}
-                    linkedCount={cards.filter((c) => c.promptSourceId === card.id).length}
-                    onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
-                    runsInProgress={card.role === 'generation' ? textRuns?.get(card.id) ?? 0 : 0}
-                    linkedPrompt={linkedPromptFor(card)}
-                    onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
-                  />
-                );
-              }
-              if (card.type === 'upload') {
-                return <UploadCardView key={card.id} {...common} onStartConnect={(e) => startConnect(card, e)} />;
-              }
-              if (card.type === 'image') {
-                return (
-                  <ImageCardView
-                    key={card.id}
-                    {...common}
-                    linkedPrompt={linkedPromptFor(card)}
-                    onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
-                    onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
-                    isSubmitting={!!submittingIds?.has(card.id)}
-                    runsInProgress={card.role === 'generation' ? runsInProgress(cards, card.id) : 0}
-                    onRunAction={onRunAction && card.role === 'result' ? (action) => onRunAction(card.id, action) : undefined}
-                    busyActionIds={card.resultActions?.length ? busyActionsOf(card) : undefined}
-                  />
-                );
-              }
+            {renderedCards.map((card) => {
+              const linkedSource = card.promptSourceId ? cardsById.get(card.promptSourceId) : undefined;
+              const runs =
+                card.role !== 'generation' ? 0 : card.type === 'text' ? textRuns?.get(card.id) ?? 0 : runsInProgress(cards, card.id);
               return (
-                <VideoCardView
+                <CanvasCard
                   key={card.id}
-                  {...common}
-                  availableImageCards={availableImageCards}
-                  linkedPrompt={linkedPromptFor(card)}
-                  onUnlinkPrompt={() => handleUpdateCard(card.id, { promptSourceId: undefined })}
-                  onNotice={showNotice}
+                  card={card}
+                  actions={cardActions}
+                  isSelected={selectedCardIds.has(card.id)}
+                  connectHint={connectHintFor(card)}
+                  menuKey={describer && onDescribe ? 'describe' : ''}
+                  linkedCount={card.type === 'text' ? cards.filter((c) => c.promptSourceId === card.id).length : 0}
+                  linkedPromptTitle={linkedSource?.title}
+                  linkedPromptText={linkedSource?.textOutput}
+                  runsInProgress={runs}
                   isSubmitting={!!submittingIds?.has(card.id)}
-                  runsInProgress={card.role === 'generation' ? runsInProgress(cards, card.id) : 0}
-                  onStartConnect={hasOutputPort(card) ? (e) => startConnect(card, e) : undefined}
+                  busyActionKey={card.resultActions?.length ? [...busyActionsOf(card)].sort().join(',') : ''}
+                  availableImageCards={card.type === 'video' ? availableImageCards : NO_CARDS}
                 />
               );
             })}

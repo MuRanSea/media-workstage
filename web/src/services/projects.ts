@@ -15,6 +15,8 @@ export interface ProjectDocument {
   revision: number;
   viewport: ProjectViewport;
   cards: SpatialCard[];
+  /** Absent in projects saved before sections existed. */
+  sections?: unknown[];
 }
 
 export interface ProjectSummary {
@@ -74,6 +76,7 @@ export interface SaveProjectBody {
   revision: number;
   viewport: ProjectViewport;
   cards: unknown[];
+  sections: unknown[];
 }
 
 /** Saves the canvas; `keepalive` lets a save started during page unload finish. */
@@ -83,6 +86,11 @@ export function apiSaveProject(
   opts: { keepalive?: boolean } = {}
 ): Promise<{ revision: number; updatedAt: string }> {
   return request(projectPath(id), { method: 'PUT', body: JSON.stringify(body), keepalive: opts.keepalive });
+}
+
+/** Saves where the canvas is looking; needs no revision and does not change it. */
+export function apiSaveViewport(id: string, viewport: ProjectViewport, opts: { keepalive?: boolean } = {}): Promise<void> {
+  return request(`${projectPath(id)}/viewport`, { method: 'PUT', body: JSON.stringify(viewport), keepalive: opts.keepalive });
 }
 
 export function apiRenameProject(id: string, name: string): Promise<{ id: string; name: string }> {
@@ -95,4 +103,30 @@ export function apiDeleteProject(id: string): Promise<void> {
 
 export function apiRevealProject(id: string): Promise<void> {
   return request(`${projectPath(id)}/reveal`, { method: 'POST' });
+}
+
+/** Where the browser downloads a project as a zip (project.json and assets/). */
+export const projectExportUrl = (id: string) => `${projectPath(id)}/export`;
+
+/** Writes the project zip next to the projects and shows it in the file manager (desktop mode). */
+export function apiExportProjectToFolder(id: string): Promise<{ path: string }> {
+  return request(`${projectPath(id)}/export`, { method: 'POST' });
+}
+
+/** Copies a project into a new one named "<name> 副本". */
+export function apiDuplicateProject(id: string): Promise<ProjectDocument> {
+  return request(`${projectPath(id)}/duplicate`, { method: 'POST' });
+}
+
+/** Makes a new project from an exported zip. */
+export async function apiImportProject(file: File): Promise<ProjectDocument> {
+  const body = new FormData();
+  body.append('file', file);
+  // No JSON content type here: the browser sets the multipart boundary.
+  const resp = await fetch('/api/projects/import', { method: 'POST', body });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || `导入失败 (${resp.status})`);
+  }
+  return resp.json() as Promise<ProjectDocument>;
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Focus, Hand, HelpCircle, Maximize2, MousePointer2, Redo2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Focus, Hand, HelpCircle, Map as MapIcon, Maximize2, MousePointer2, Redo2, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
 import type { CanvasTool } from '../types/canvas.ts';
 import { IconButton } from './ui/index.ts';
 
@@ -19,6 +19,8 @@ interface NavigationDockProps {
   onFocusSelection: () => void;
   onToggleTool: (tool: CanvasTool) => void;
   onShowShortcuts: () => void;
+  minimapVisible: boolean;
+  onToggleMinimap: () => void;
 }
 
 const Divider = () => <div className="h-5 w-px bg-slate-800 mx-0.5" />;
@@ -38,6 +40,8 @@ export const NavigationDock: React.FC<NavigationDockProps> = ({
   onFocusSelection,
   onToggleTool,
   onShowShortcuts,
+  minimapVisible,
+  onToggleMinimap,
 }) => (
   <div
     style={{ right }}
@@ -76,6 +80,9 @@ export const NavigationDock: React.FC<NavigationDockProps> = ({
     </IconButton>
     <IconButton title="聚焦选中的卡片（F）" onClick={onFocusSelection}>
       <Focus className="w-4 h-4" />
+    </IconButton>
+    <IconButton title={minimapVisible ? '隐藏小地图' : '显示小地图'} active={minimapVisible} onClick={onToggleMinimap}>
+      <MapIcon className="w-4 h-4" />
     </IconButton>
     <Divider />
     <IconButton title="快捷键" onClick={onShowShortcuts}>

@@ -1,9 +1,22 @@
 import { useCallback } from 'react';
-import { apiCreateProject, apiDeleteProject, apiRenameProject } from '../services/projects.ts';
+import {
+  apiCreateProject,
+  apiDeleteProject,
+  apiDuplicateProject,
+  apiExportProjectToFolder,
+  apiImportProject,
+  apiRenameProject,
+  projectExportUrl,
+} from '../services/projects.ts';
+import { apiGetDesktop } from '../services/desktop.ts';
 import { navigate, projectHref } from '../services/router.ts';
 import { useDialogs, useToast } from './ui/index.ts';
 
-/** Create / rename / delete projects through in-app dialogs, reporting failures as toasts. */
+/** Whether this is the desktop app, whose window has no download manager (asked once). */
+let desktopMode: Promise<boolean> | null = null;
+const isDesktop = () => (desktopMode ??= apiGetDesktop().then((d) => d.enabled).catch(() => false));
+
+/** Create / rename / delete / copy / move projects in and out, reporting failures as toasts. */
 export function useProjectActions() {
   const { prompt, confirm } = useDialogs();
   const toast = useToast();
@@ -57,5 +70,69 @@ export function useProjectActions() {
     [confirm, toast]
   );
 
-  return { create, rename, remove };
+  /**
+   * Exports a project as a zip: a download in the browser; in the desktop app, a
+   * file written next to the projects and shown in the file manager.
+   */
+  const exportProject = useCallback(
+    async (project: { id: string; name: string }) => {
+      try {
+        if (await isDesktop()) {
+          const { path } = await apiExportProjectToFolder(project.id);
+          toast(`已导出到 ${path}`, { tone: 'success', durationMs: 8000 });
+          return;
+        }
+        const a = document.createElement('a');
+        a.href = projectExportUrl(project.id);
+        a.download = `${project.name}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (err) {
+        toast(`导出失败：${(err as Error).message}`, { tone: 'error' });
+      }
+    },
+    [toast]
+  );
+
+  /** Resolves to the copy's id, or null when it failed. */
+  const duplicate = useCallback(
+    async (project: { id: string; name: string }): Promise<string | null> => {
+      try {
+        const doc = await apiDuplicateProject(project.id);
+        toast(`已复制为「${doc.name}」`, { tone: 'success', action: { label: '打开', onClick: () => navigate(projectHref(doc.id)) } });
+        return doc.id;
+      } catch (err) {
+        toast(`复制工程失败：${(err as Error).message}`, { tone: 'error' });
+        return null;
+      }
+    },
+    [toast]
+  );
+
+  /** Picks a zip and makes a new project from it; resolves to its id, or null. */
+  const importProject = useCallback(
+    () =>
+      new Promise<string | null>((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.zip,application/zip';
+        input.onchange = async () => {
+          const file = input.files?.[0];
+          if (!file) return resolve(null);
+          try {
+            const doc = await apiImportProject(file);
+            toast(`已导入「${doc.name}」`, { tone: 'success', action: { label: '打开', onClick: () => navigate(projectHref(doc.id)) } });
+            resolve(doc.id);
+          } catch (err) {
+            toast(`导入失败：${(err as Error).message}`, { tone: 'error' });
+            resolve(null);
+          }
+        };
+        input.click();
+      }),
+    [toast]
+  );
+
+  return { create, rename, remove, exportProject, duplicate, importProject };
 }

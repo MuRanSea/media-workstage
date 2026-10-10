@@ -10,6 +10,8 @@ import {
   Film,
   Image as ImageIcon,
   LayoutGrid,
+  Network,
+  SquareDashed,
   Upload,
   X,
 } from 'lucide-react';
@@ -48,6 +50,10 @@ interface InspectorPanelProps {
   onUpdateCard: (cardId: string, patch: Partial<SpatialCard>) => void;
   onAlign: (alignment: AlignmentType) => void;
   onArrangeGrid: () => void;
+  /** Draws a section around the selected cards. */
+  onWrapInSection: () => void;
+  /** Tidies the selected cards by their links. */
+  onAutoArrange: () => void;
   onClose: () => void;
   linkedPromptFor: (card: SpatialCard) => { title: string; text: string } | undefined;
 }
@@ -59,6 +65,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onUpdateCard,
   onAlign,
   onArrangeGrid,
+  onWrapInSection,
+  onAutoArrange,
   onClose,
   linkedPromptFor,
 }) => {
@@ -122,8 +130,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </IconButton>
               ))}
             </div>
+            <Button block icon={<Network className="w-3.5 h-3.5" />} onClick={onAutoArrange}>
+              按连线自动整理
+            </Button>
             <Button block icon={<LayoutGrid className="w-3.5 h-3.5" />} onClick={onArrangeGrid}>
               按网格排列
+            </Button>
+            <Button block icon={<SquareDashed className="w-3.5 h-3.5" />} onClick={onWrapInSection}>
+              用分区框住（Ctrl+G）
             </Button>
           </Section>
         )}

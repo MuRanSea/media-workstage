@@ -23,6 +23,10 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
 - **CanvasWorkspace (画布工作区)**:
   The top-level interactive infinite spatial canvas containing cards, connections, viewport transform matrix (`zoom`, `panX`, `panY`), and active user selections.
 
+- **Section (分区)**:
+  A labelled rectangular region on the canvas that groups cards visually. It is not a card: it has no ports, takes no connections and is not a `MediaCardNode`. A card belongs to a Section when it lies inside the region (decided by geometry, no member list is stored); moving a Section moves the cards inside it, and a Section can be collapsed to its title bar. Its title is the only annotation mechanism — there are no sticky-note cards. See ADR 0009.
+  _Avoid_: 画框, frame (collides with Seedance first/last frames and `Output Frame Snapshots`), 编组 (a Section is a visible region, not a transient selection)
+
 - **SpatialCanvasEngine (空间画布引擎)**:
   The lightweight, zero-dependency canvas transform engine implementing cursor-anchored scaling ($w = (s - \text{pan}_1) / z_1$, $\text{pan}_2 = s - w \cdot z_2$) and fluid multi-ray bezier curve rendering between cards.
 

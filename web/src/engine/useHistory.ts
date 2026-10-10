@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import type { SpatialCard } from '../types/canvas.ts';
+import type { CanvasSection, SpatialCard } from '../types/canvas.ts';
 import { isTaskResult } from './resultCards.ts';
 
 const LIMIT = 50;
@@ -35,40 +35,47 @@ export function mergeTaskState(
   return merged.concat(added.map((c) => (c.sourceId && !ids.has(c.sourceId) ? { ...c, sourceId: undefined } : c)));
 }
 
+/** What undo restores: the cards and the sections. */
+export interface CanvasSnapshot {
+  cards: SpatialCard[];
+  sections: CanvasSection[];
+}
+
 /**
- * Undo/redo over card snapshots. Call `record(before)` with the cards as they
- * were just before a user edit; `undo`/`redo` return the cards to show.
+ * Undo/redo over canvas snapshots. Call `record(before)` with the canvas as it
+ * was just before a user edit; `undo`/`redo` return the canvas to show.
+ * Sections are restored as they were; cards keep task state (`mergeTaskState`).
  */
 export function useHistory() {
-  const past = useRef<SpatialCard[][]>([]);
+  const past = useRef<CanvasSnapshot[]>([]);
   // Each redo step also keeps the snapshot its undo restored, to tell which cards the edit deleted.
-  const future = useRef<{ cards: SpatialCard[]; restoredByUndo: SpatialCard[] }[]>([]);
+  const future = useRef<{ snapshot: CanvasSnapshot; restoredByUndo: SpatialCard[] }[]>([]);
   // Bumped so canUndo/canRedo re-render.
   const [, setVersion] = useState(0);
 
-  const record = useCallback((before: SpatialCard[]) => {
+  const record = useCallback((before: CanvasSnapshot) => {
     past.current.push(before);
     if (past.current.length > LIMIT) past.current.shift();
     future.current = [];
     setVersion((v) => v + 1);
   }, []);
 
-  const undo = useCallback((current: SpatialCard[]): SpatialCard[] | null => {
+  const undo = useCallback((current: CanvasSnapshot): CanvasSnapshot | null => {
     const prev = past.current.pop();
     if (!prev) return null;
-    future.current.push({ cards: current, restoredByUndo: prev });
+    future.current.push({ snapshot: current, restoredByUndo: prev.cards });
     setVersion((v) => v + 1);
-    return mergeTaskState(prev, current);
+    return { cards: mergeTaskState(prev.cards, current.cards), sections: prev.sections };
   }, []);
 
-  const redo = useCallback((current: SpatialCard[]): SpatialCard[] | null => {
+  const redo = useCallback((current: CanvasSnapshot): CanvasSnapshot | null => {
     const next = future.current.pop();
     if (!next) return null;
     past.current.push(current);
     setVersion((v) => v + 1);
-    const kept = new Set(next.cards.map((c) => c.id));
+    const kept = new Set(next.snapshot.cards.map((c) => c.id));
     const dropped = new Set(next.restoredByUndo.filter((c) => !kept.has(c.id)).map((c) => c.id));
-    return mergeTaskState(next.cards, current, dropped);
+    return { cards: mergeTaskState(next.snapshot.cards, current.cards, dropped), sections: next.snapshot.sections };
   }, []);
 
   return {

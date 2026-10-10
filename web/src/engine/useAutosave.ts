@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { SpatialCard } from '../types/canvas.ts';
-import { apiSaveProject, ProjectConflictError, type ProjectViewport } from '../services/projects.ts';
+import type { CanvasSection, SpatialCard } from '../types/canvas.ts';
+import { apiSaveProject, apiSaveViewport, ProjectConflictError, type ProjectViewport } from '../services/projects.ts';
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict';
 
@@ -13,6 +13,7 @@ interface UseAutosaveArgs {
   /** Revision of the loaded document; null until the project has loaded. */
   initialRevision: number | null;
   cards: SpatialCard[];
+  sections: CanvasSection[];
 }
 
 /**
@@ -20,18 +21,31 @@ interface UseAutosaveArgs {
  * keepalive save when the page closes. Saves are serialized: a change made
  * while a save is in flight is written right after it. A 409 (another tab
  * saved first) stops autosave so neither side silently overwrites the other.
+ * Panning and zooming alone save only the viewport, which carries no revision,
+ * so they never cause a conflict.
  */
-export function useAutosave({ projectId, initialRevision, cards }: UseAutosaveArgs) {
+export function useAutosave({ projectId, initialRevision, cards, sections }: UseAutosaveArgs) {
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [lastError, setLastError] = useState<string | null>(null);
 
   const revisionRef = useRef<number | null>(initialRevision);
   const cardsRef = useRef(cards);
+  const sectionsRef = useRef(sections);
   const viewportRef = useRef<ProjectViewport | null>(null);
   const dirtyRef = useRef(false);
   const inFlightRef = useRef(false);
   const conflictRef = useRef(false);
   const timerRef = useRef<number | undefined>(undefined);
+  const viewportDirtyRef = useRef(false);
+  const viewportTimerRef = useRef<number | undefined>(undefined);
+
+  const flushViewport = useCallback(() => {
+    window.clearTimeout(viewportTimerRef.current);
+    if (!viewportDirtyRef.current || !viewportRef.current || revisionRef.current === null) return;
+    viewportDirtyRef.current = false;
+    // Losing a viewport save is harmless: the next one, or the next card save, carries it.
+    void apiSaveViewport(projectId, viewportRef.current).catch(() => {});
+  }, [projectId]);
 
   const flush = useCallback(async () => {
     window.clearTimeout(timerRef.current);
@@ -42,10 +56,13 @@ export function useAutosave({ projectId, initialRevision, cards }: UseAutosaveAr
       // Loop so edits made during a save are written without waiting for another debounce.
       while (dirtyRef.current) {
         dirtyRef.current = false;
+        // A card save carries the viewport too.
+        viewportDirtyRef.current = false;
         const resp = await apiSaveProject(projectId, {
           revision: revisionRef.current!,
           viewport: viewportRef.current ?? { zoom: 0.85, panX: 60, panY: 40 },
           cards: cardsRef.current,
+          sections: sectionsRef.current,
         });
         revisionRef.current = resp.revision;
       }
@@ -80,27 +97,30 @@ export function useAutosave({ projectId, initialRevision, cards }: UseAutosaveAr
     }
   }, [initialRevision]);
 
-  // Every card change after load is a save candidate; the first run is the load itself.
+  // Every card or section change after load is a save candidate; the first run is the load itself.
   const seenCardsRef = useRef(false);
   useEffect(() => {
     cardsRef.current = cards;
+    sectionsRef.current = sections;
     if (revisionRef.current === null) return;
     if (!seenCardsRef.current) {
       seenCardsRef.current = true;
       return;
     }
     markDirty();
-  }, [cards, markDirty]);
+  }, [cards, sections, markDirty]);
 
   const onViewportChange = useCallback(
     (viewport: ProjectViewport) => {
       const prev = viewportRef.current;
       viewportRef.current = viewport;
       if (prev && (prev.zoom !== viewport.zoom || prev.panX !== viewport.panX || prev.panY !== viewport.panY)) {
-        markDirty();
+        viewportDirtyRef.current = true;
+        window.clearTimeout(viewportTimerRef.current);
+        viewportTimerRef.current = window.setTimeout(flushViewport, AUTOSAVE_DELAY_MS);
       }
     },
-    [markDirty]
+    [flushViewport]
   );
 
   // Ctrl/Cmd+S saves immediately, even while typing in a card.
@@ -123,12 +143,19 @@ export function useAutosave({ projectId, initialRevision, cards }: UseAutosaveAr
   // outlive the page, fails outright for a project over the browser's 64 KiB limit.
   useEffect(() => {
     const saveOnExit = (unloading: boolean) => {
+      window.clearTimeout(viewportTimerRef.current);
+      if (viewportDirtyRef.current && !dirtyRef.current && viewportRef.current && revisionRef.current !== null) {
+        viewportDirtyRef.current = false;
+        void apiSaveViewport(projectId, viewportRef.current, { keepalive: unloading }).catch(() => {});
+        return;
+      }
       if (!dirtyRef.current || inFlightRef.current || conflictRef.current || revisionRef.current === null) return;
       dirtyRef.current = false;
       const body = {
         revision: revisionRef.current,
         viewport: viewportRef.current ?? { zoom: 0.85, panX: 60, panY: 40 },
         cards: cardsRef.current,
+        sections: sectionsRef.current,
       };
       const keepalive = unloading && new TextEncoder().encode(JSON.stringify(body)).length <= KEEPALIVE_MAX_BYTES;
       void apiSaveProject(projectId, body, { keepalive }).catch(() => {});

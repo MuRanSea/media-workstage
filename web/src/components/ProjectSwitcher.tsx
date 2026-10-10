@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, FolderOpen, LayoutGrid, Loader2, Plus } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Copy, Download, FolderOpen, LayoutGrid, Loader2, Plus } from 'lucide-react';
 import type { SaveState } from '../engine/useAutosave.ts';
 import { apiListProjects, apiRevealProject, type ProjectSummary } from '../services/projects.ts';
 import { navigate, projectHref } from '../services/router.ts';
 import { MenuButton, useToast, type MenuEntry } from './ui/index.ts';
+import { useProjectActions } from './useProjectActions.ts';
 
 interface ProjectSwitcherProps {
   projectId: string;
@@ -52,6 +53,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
   const [draft, setDraft] = useState(name);
   const [recent, setRecent] = useState<ProjectSummary[]>([]);
   const toast = useToast();
+  const { duplicate, exportProject } = useProjectActions();
 
   useEffect(() => {
     apiListProjects()
@@ -69,6 +71,8 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({
   const items: MenuEntry[] = [
     { label: '全部工程', icon: <LayoutGrid className="w-3.5 h-3.5" />, onSelect: () => navigate('/') },
     { label: '新建工程', icon: <Plus className="w-3.5 h-3.5" />, onSelect: onCreateProject },
+    { label: '复制工程', icon: <Copy className="w-3.5 h-3.5" />, onSelect: () => void duplicate({ id: projectId, name }) },
+    { label: '导出为 zip', icon: <Download className="w-3.5 h-3.5" />, onSelect: () => void exportProject({ id: projectId, name }) },
     {
       label: '在资源管理器中打开',
       icon: <FolderOpen className="w-3.5 h-3.5" />,

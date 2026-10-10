@@ -56,6 +56,8 @@ type Document struct {
 	Revision  int64           `json:"revision"`
 	Viewport  Viewport        `json:"viewport"`
 	Cards     json.RawMessage `json:"cards"`
+	// Sections are labelled regions of the canvas (ADR 0009), opaque like cards.
+	Sections json.RawMessage `json:"sections,omitempty"`
 }
 
 // Summary is a project list entry.
@@ -169,10 +171,14 @@ func (s *Store) Get(id string) (*Document, error) {
 }
 
 // Save replaces the canvas state. baseRevision must match the stored revision,
-// otherwise ErrConflict is returned and nothing is written.
-func (s *Store) Save(id string, baseRevision int64, viewport Viewport, cards json.RawMessage) (*Document, error) {
+// otherwise ErrConflict is returned and nothing is written. Nil sections (a
+// client that does not know them) keep the stored ones.
+func (s *Store) Save(id string, baseRevision int64, viewport Viewport, cards, sections json.RawMessage) (*Document, error) {
 	if !isJSONArray(cards) {
 		return nil, errors.New("cards must be a JSON array")
+	}
+	if sections != nil && !isJSONArray(sections) {
+		return nil, errors.New("sections must be a JSON array")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -189,12 +195,34 @@ func (s *Store) Save(id string, baseRevision int64, viewport Viewport, cards jso
 	}
 	doc.Viewport = viewport
 	doc.Cards = cards
+	if sections != nil {
+		doc.Sections = sections
+	}
 	doc.Revision++
 	doc.UpdatedAt = time.Now().UTC()
 	if err := writeDocument(dir, doc); err != nil {
 		return nil, err
 	}
 	return doc, nil
+}
+
+// SaveViewport stores where the canvas was looking. The viewport is not part
+// of the content another tab could overwrite, so it needs no base revision and
+// leaves the revision and update time alone: panning in one tab never makes
+// another tab's next save conflict.
+func (s *Store) SaveViewport(id string, viewport Viewport) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir, err := s.dirLocked(id)
+	if err != nil {
+		return err
+	}
+	doc, err := readDocument(dir)
+	if err != nil {
+		return err
+	}
+	doc.Viewport = viewport
+	return writeDocument(dir, doc)
 }
 
 // Rename changes the display name. The folder keeps its name so paths of

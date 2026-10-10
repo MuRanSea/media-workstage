@@ -40,7 +40,7 @@ const task = (patch: Partial<BackendTaskResponse>): BackendTaskResponse => ({
 describe('project document normalization', () => {
   it('falls back to the default viewport and clamps zoom', () => {
     expect(normalizeViewport(undefined)).toEqual(DEFAULT_VIEWPORT);
-    expect(normalizeViewport({ zoom: 100, panX: 5, panY: 'x' })).toEqual({ zoom: 8, panX: 5, panY: DEFAULT_VIEWPORT.panY });
+    expect(normalizeViewport({ zoom: 100, panX: 5, panY: 'x' })).toEqual({ zoom: 2.5, panX: 5, panY: DEFAULT_VIEWPORT.panY });
   });
 
   it('drops non-cards and resets submits that never got a task id', () => {
