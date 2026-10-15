@@ -4,6 +4,7 @@ import {
   Building,
   Clapperboard,
   Network,
+  Orbit,
   Palette,
   Sparkles,
   WandSparkles,
@@ -29,6 +30,8 @@ export interface ProtocolMeta {
   adapterReady: boolean;
   // Runs text cards only, so its models bind as text.
   textOnly?: boolean;
+  // Runs 3D cards, so 3D is offered when binding models by hand.
+  runs3d?: boolean;
 }
 
 export const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
@@ -128,6 +131,19 @@ export const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
     hint: '一个令牌可调用多家模型，模型 ID 以 APIMart 文档为准；Base URL 需包含 /v1。',
     adapterReady: true,
   },
+  heighliner: {
+    label: 'Heighliner',
+    title: 'Heighliner 平台协议',
+    subtitle: '图片 • 视频 • 3D /media/v1 • 文本 /v1/chat/completions',
+    icon: Orbit,
+    accent: { text: 'text-cyan-400', key: 'text-cyan-300', focus: 'focus:border-cyan-500' },
+    baseUrlPlaceholder: 'https://platform.sgt.site',
+    keyLabel: '虚拟密钥',
+    keyPlaceholder: '请输入网关的虚拟密钥',
+    hint: 'Base URL 填网关根地址（不含 /v1 或 /media/v1）。获取模型列表时会同时保存每个媒体模型的能力描述，网关调整模型后重新获取即可。',
+    adapterReady: true,
+    runs3d: true,
+  },
 };
 
 /**
@@ -139,6 +155,7 @@ export const CREATABLE_PROTOCOLS: Protocol[] = [
   'anthropic',
   'gemini',
   'apimart',
+  'heighliner',
   'ark',
   'minimax',
   'midjourney',

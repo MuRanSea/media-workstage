@@ -1,0 +1,214 @@
+import type { ReferenceItem, SpatialCard, VideoTaskMode } from '../types/canvas.ts';
+import type { CapabilityDescriptor, CreateTaskPayload, ProviderId } from '../services/api.ts';
+import type { ImageCompilationInput } from './compiler.ts';
+import {
+  ASSET_SLOT,
+  capVideoModes,
+  effectiveOptions,
+  effectiveParams,
+  referenceSlot,
+  requireCapability,
+  type RefMedia,
+} from './capability.ts';
+import { refNoun } from './refTags.ts';
+import { VIEW_LABELS, viewOf } from './model3d.ts';
+import { resolveReferenceAsset, sentVideoSettings } from './videoCompiler.ts';
+
+/**
+ * Heighliner payloads (ADR 0010): `params.parameters` holds the common parameters the model
+ * declares, `params.provider_options` the vendor options by namespace, and each reference
+ * names the gateway role and its media type. The adapter only assembles and sends them.
+ */
+
+type CompiledRef = NonNullable<CreateTaskPayload['reference_assets']>[number];
+
+const MODE_LABELS: Record<VideoTaskMode, string> = {
+  all_modal: '多图参考',
+  first_last_frame: '首尾帧',
+  text_to_video: '纯文字',
+};
+
+const SLOT_LABELS: Record<string, string> = {
+  'reference|image': '参考图',
+  'reference|video': '参考视频',
+  'voice|audio': '参考音频',
+  'first_frame|image': '首帧',
+  'last_frame|image': '尾帧',
+  // 3D views: "不支持「左」视角的参考图".
+  ...Object.fromEntries(
+    Object.entries(VIEW_LABELS)
+      .filter(([role]) => role !== 'reference')
+      .map(([role, label]) => [`${role}|image`, `「${label}」视角的参考图`])
+  ),
+};
+
+/** A connected card sent as `role`; whether it may go as an asset ID is the role's call. */
+function connectedRef(
+  cap: CapabilityDescriptor,
+  model: string,
+  ref: ReferenceItem,
+  role: string,
+  type: RefMedia,
+  tagIndex: number,
+  allCards: SpatialCard[]
+): CompiledRef {
+  const slot = referenceSlot(cap, role, type);
+  if (!slot) throw new Error(`${model} 不支持${SLOT_LABELS[`${role}|${type}`] ?? `${role} 角色的${type}`}`);
+  const resolved = resolveReferenceAsset(ref, allCards, 'heighliner', !!slot.supports_asset);
+  return withoutEmpty({
+    card_id: ref.cardId,
+    tag_index: tagIndex,
+    role,
+    type,
+    label: ref.label,
+    url: resolved.url,
+    local_path: resolved.localPath,
+    remote_url: resolved.remoteUrl,
+  });
+}
+
+function withoutEmpty(ref: CompiledRef): CompiledRef {
+  return Object.fromEntries(Object.entries(ref).filter(([, v]) => v !== undefined)) as CompiledRef;
+}
+
+/** Each role and type takes at most its `max_count`. */
+function checkCounts(cap: CapabilityDescriptor, model: string, refs: CompiledRef[]): void {
+  const counts = new Map<string, number>();
+  for (const r of refs) counts.set(`${r.role}|${r.type}`, (counts.get(`${r.role}|${r.type}`) ?? 0) + 1);
+  for (const [key, n] of counts) {
+    const [role, type] = key.split('|');
+    const max = referenceSlot(cap, role, type as RefMedia)?.max_count ?? 1;
+    if (n > max) throw new Error(`${model} 最多 ${max} 个${SLOT_LABELS[key] ?? key}，当前 ${n} 个`);
+  }
+}
+
+/**
+ * Renumbers @图N / @视频N mentions to the order references are sent in (图1, 图2 … and
+ * 视频1 …, counted separately), in one pass so a renumbered mention is never matched again.
+ */
+function renumberPrompt(prompt: string, refs: ReferenceItem[]): string {
+  const counters = { 图: 0, 视频: 0 };
+  const sentIndex = { 图: new Map<number, number>(), 视频: new Map<number, number>() };
+  for (const ref of refs) {
+    const noun = refNoun(ref.role);
+    const index = ++counters[noun];
+    if (!sentIndex[noun].has(ref.tagIndex)) sentIndex[noun].set(ref.tagIndex, index);
+  }
+  return prompt
+    .replace(/@?(图|视频)(\d+)\b/g, (mention, noun: '图' | '视频', n: string) => {
+      const index = sentIndex[noun].get(Number(n));
+      return index === undefined ? mention : `${noun}${index}`;
+    })
+    .replace(/@(图|视频)(\d+)/g, '$1$2')
+    .trim();
+}
+
+/** The prompt as the model's `prompt` parameter allows it: required ones may not be empty, none may run long. */
+function checkPrompt(cap: CapabilityDescriptor, prompt: string): string {
+  const param = cap.parameters?.prompt;
+  if (param?.required && !prompt) throw new Error('请先填写提示词');
+  if (param?.maxLength !== undefined && prompt.length > param.maxLength) {
+    throw new Error(`提示词最长 ${param.maxLength} 个字，当前 ${prompt.length} 个`);
+  }
+  return prompt;
+}
+
+function compiledParams(cap: CapabilityDescriptor, parameters: Record<string, unknown>, card: Pick<SpatialCard, 'capOptions'>) {
+  const options = effectiveOptions(cap, card.capOptions);
+  return Object.keys(options).length ? { parameters, provider_options: options } : { parameters };
+}
+
+export function compileHeighlinerImagePayload(provider: ProviderId, input: ImageCompilationInput): CreateTaskPayload {
+  const cap = requireCapability({ provider, model: input.model });
+  const refs = input.references ?? [];
+  const references = refs.map((ref, i) =>
+    connectedRef(cap, input.model, ref, 'reference', 'image', i + 1, input.allCards ?? [])
+  );
+  checkCounts(cap, input.model, references);
+  const payload: CreateTaskPayload = {
+    provider,
+    model: input.model,
+    task_type: 'image_generation',
+    task_mode: 'single',
+    prompt: checkPrompt(cap, renumberPrompt(input.prompt, refs)),
+    params: compiledParams(cap, effectiveParams(cap, input.capParams), input),
+  };
+  if (references.length) payload.reference_assets = references;
+  return payload;
+}
+
+export function compileHeighlinerVideoPayload(card: SpatialCard, allCards: SpatialCard[] = []): CreateTaskPayload {
+  const cap = requireCapability(card);
+  const { mode, references: refs } = sentVideoSettings(card);
+  if (!capVideoModes(cap).includes(mode)) throw new Error(`${card.model} 不支持「${MODE_LABELS[mode]}」模式`);
+
+  const counters = { image: 0, video: 0, audio: 0 };
+  const references = refs.map((ref) => {
+    const type: RefMedia = ref.role === 'reference_video' ? 'video' : 'image';
+    const role = mode === 'first_last_frame' ? ref.role : 'reference';
+    return connectedRef(cap, card.model, ref, role, type, ++counters[type], allCards);
+  });
+
+  // Asset-library items (multi-reference mode) go by asset ID, numbered after the connected cards of their kind.
+  for (const asset of mode === 'all_modal' ? card.assetRefs ?? [] : []) {
+    const { role, type } = ASSET_SLOT[asset.kind];
+    if (!referenceSlot(cap, role, type)?.supports_asset) {
+      throw new Error(`${card.model} 的${SLOT_LABELS[`${role}|${type}`]}不支持素材 ID，请移除素材「${asset.assetId}」`);
+    }
+    references.push({
+      card_id: '',
+      tag_index: ++counters[asset.kind],
+      role,
+      type,
+      label: asset.assetId,
+      url: `asset://${asset.assetId}`,
+    });
+  }
+  checkCounts(cap, card.model, references);
+
+  const prompt =
+    mode === 'text_to_video' ? card.prompt.replace(/@?(图|视频)\d+\s*/g, '').trim() : renumberPrompt(card.prompt, refs);
+  if (!prompt && references.length === 0) throw new Error('请先填写提示词');
+
+  const parameters: Record<string, unknown> = effectiveParams(cap, card.capParams);
+  // First/last frame: the frame sets the shape; send "adaptive" where the model has it, else no ratio.
+  if (mode === 'first_last_frame') {
+    if (cap.parameters?.aspect_ratio?.enum?.includes('adaptive')) parameters.aspect_ratio = 'adaptive';
+    else delete parameters.aspect_ratio;
+  }
+
+  const payload: CreateTaskPayload = {
+    provider: card.provider!,
+    model: card.model,
+    task_type: 'video_generation',
+    task_mode: mode,
+    prompt: checkPrompt(cap, prompt),
+    params: compiledParams(cap, parameters, card),
+  };
+  if (references.length) payload.reference_assets = references;
+  return payload;
+}
+
+/**
+ * A 3D card: each connected image goes as its view's role (主图 = `reference`). The prompt
+ * is optional when images are connected; the gateway decides which combinations work.
+ */
+export function compileHeighliner3DPayload(card: SpatialCard, allCards: SpatialCard[] = []): CreateTaskPayload {
+  const cap = requireCapability(card);
+  const refs = card.references ?? [];
+  const references = refs.map((ref, i) => connectedRef(cap, card.model, ref, viewOf(ref), 'image', i + 1, allCards));
+  checkCounts(cap, card.model, references);
+  const prompt = card.prompt.trim();
+  if (!prompt && references.length === 0) throw new Error('请先填写提示词，或连入参考图');
+
+  const payload: CreateTaskPayload = {
+    provider: card.provider!,
+    model: card.model,
+    task_type: '3d_generation',
+    task_mode: 'single',
+    prompt: checkPrompt(cap, prompt),
+    params: compiledParams(cap, effectiveParams(cap, card.capParams), card),
+  };
+  if (references.length) payload.reference_assets = references;
+  return payload;
+}

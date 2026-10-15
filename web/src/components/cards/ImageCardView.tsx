@@ -9,7 +9,7 @@ import {
   isProviderMissing,
 } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
-import { imageSizeSummary, previewAspect } from '../../engine/cardParams.ts';
+import { imageReferenceLimit, imageSizeSummary, previewAspect } from '../../engine/cardParams.ts';
 import { useChannels } from '../../services/channels.ts';
 import { assetStoredPath, assetUrl } from '../../engine/assetPaths.ts';
 import { offersUpload } from '../../engine/uploadRefs.ts';
@@ -152,7 +152,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         menuItems={menuItems}
       >
         <SummaryRow model={modelLabel} spec={imageSizeSummary(card)} />
-        {mj && (
+        {imageReferenceLimit(card) > 0 && (
           <div className="relative flex items-center gap-1.5 flex-wrap text-[11px]" title="在属性面板里管理参考图">
             <InputSlot kind="reference" title="参考图输入：从图片或上传卡片右侧的圆点拖线到这张卡片" />
             <span className="text-slate-500">参考图</span>

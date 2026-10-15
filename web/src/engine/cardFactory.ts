@@ -1,11 +1,12 @@
 import type { CardType, SpatialCard, UploadKind } from '../types/canvas.ts';
 import type { Point } from './matrix.ts';
 import { refNoun } from './refTags.ts';
+import { default3DModel } from './providers.ts';
 
-const CARD_WIDTH: Record<CardType, number> = { image: 340, video: 460, text: 340, upload: 300 };
+const CARD_WIDTH: Record<CardType, number> = { image: 340, video: 460, text: 340, upload: 300, '3d': 340 };
 const CASCADE = 32;
 
-const TITLES: Record<CardType, string> = { image: '图片', video: '视频', text: '提示词助手', upload: '上传' };
+const TITLES: Record<CardType, string> = { image: '图片', video: '视频', text: '提示词助手', upload: '上传', '3d': '3D' };
 
 /** Next free @图N / @视频N: one past the highest tag, so deleted cards never cause duplicates. */
 export function nextTagIndex(cards: SpatialCard[]): number {
@@ -85,6 +86,11 @@ export function createCard(type: CardType, at: Point, cards: SpatialCard[], medi
       promptOptimizer: true,
       references: [],
     };
+  }
+  if (type === '3d') {
+    // Only Heighliner runs 3D; without one the card waits for a model and says why.
+    const first = default3DModel();
+    return { ...common, provider: first?.provider, model: first?.model ?? '', references: [] };
   }
   return { ...common, model: '', textPreset: 'image_prompt', textOutput: '' };
 }

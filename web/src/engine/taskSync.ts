@@ -13,8 +13,11 @@ export function applyTaskToCard(card: SpatialCard, task: BackendTaskResponse): S
   switch (task.status) {
     case 'succeeded': {
       const assets = task.assets ?? [];
+      // A 3D result shows its cover (or nothing): its model files and preview video are not images.
       const display =
-        assets.find((a) => a.kind === 'video') ?? assets.find((a) => a.kind === 'image_base') ?? assets[0];
+        card.type === '3d'
+          ? assets.find((a) => a.kind === 'cover')
+          : assets.find((a) => a.kind === 'video') ?? assets.find((a) => a.kind === 'image_base') ?? assets[0];
       return {
         ...card,
         taskId: task.id,

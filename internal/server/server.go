@@ -463,7 +463,7 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 // misconfigured provider stops being offered on cards. Providers that run mocked fall
 // back to the mock; keys set through environment variables still apply.
 func (s *Server) clearProvider(c *gin.Context, spec providerSpec) {
-	keys := []string{spec.ID + "_api_key", spec.ID + "_base_url", spec.ID + "_models"}
+	keys := []string{spec.ID + "_api_key", spec.ID + "_base_url", spec.ID + "_models", capabilitiesKey(spec.ID)}
 	for _, extra := range spec.extraKeys() {
 		keys = append(keys, spec.ID+"_"+extra)
 	}
@@ -558,6 +558,14 @@ func (s *Server) handleListModels(c *gin.Context) {
 		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
+	}
+	// Descriptors are kept as fetched, so cards render from them offline (ADR 0010).
+	if caps := catalogCapabilities(models); caps != nil {
+		capsJSON, _ := json.Marshal(caps)
+		if err := upsertConfigs(s.db, map[string]string{capabilitiesKey(spec.ID): string(capsJSON)}); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save model capabilities: " + err.Error()})
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"models": models, "source": "remote"})
 }
@@ -769,7 +777,9 @@ type CreateTaskPayload struct {
 	Model           string                 `json:"model" binding:"required"`
 	TaskType        string                 `json:"task_type" binding:"required"`
 	TaskMode        string                 `json:"task_mode"`
-	Prompt          string                 `json:"prompt" binding:"required"`
+	// Prompt is required except on Heighliner, where 3D from images and Seedance from
+	// references alone run without one (the gateway validates the combination).
+	Prompt          string                 `json:"prompt"`
 	Params          map[string]interface{} `json:"params"`
 	ReferenceAssets []model.ReferenceItem  `json:"reference_assets"`
 }
@@ -779,6 +789,13 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if strings.TrimSpace(payload.Prompt) == "" {
+		spec, ok := findProvider(s.storedConfig(), payload.Provider)
+		if !ok || spec.Protocol != model.ProtocolHeighliner {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "prompt is required"})
+			return
+		}
 	}
 
 	if payload.ProjectID != "" {

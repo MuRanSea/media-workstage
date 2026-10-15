@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -448,6 +449,12 @@ func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, r
 			}
 		} else {
 			downloadedCount++
+			if renamed := adapter.RenameSniffedModel(targetLocalPath); renamed != targetLocalPath {
+				ext := filepath.Ext(renamed)
+				asset.LocalPath = strings.TrimSuffix(asset.LocalPath, filepath.Ext(asset.LocalPath)) + ext
+				asset.Name = strings.TrimPrefix(ext, ".")
+				targetLocalPath = renamed
+			}
 		}
 
 		fileSize := int64(0)

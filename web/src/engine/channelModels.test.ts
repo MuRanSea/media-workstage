@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildProviderGroups, findModelOption } from './channelModels.ts';
+import { buildProviderGroups, findModelOption, isModelReady } from './channelModels.ts';
 import type { ProviderConfigItem } from '../services/api.ts';
 import { resolveVideoModelDef } from '../types/canvas.ts';
-import { protocolOf, providerName } from './providers.ts';
+import { protocolOf, providerName, rememberProviders } from './providers.ts';
 
 // Preset providers, as GET /api/config lists them.
 const channel = (p: Partial<ProviderConfigItem> & Pick<ProviderConfigItem, 'id'>): ProviderConfigItem => ({
@@ -137,5 +137,28 @@ describe('Anthropic readiness', () => {
     const text = buildProviderGroups([anthropic], 'text');
     expect(text.map((g) => [g.provider, g.name, g.ready])).toEqual([['anthropic', 'Anthropic', true]]);
     expect(buildProviderGroups([anthropic], 'image').every((g) => !g.ready)).toBe(true);
+  });
+});
+
+describe('Heighliner readiness', () => {
+  it('runs its chat models on text cards', () => {
+    const hl: ProviderConfigItem = {
+      id: 'custom-hl',
+      name: 'Heighliner',
+      protocol: 'heighliner',
+      preset: false,
+      base_url: 'https://platform.sgt.site',
+      is_configured: true,
+      models: [
+        { id: 'deepseek-flash', type: 'chat' },
+        { id: 'hy-3d-express', type: '3d' },
+      ],
+      can_list_models: true,
+    };
+    rememberProviders([hl]);
+    const text = buildProviderGroups([hl], 'text');
+    expect(text.map((g) => [g.provider, g.name, g.ready])).toEqual([['custom-hl', 'Heighliner', true]]);
+    expect(text[0].options.map((o) => o.id)).toEqual(['deepseek-flash']);
+    expect(isModelReady('text', 'custom-hl', 'deepseek-flash')).toBe(true);
   });
 });

@@ -16,9 +16,13 @@ const (
 
 // ReferenceItem represents an input reference media item.
 type ReferenceItem struct {
-	CardID    string `json:"card_id"`
-	TagIndex  int    `json:"tag_index"`
-	Role      string `json:"role"` // "reference_image" | "first_frame" | "last_frame" | "reference_video" | "reference_audio"
+	CardID   string `json:"card_id"`
+	TagIndex int    `json:"tag_index"`
+	// "reference_image" | "first_frame" | "last_frame" | "reference_video" | "reference_audio";
+	// Heighliner cards use the gateway's own roles ("reference", "multi_view_left", "voice"…).
+	Role string `json:"role"`
+	// Type is the media type for protocols whose roles do not imply it: "image" | "video" | "audio".
+	Type      string `json:"type,omitempty"`
 	Label     string `json:"label"`
 	URL       string `json:"url,omitempty"`
 	LocalPath string `json:"local_path,omitempty"`
@@ -42,7 +46,7 @@ type MediaTask struct {
 	Provider           string         `gorm:"type:varchar(32);index;not null" json:"provider"`    // "ark" | "minimax"
 	ProviderTaskID     string         `gorm:"type:varchar(128);index" json:"provider_task_id"`
 	Model              string         `gorm:"type:varchar(64);not null" json:"model"`
-	TaskType           string         `gorm:"type:varchar(32);not null" json:"task_type"` // "video_generation" | "image_generation"
+	TaskType           string         `gorm:"type:varchar(32);not null" json:"task_type"` // "video_generation" | "image_generation" | "3d_generation"
 	TaskMode           string         `gorm:"type:varchar(32);not null" json:"task_mode"` // "all_modal" | "first_last_frame" | "text_to_video" | "single" | "layer_decomp" | "sequential"
 	Prompt             string         `gorm:"type:text;not null" json:"prompt"`
 	ParamsJSON         string         `gorm:"type:text" json:"params_json"`

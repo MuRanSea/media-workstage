@@ -15,6 +15,7 @@ import { useProjectActions } from './useProjectActions.ts';
 import { Button, useToast } from './ui/index.ts';
 import { compileCardImagePayload } from '../engine/compiler.ts';
 import { compileCardVideoPayload } from '../engine/videoCompiler.ts';
+import { compileHeighliner3DPayload } from '../engine/heighlinerCompiler.ts';
 import { withEffectivePrompt } from '../engine/connections.ts';
 import { compileTextPayload } from '../engine/textCompiler.ts';
 import { MISSING_PROVIDER_HINT, isProviderMissing } from '../engine/channelModels.ts';
@@ -217,11 +218,15 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     try {
       // A connected text card supplies the prompt.
       const submitted = withEffectivePrompt(card, cards);
-      // A Midjourney Blend mixes its images and needs no prompt.
+      // A Midjourney Blend mixes its images and needs no prompt; a 3D card may run from images alone.
       const blending = isMidjourney(submitted) && submitted.mjOperation === 'blend';
-      if (!blending && !submitted.prompt.trim()) throw new Error('请先填写提示词');
+      if (!blending && submitted.type !== '3d' && !submitted.prompt.trim()) throw new Error('请先填写提示词');
       const payload =
-        submitted.type === 'video' ? compileCardVideoPayload(submitted, cards) : compileCardImagePayload(submitted, cards);
+        submitted.type === 'video'
+          ? compileCardVideoPayload(submitted, cards)
+          : submitted.type === '3d'
+            ? compileHeighliner3DPayload(submitted, cards)
+            : compileCardImagePayload(submitted, cards);
       const accepted = await apiCreateTask({ ...payload, project_id: projectId });
       setCards((prev) =>
         addPendingResult(prev, submitted, accepted, measuredHeight).map((c) =>

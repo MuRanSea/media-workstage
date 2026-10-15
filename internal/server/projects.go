@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -28,6 +29,11 @@ type saveProjectPayload struct {
 	Sections json.RawMessage  `json:"sections"`
 }
 
+type revealAssetPayload struct {
+	// Path is the asset as cards store it: "/assets/models/<task>/model_00.glb".
+	Path string `json:"path" binding:"required"`
+}
+
 type renameProjectPayload struct {
 	Name string `json:"name" binding:"required"`
 }
@@ -43,6 +49,7 @@ func (s *Server) registerProjectRoutes(api *gin.RouterGroup) {
 	projects.PATCH("/:id", s.sameOriginOnlyMiddleware(), s.handleRenameProject)
 	projects.DELETE("/:id", s.sameOriginOnlyMiddleware(), s.handleDeleteProject)
 	projects.POST("/:id/reveal", s.sameOriginOnlyMiddleware(), s.handleRevealProject)
+	projects.POST("/:id/reveal-asset", s.sameOriginOnlyMiddleware(), s.handleRevealAsset)
 	projects.POST("/import", s.sameOriginOnlyMiddleware(), s.handleImportProject)
 	projects.POST("/:id/duplicate", s.sameOriginOnlyMiddleware(), s.handleDuplicateProject)
 	projects.GET("/:id/export", s.handleExportProject)
@@ -171,6 +178,48 @@ func (s *Server) handleRevealProject(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// handleRevealAsset shows one of the project's files in the file manager (3D models,
+// which the browser cannot open).
+func (s *Server) handleRevealAsset(c *gin.Context) {
+	dir, err := s.projects.Dir(c.Param("id"))
+	if err != nil {
+		respondProjectError(c, err)
+		return
+	}
+	var payload revealAssetPayload
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	target, err := projectAssetFile(dir, payload.Path)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if _, err := os.Stat(target); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "文件不在工程文件夹里，可能已被移动或删除"})
+		return
+	}
+	if err := revealFileFn(target); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// projectAssetFile turns a stored asset path ("/assets/…", "assets/…" or relative to the
+// assets folder) into a file inside the project's assets folder, refusing anything outside.
+func projectAssetFile(projectDir, stored string) (string, error) {
+	assetsRoot := filepath.Join(projectDir, project.AssetsDir)
+	rel := strings.TrimLeft(filepath.ToSlash(stored), "/")
+	rel = strings.TrimPrefix(rel, project.AssetsDir+"/")
+	abs := filepath.Join(assetsRoot, filepath.FromSlash(rel))
+	if !strings.HasPrefix(abs, assetsRoot+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q is outside the project's assets", stored)
+	}
+	return abs, nil
+}
+
 func (s *Server) handleProjectAsset(c *gin.Context) {
 	dir, err := s.projects.Dir(c.Param("id"))
 	if err != nil {
@@ -184,16 +233,13 @@ func (s *Server) handleProjectAsset(c *gin.Context) {
 // ("assets/images/...") to absolute paths inside the project folder, so
 // adapters read the right file regardless of the process working directory.
 func resolveProjectReferences(projectDir string, refs []model.ReferenceItem) error {
-	assetsRoot := filepath.Join(projectDir, project.AssetsDir)
 	for i := range refs {
 		local := refs[i].LocalPath
 		if local == "" {
 			continue
 		}
-		rel := strings.TrimLeft(filepath.ToSlash(local), "/")
-		rel = strings.TrimPrefix(rel, project.AssetsDir+"/")
-		abs := filepath.Join(assetsRoot, filepath.FromSlash(rel))
-		if !strings.HasPrefix(abs, assetsRoot+string(filepath.Separator)) {
+		abs, err := projectAssetFile(projectDir, local)
+		if err != nil {
 			return fmt.Errorf("reference path %q escapes the project folder", local)
 		}
 		refs[i].LocalPath = abs
@@ -260,6 +306,9 @@ func (s *Server) handleDuplicateProject(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, doc)
 }
+
+// revealFileFn is revealFile, replaced in tests so they open no file manager.
+var revealFileFn = revealFile
 
 // revealFile opens the file manager with the file selected.
 func revealFile(path string) error {

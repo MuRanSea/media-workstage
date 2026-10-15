@@ -26,6 +26,7 @@ var creatableProtocols = map[model.Protocol]bool{
 	model.ProtocolArk:              true,
 	model.ProtocolMiniMax:          true,
 	model.ProtocolMidjourney:       true,
+	model.ProtocolHeighliner:       true,
 }
 
 // upsertConfigs writes config entries in one transaction.
@@ -163,7 +164,7 @@ func (s *Server) handleDeleteProvider(c *gin.Context) {
 		}
 	}
 	recordsJSON, _ := json.Marshal(records)
-	keys := []string{spec.ID + "_name", spec.ID + "_api_key", spec.ID + "_base_url", spec.ID + "_models"}
+	keys := []string{spec.ID + "_name", spec.ID + "_api_key", spec.ID + "_base_url", spec.ID + "_models", capabilitiesKey(spec.ID)}
 	for _, extra := range spec.extraKeys() {
 		keys = append(keys, spec.ID+"_"+extra)
 	}

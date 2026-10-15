@@ -12,6 +12,7 @@ const FILL: Record<SpatialCard['type'], string> = {
   video: 'rgba(129, 140, 248, 0.75)',
   text: 'rgba(52, 211, 153, 0.75)',
   upload: 'rgba(251, 191, 36, 0.75)',
+  '3d': 'rgba(56, 189, 248, 0.75)',
 };
 
 const STORAGE_KEY = 'mw-minimap';

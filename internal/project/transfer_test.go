@@ -242,3 +242,40 @@ func TestTransfer_ExportToFolder(t *testing.T) {
 		t.Fatalf("expected 1 project, got %d", len(list))
 	}
 }
+
+func TestTransfer_3DResultsSurviveExportImportAndDuplicate(t *testing.T) {
+	s := newTestStore(t)
+	cards := `[{"id":"g1","type":"3d","role":"generation","references":[{"cardId":"a","role":"reference_image","view":"multi_view_left"}]},` +
+		`{"id":"r1","type":"3d","role":"result","resultUrl":"/assets/models/t9/cover_02.png","outputAssets":[{"kind":"model3d","local_path":"models/t9/model_00.glb"}]}]`
+	src := projectWithAsset(t, s, "椅子", cards)
+	dir, _ := s.Dir(src.ID)
+	models := filepath.Join(dir, "assets", "models", "t9")
+	if err := os.MkdirAll(models, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"model_00.glb": "glb-bytes", "cover_02.png": "cover-bytes"} {
+		if err := os.WriteFile(filepath.Join(models, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	data := exportBytes(t, s, src.ID)
+	imported, err := s.Import(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	copied, err := s.Duplicate(src.ID)
+	if err != nil {
+		t.Fatalf("Duplicate: %v", err)
+	}
+	for _, doc := range []*Document{imported, copied} {
+		got, _ := s.Get(doc.ID)
+		if !strings.Contains(string(got.Cards), "multi_view_left") || !strings.Contains(string(got.Cards), "models/t9/model_00.glb") {
+			t.Fatalf("3D cards lost in %s: %s", doc.Name, got.Cards)
+		}
+		d, _ := s.Dir(doc.ID)
+		if b, err := os.ReadFile(filepath.Join(d, "assets", "models", "t9", "model_00.glb")); err != nil || string(b) != "glb-bytes" {
+			t.Fatalf("model file not carried into %s: %v %q", doc.Name, err, b)
+		}
+	}
+}

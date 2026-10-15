@@ -13,4 +13,7 @@ const (
 	ProtocolOpenAICompatible Protocol = "openai_compatible"
 	ProtocolAnthropic        Protocol = "anthropic" // Anthropic Messages API
 	ProtocolAPIMart          Protocol = "apimart"
+	// ProtocolHeighliner is the Heighliner gateway's media platform protocol (/media/v1)
+	// plus its Chat Completions entry, configured with the gateway's root address.
+	ProtocolHeighliner Protocol = "heighliner"
 )

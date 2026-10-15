@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import { IMAGE_MODELS, MJ_SPEED_LABELS, SEEDREAM_PIXEL_MAP, type MjSpeed, type SpatialCard } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
-import { imageModelPatch, removeReferencePatch } from '../../engine/cardParams.ts';
+import { imageModelPatch, imageReferenceLimit, removeReferencePatch } from '../../engine/cardParams.ts';
 import { MJ_MAX_REFERENCES, MJ_MIN_BLEND_IMAGES } from '../../engine/midjourney.ts';
 import { refTag } from '../../engine/refTags.ts';
 import { compileCardImagePayload } from '../../engine/compiler.ts';
@@ -11,6 +11,7 @@ import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from '../cards/ProviderModelPicker.tsx';
 import { Field, Section, Segmented, Toggle, inputClass } from '../ui/index.ts';
 import { DevJson } from './DevJson.tsx';
+import { CapabilitySections } from './CapabilityFields.tsx';
 
 const RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9'] as const;
 const RESOLUTIONS = ['1K', '2K', '4K'] as const;
@@ -34,7 +35,9 @@ export const ImageInspector: React.FC<Props> = ({ card, cards, update, linkedPro
   const provider = card.provider ?? 'ark';
   const isSeedream = protocolOf(provider) === 'ark';
   const isMidjourney = protocolOf(provider) === 'midjourney';
+  const isHeighliner = protocolOf(provider) === 'heighliner';
   const refs = card.references ?? [];
+  const refLimit = imageReferenceLimit(card);
   const def = IMAGE_MODELS.find((m) => m.id === card.model) ?? IMAGE_MODELS[0];
   const ratio = card.imageRatioPreset ?? '16:9';
   const tier = card.imageTier ?? def.defaultTier;
@@ -55,90 +58,98 @@ export const ImageInspector: React.FC<Props> = ({ card, cards, update, linkedPro
         />
       </Section>
 
-      <Section title={isMidjourney ? '比例与速度' : '尺寸'}>
-        {isSeedream ? (
-          <>
-            <Field label="设定方式">
+      {isHeighliner ? (
+        <CapabilitySections card={card} update={update} accent="pink" />
+      ) : (
+        <Section title={isMidjourney ? '比例与速度' : '尺寸'}>
+          {isSeedream ? (
+            <>
+              <Field label="设定方式">
+                <Segmented
+                  accent="pink"
+                  value={card.sizeMode ?? 'tier'}
+                  onChange={(v) =>
+                    update(v === 'custom_pixels' ? { sizeMode: v, customPixels: card.customPixels || def.defaultCustomPixel } : { sizeMode: v })
+                  }
+                  options={[
+                    { value: 'tier', label: '清晰度 + 比例' },
+                    { value: 'custom_pixels', label: '自定义像素' },
+                  ]}
+                />
+              </Field>
+              {card.sizeMode === 'custom_pixels' ? (
+                <Field label="宽 x 高（像素）" aside={def.pixelRangeText}>
+                  <input
+                    value={card.customPixels ?? def.defaultCustomPixel}
+                    onChange={(e) => update({ customPixels: e.target.value })}
+                    placeholder="例如 2048x1024"
+                    className={`${inputClass} font-mono focus:border-pink-500`}
+                  />
+                </Field>
+              ) : (
+                <>
+                  <Field label="清晰度">
+                    <Segmented accent="pink" mono value={tier} onChange={(t) => update({ imageTier: t })} options={def.tiers.map((t) => ({ value: t, label: t }))} />
+                  </Field>
+                  <Field label="比例" aside={SEEDREAM_PIXEL_MAP[tier]?.[ratio] ?? ''}>
+                    <Segmented accent="pink" mono columns={4} value={ratio} onChange={(r) => update({ imageRatioPreset: r })} options={ratioOptions} />
+                  </Field>
+                </>
+              )}
+            </>
+          ) : isMidjourney ? (
+            <>
+              <Field label="比例" hint="作为 --ar 加到提示词后面；提示词里自己写了 --ar 时以提示词为准。">
+                <Segmented accent="pink" mono columns={4} value={ratio} onChange={(r) => update({ imageRatioPreset: r })} options={ratioOptions} />
+              </Field>
+              <Field label="速度" hint="选择代理里对应模式的账号；Relax 省额度但要排队。提示词里写了 --fast / --relax / --turbo 时以提示词为准。">
+                <Segmented accent="pink" value={card.mjSpeed ?? 'default'} onChange={(v) => update({ mjSpeed: v === 'default' ? undefined : v })} options={MJ_SPEEDS} />
+              </Field>
+            </>
+          ) : (
+            <>
+              <Field label="清晰度">
+                <Segmented accent="pink" mono value={card.imageResolution ?? '2K'} onChange={(r) => update({ imageResolution: r })} options={RESOLUTIONS.map((r) => ({ value: r, label: r }))} />
+              </Field>
+              <Field label="比例" hint="实际像素由模型决定；模型不支持清晰度档位时按它的默认尺寸出图。">
+                <Segmented accent="pink" mono columns={4} value={ratio} onChange={(r) => update({ imageRatioPreset: r })} options={ratioOptions} />
+              </Field>
+            </>
+          )}
+        </Section>
+      )}
+
+      {(isMidjourney || (isHeighliner && refLimit > 0)) && (
+        <Section title={`参考图 ${refs.length}/${isMidjourney ? MJ_MAX_REFERENCES : refLimit}`}>
+          {isMidjourney && (
+            <Field
+              label="生成方式"
+              hint={
+                card.mjOperation === 'blend'
+                  ? `把连入的 ${MJ_MIN_BLEND_IMAGES}–${MJ_MAX_REFERENCES} 张图片混合成一张四宫格，不用提示词；比例只分竖、方、横三种。`
+                  : '按提示词生成；连入的图片作为垫图。'
+              }
+            >
               <Segmented
                 accent="pink"
-                value={card.sizeMode ?? 'tier'}
-                onChange={(v) =>
-                  update(v === 'custom_pixels' ? { sizeMode: v, customPixels: card.customPixels || def.defaultCustomPixel } : { sizeMode: v })
-                }
+                value={card.mjOperation ?? 'imagine'}
+                onChange={(v) => update({ mjOperation: v === 'imagine' ? undefined : v })}
                 options={[
-                  { value: 'tier', label: '清晰度 + 比例' },
-                  { value: 'custom_pixels', label: '自定义像素' },
+                  { value: 'imagine', label: '提示词生图' },
+                  {
+                    value: 'blend',
+                    label: 'Blend 混合',
+                    disabled: refs.length < MJ_MIN_BLEND_IMAGES && card.mjOperation !== 'blend',
+                    title: `需要连入至少 ${MJ_MIN_BLEND_IMAGES} 张图片`,
+                  },
                 ]}
               />
             </Field>
-            {card.sizeMode === 'custom_pixels' ? (
-              <Field label="宽 x 高（像素）" aside={def.pixelRangeText}>
-                <input
-                  value={card.customPixels ?? def.defaultCustomPixel}
-                  onChange={(e) => update({ customPixels: e.target.value })}
-                  placeholder="例如 2048x1024"
-                  className={`${inputClass} font-mono focus:border-pink-500`}
-                />
-              </Field>
-            ) : (
-              <>
-                <Field label="清晰度">
-                  <Segmented accent="pink" mono value={tier} onChange={(t) => update({ imageTier: t })} options={def.tiers.map((t) => ({ value: t, label: t }))} />
-                </Field>
-                <Field label="比例" aside={SEEDREAM_PIXEL_MAP[tier]?.[ratio] ?? ''}>
-                  <Segmented accent="pink" mono columns={4} value={ratio} onChange={(r) => update({ imageRatioPreset: r })} options={ratioOptions} />
-                </Field>
-              </>
-            )}
-          </>
-        ) : isMidjourney ? (
-          <>
-            <Field label="比例" hint="作为 --ar 加到提示词后面；提示词里自己写了 --ar 时以提示词为准。">
-              <Segmented accent="pink" mono columns={4} value={ratio} onChange={(r) => update({ imageRatioPreset: r })} options={ratioOptions} />
-            </Field>
-            <Field label="速度" hint="选择代理里对应模式的账号；Relax 省额度但要排队。提示词里写了 --fast / --relax / --turbo 时以提示词为准。">
-              <Segmented accent="pink" value={card.mjSpeed ?? 'default'} onChange={(v) => update({ mjSpeed: v === 'default' ? undefined : v })} options={MJ_SPEEDS} />
-            </Field>
-          </>
-        ) : (
-          <>
-            <Field label="清晰度">
-              <Segmented accent="pink" mono value={card.imageResolution ?? '2K'} onChange={(r) => update({ imageResolution: r })} options={RESOLUTIONS.map((r) => ({ value: r, label: r }))} />
-            </Field>
-            <Field label="比例" hint="实际像素由模型决定；模型不支持清晰度档位时按它的默认尺寸出图。">
-              <Segmented accent="pink" mono columns={4} value={ratio} onChange={(r) => update({ imageRatioPreset: r })} options={ratioOptions} />
-            </Field>
-          </>
-        )}
-      </Section>
-
-      {isMidjourney && (
-        <Section title={`参考图 ${refs.length}/${MJ_MAX_REFERENCES}`}>
-          <Field
-            label="生成方式"
-            hint={
-              card.mjOperation === 'blend'
-                ? `把连入的 ${MJ_MIN_BLEND_IMAGES}–${MJ_MAX_REFERENCES} 张图片混合成一张四宫格，不用提示词；比例只分竖、方、横三种。`
-                : '按提示词生成；连入的图片作为垫图。'
-            }
-          >
-            <Segmented
-              accent="pink"
-              value={card.mjOperation ?? 'imagine'}
-              onChange={(v) => update({ mjOperation: v === 'imagine' ? undefined : v })}
-              options={[
-                { value: 'imagine', label: '提示词生图' },
-                {
-                  value: 'blend',
-                  label: 'Blend 混合',
-                  disabled: refs.length < MJ_MIN_BLEND_IMAGES && card.mjOperation !== 'blend',
-                  title: `需要连入至少 ${MJ_MIN_BLEND_IMAGES} 张图片`,
-                },
-              ]}
-            />
-          </Field>
+          )}
           {refs.length === 0 ? (
-            <p className="text-[11px] leading-relaxed text-slate-500">从图片结果卡或上传的图片右侧的圆点拖线到这张卡片，作为垫图。</p>
+            <p className="text-[11px] leading-relaxed text-slate-500">
+              从图片结果卡或上传的图片右侧的圆点拖线到这张卡片，{isMidjourney ? '作为垫图' : '作为参考图；提示词里用 @图N 指代'}。
+            </p>
           ) : (
             <ul className="space-y-1">
               {refs.map((ref) => (

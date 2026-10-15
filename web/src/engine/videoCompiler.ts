@@ -4,6 +4,7 @@ import { protocolOf } from './providers.ts';
 import { refNoun, refTag } from './refTags.ts';
 import { sendsUploadedCopy, uploadReference } from './uploadRefs.ts';
 import type { Protocol } from '../services/api.ts';
+import { compileHeighlinerVideoPayload } from './heighlinerCompiler.ts';
 
 export interface VideoCompilationInput {
   card: SpatialCard;
@@ -30,14 +31,16 @@ function isRemoteOrDataURI(str: string): boolean {
 export function resolveReferenceAsset(
   ref: ReferenceItem,
   allCards: SpatialCard[] = [],
-  protocol: Protocol = 'ark'
+  protocol: Protocol = 'ark',
+  /** Whether this reference may go as an asset ID; by default only on Ark. */
+  assetOk?: boolean
 ): { url?: string; localPath?: string; remoteUrl?: string } {
   const srcCard = allCards.find((c) => c.id === ref.cardId);
   if (!srcCard) {
     throw new Error(`Referenced card ${refTag(ref)} was not found on the canvas`);
   }
   // Upload cards, video results and images the user uploaded send that copy (asset id or link), else the saved image.
-  if (sendsUploadedCopy(srcCard)) return uploadReference(srcCard, protocol);
+  if (sendsUploadedCopy(srcCard)) return uploadReference(srcCard, protocol, assetOk);
 
   // The card's primary image asset
   const baseAsset = srcCard.outputAssets?.find(
@@ -111,6 +114,7 @@ export function compileVideoTaskPayload(
 ): CreateTaskPayload {
   const provider = card.provider ?? inferVideoProvider(card.model);
   const protocol = protocolOf(provider);
+  if (protocol === 'heighliner') return compileHeighlinerVideoPayload(card, allCards);
   const isMiniMax = protocol === 'minimax';
 
   const mode: VideoTaskMode = card.mode ?? 'all_modal';

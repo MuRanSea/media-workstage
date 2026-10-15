@@ -105,6 +105,11 @@ export function apiRevealProject(id: string): Promise<void> {
   return request(`${projectPath(id)}/reveal`, { method: 'POST' });
 }
 
+/** Shows one of the project's files (a stored `/assets/...` path) in the file manager. */
+export function apiRevealAsset(id: string, path: string): Promise<void> {
+  return request(`${projectPath(id)}/reveal-asset`, { method: 'POST', body: JSON.stringify({ path }) });
+}
+
 /** Where the browser downloads a project as a zip (project.json and assets/). */
 export const projectExportUrl = (id: string) => `${projectPath(id)}/export`;
 

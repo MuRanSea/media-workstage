@@ -4,13 +4,14 @@ import type { ProviderId } from '../../services/api.ts';
 import type { ModelOption, ProviderGroup } from '../../engine/channelModels.ts';
 import { providerName } from '../../engine/providers.ts';
 
-type Accent = 'pink' | 'indigo' | 'emerald';
+type Accent = 'pink' | 'indigo' | 'emerald' | 'sky';
 
 // Full class strings so Tailwind's content scan picks them up.
 const ACCENTS: Record<Accent, { text: string; active: string; ring: string }> = {
   pink: { text: 'text-pink-300', active: 'bg-pink-600 text-white font-bold', ring: 'border-pink-500/60' },
   indigo: { text: 'text-indigo-300', active: 'bg-indigo-600 text-white font-bold', ring: 'border-indigo-500/60' },
   emerald: { text: 'text-emerald-300', active: 'bg-emerald-600 text-white font-bold', ring: 'border-emerald-500/60' },
+  sky: { text: 'text-sky-300', active: 'bg-sky-600 text-white font-bold', ring: 'border-sky-500/60' },
 };
 
 interface ProviderModelPickerProps {
