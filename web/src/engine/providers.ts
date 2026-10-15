@@ -1,4 +1,5 @@
 import type { CapabilityDescriptor, Protocol, ProviderConfigItem, ProviderId } from '../services/api.ts';
+import { documentedCapability } from './heighlinerRules.ts';
 
 /**
  * Provider → Protocol lookup. Cards store only a provider ID; everything that depends on
@@ -33,7 +34,7 @@ export function rememberProviders(providers: ProviderConfigItem[]): void {
   for (const p of providers) {
     known.set(p.id, { protocol: p.protocol, name: p.name });
     for (const m of p.models) {
-      if (m.capability) capabilities.set(capKey(p.id, m.id), m.capability);
+      if (m.capability) capabilities.set(capKey(p.id, m.id), documentedCapability(m.capability));
       if (m.type === '3d' && p.protocol === 'heighliner' && p.is_configured) models3d.push({ provider: p.id, model: m.id });
     }
   }

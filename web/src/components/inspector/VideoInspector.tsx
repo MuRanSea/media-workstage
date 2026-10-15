@@ -25,6 +25,7 @@ import { Field, Section, Segmented, Toggle, inputClass } from '../ui/index.ts';
 import { DevJson } from './DevJson.tsx';
 import { AssetRefList } from './AssetRefList.tsx';
 import { CapabilitySections } from './CapabilityFields.tsx';
+import { FINAL_RESOLUTION, SAMPLE_RESOLUTION, isSampleRun, supportsSample } from '../../engine/capability.ts';
 
 const ROLE_LABELS: Record<string, string> = {
   first_frame: '首帧',
@@ -95,12 +96,30 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
       </Section>
 
       {isHeighliner ? (
-        <CapabilitySections
-          card={card}
-          update={update}
-          accent="indigo"
-          ratioNote={mode === 'first_last_frame' ? '首尾帧模式下比例跟随首帧图片。' : undefined}
-        />
+        <>
+          {supportsSample(card) && (
+            <Section title="样片">
+              <Toggle
+                label="样片模式"
+                hint={`先出 ${SAMPLE_RESOLUTION} 样片确认画面，满意再在结果卡上「生成正式视频」（${FINAL_RESOLUTION}）`}
+                checked={!!card.sampleMode}
+                onChange={(v) => update({ sampleMode: v || undefined })}
+              />
+              {card.sampleMode && (
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  样片按提示词、参考素材、时长、比例和音频生成；正式视频沿用这些设置，不能再改。样片从生成起 7 天内可转正式视频，样片和正式视频各自计费。
+                </p>
+              )}
+            </Section>
+          )}
+          <CapabilitySections
+            card={card}
+            update={update}
+            accent="indigo"
+            ratioNote={mode === 'first_last_frame' ? '首尾帧模式下比例跟随首帧图片。' : undefined}
+            locked={isSampleRun(card) ? { resolution: `${SAMPLE_RESOLUTION}（样片固定）` } : undefined}
+          />
+        </>
       ) : (
         <Section title="规格">
           <Field label="清晰度">

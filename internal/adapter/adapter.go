@@ -56,6 +56,20 @@ type PollTimeoutHinter interface {
 	PollTimeout(task *model.MediaTask) time.Duration
 }
 
+// PollIntervalHinter lets an adapter set how often a task is polled, where the provider
+// advises a pace of its own; zero keeps the poller's default.
+type PollIntervalHinter interface {
+	PollInterval(task *model.MediaTask) time.Duration
+}
+
+// DeliveryRetrier is for providers whose result links can expire or be briefly
+// unreadable while querying the task again returns fresh ones. When a succeeded task's
+// downloads fail, the poller asks RetryDelivery: true keeps the task running and polls
+// it again (the adapter paces that), false settles it with the files it got.
+type DeliveryRetrier interface {
+	RetryDelivery(task *model.MediaTask) bool
+}
+
 // downloadTimeout bounds one result download, far above the API calls' timeouts: a
 // long 1080p video runs to hundreds of MB, which takes minutes over a slow link.
 const downloadTimeout = 30 * time.Minute

@@ -25,6 +25,8 @@ import {
   capVideoModes,
   cardCapability,
   effectiveParams,
+  isSampleRun,
+  sentParams,
   slotLimit,
 } from './capability.ts';
 
@@ -307,10 +309,10 @@ export function removeReferencePatch(card: SpatialCard, refCardId: string): Part
 /** e.g. "720p · 5s · 16:9"; "自适应" for adaptive duration. */
 export function videoSpecSummary(card: SpatialCard): string {
   if (protocolOf(card.provider) === 'heighliner') {
-    const v = effectiveParams(cardCapability(card), card.capParams);
+    const v = sentParams(cardCapability(card), card);
     const duration = v.duration === undefined ? '' : v.duration === -1 ? '自适应时长' : `${v.duration}s`;
     const ratio = card.mode === 'first_last_frame' ? '随首帧' : v.aspect_ratio === 'adaptive' ? '自适应' : v.aspect_ratio;
-    return [v.resolution, duration, ratio].filter(Boolean).join(' · ') || '模型默认';
+    return [isSampleRun(card) ? '样片' : '', v.resolution, duration, ratio].filter(Boolean).join(' · ') || '模型默认';
   }
   const duration = card.duration === -1 ? '自适应时长' : `${card.duration ?? 5}s`;
   const ratio = card.mode === 'first_last_frame' ? '随首帧' : card.ratio;

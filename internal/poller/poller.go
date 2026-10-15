@@ -315,6 +315,11 @@ func (p *TaskPoller) ProcessTask(ctx context.Context, taskID string) {
 			timeoutDuration = d
 		}
 	}
+	if hinter, ok := provAdapter.(adapter.PollIntervalHinter); ok {
+		if d := hinter.PollInterval(&task); d > 0 {
+			pollInterval = d
+		}
+	}
 
 	// The deadline counts from the submission, so a task resumed after a restart keeps
 	// its original one. It is still polled at least once, to collect a result that
@@ -367,8 +372,9 @@ func (p *TaskPoller) ProcessTask(ctx context.Context, taskID string) {
 				return
 
 			case model.TaskStatusSucceeded:
-				p.handleSuccess(taskCtx, &task, pollResult, provAdapter, isLayerDecomp)
-				return
+				if p.handleSuccess(taskCtx, &task, pollResult, provAdapter, isLayerDecomp) {
+					return
+				}
 			}
 		}
 
@@ -428,7 +434,10 @@ func (p *TaskPoller) assetRootFor(task *model.MediaTask) string {
 	return p.assetDir
 }
 
-func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, res *adapter.PollResult, provAdapter adapter.ProviderAdapter, isLayerDecomp bool) {
+// handleSuccess downloads a succeeded task's assets and settles it. It reports false when
+// the task stays running instead: a download failed and the adapter asks for the task to
+// be queried again for fresh links (adapter.DeliveryRetrier).
+func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, res *adapter.PollResult, provAdapter adapter.ProviderAdapter, isLayerDecomp bool) bool {
 	now := time.Now().UTC()
 	var downloadedAssets []model.TaskAsset
 	actualLayersCount := 0
@@ -483,7 +492,13 @@ func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, r
 	// Downloads cut off by a shutdown are retried: the task stays running and is polled
 	// again after the restart.
 	if ctx.Err() != nil && downloadedCount < len(res.Assets) {
-		return
+		return true
+	}
+	if downloadedCount < len(res.Assets) {
+		if retrier, ok := provAdapter.(adapter.DeliveryRetrier); ok && retrier.RetryDelivery(task) {
+			log.Printf("[TaskPoller] %d of %d downloads failed for task %s; querying it again for fresh links", len(res.Assets)-downloadedCount, len(res.Assets), task.ID)
+			return false
+		}
 	}
 
 	// Refund unused IPM tokens for layer decomposition
@@ -494,7 +509,7 @@ func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, r
 	// A "success" with no file on disk would leave the card blank; report why instead.
 	if len(res.Assets) > 0 && downloadedCount == 0 {
 		p.failTask(ctx, task, "DownloadFailed", fmt.Sprintf("生成成功，但结果文件下载失败：%v", firstDownloadErr))
-		return
+		return true
 	}
 
 	for i := range downloadedAssets {
@@ -520,6 +535,7 @@ func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, r
 	}
 
 	p.broadcaster.Broadcast("task.succeeded", task)
+	return true
 }
 
 func (p *TaskPoller) failTask(ctx context.Context, task *model.MediaTask, errCode, errMsg string) {

@@ -1,17 +1,21 @@
-import type { ReferenceItem, SpatialCard, VideoTaskMode } from '../types/canvas.ts';
+import type { CapOptions, ReferenceItem, ResultActionDto, SpatialCard, VideoTaskMode } from '../types/canvas.ts';
 import type { CapabilityDescriptor, CreateTaskPayload, ProviderId } from '../services/api.ts';
 import type { ImageCompilationInput } from './compiler.ts';
 import {
   ASSET_SLOT,
+  FINAL_RESOLUTION,
   capVideoModes,
   effectiveOptions,
   effectiveParams,
   referenceSlot,
   requireCapability,
+  sentOptions,
+  sentParams,
   type RefMedia,
 } from './capability.ts';
 import { refNoun } from './refTags.ts';
 import { VIEW_LABELS, viewOf } from './model3d.ts';
+import { PROMPT_MAX_BYTES, apply3DRules, applyVideoRules, checkImageRules, isKlingOmni, promptBytes } from './heighlinerRules.ts';
 import { resolveReferenceAsset, sentVideoSettings } from './videoCompiler.ts';
 
 /**
@@ -82,11 +86,15 @@ function checkCounts(cap: CapabilityDescriptor, model: string, refs: CompiledRef
   }
 }
 
+/** Kling Omni names images in its prompt as <<<image_1>>>, numbered in send order. */
+const klingImageTag = (n: number) => `<<<image_${n}>>>`;
+
 /**
  * Renumbers @图N / @视频N mentions to the order references are sent in (图1, 图2 … and
  * 视频1 …, counted separately), in one pass so a renumbered mention is never matched again.
+ * `imageTag` writes an image mention in a model's own syntax (Kling Omni's <<<image_N>>>).
  */
-function renumberPrompt(prompt: string, refs: ReferenceItem[]): string {
+function renumberPrompt(prompt: string, refs: ReferenceItem[], imageTag?: (n: number) => string): string {
   const counters = { 图: 0, 视频: 0 };
   const sentIndex = { 图: new Map<number, number>(), 视频: new Map<number, number>() };
   for (const ref of refs) {
@@ -97,24 +105,29 @@ function renumberPrompt(prompt: string, refs: ReferenceItem[]): string {
   return prompt
     .replace(/@?(图|视频)(\d+)\b/g, (mention, noun: '图' | '视频', n: string) => {
       const index = sentIndex[noun].get(Number(n));
-      return index === undefined ? mention : `${noun}${index}`;
+      if (index === undefined) return mention;
+      return noun === '图' && imageTag ? imageTag(index) : `${noun}${index}`;
     })
     .replace(/@(图|视频)(\d+)/g, '$1$2')
     .trim();
 }
 
-/** The prompt as the model's `prompt` parameter allows it: required ones may not be empty, none may run long. */
+/**
+ * The prompt as the model's `prompt` parameter allows it: required ones may not be empty,
+ * none may run past its length, and no media prompt past 32,000 bytes.
+ */
 function checkPrompt(cap: CapabilityDescriptor, prompt: string): string {
   const param = cap.parameters?.prompt;
   if (param?.required && !prompt) throw new Error('请先填写提示词');
   if (param?.maxLength !== undefined && prompt.length > param.maxLength) {
     throw new Error(`提示词最长 ${param.maxLength} 个字，当前 ${prompt.length} 个`);
   }
+  const bytes = promptBytes(prompt);
+  if (bytes > PROMPT_MAX_BYTES) throw new Error(`提示词最长 ${PROMPT_MAX_BYTES} 字节，当前 ${bytes} 字节`);
   return prompt;
 }
 
-function compiledParams(cap: CapabilityDescriptor, parameters: Record<string, unknown>, card: Pick<SpatialCard, 'capOptions'>) {
-  const options = effectiveOptions(cap, card.capOptions);
+function compiledParams(parameters: Record<string, unknown>, options: CapOptions) {
   return Object.keys(options).length ? { parameters, provider_options: options } : { parameters };
 }
 
@@ -125,13 +138,15 @@ export function compileHeighlinerImagePayload(provider: ProviderId, input: Image
     connectedRef(cap, input.model, ref, 'reference', 'image', i + 1, input.allCards ?? [])
   );
   checkCounts(cap, input.model, references);
+  const parameters = effectiveParams(cap, input.capParams);
+  checkImageRules(cap, parameters, references.length);
   const payload: CreateTaskPayload = {
     provider,
     model: input.model,
     task_type: 'image_generation',
     task_mode: 'single',
     prompt: checkPrompt(cap, renumberPrompt(input.prompt, refs)),
-    params: compiledParams(cap, effectiveParams(cap, input.capParams), input),
+    params: compiledParams(parameters, effectiveOptions(cap, input.capOptions)),
   };
   if (references.length) payload.reference_assets = references;
   return payload;
@@ -166,16 +181,25 @@ export function compileHeighlinerVideoPayload(card: SpatialCard, allCards: Spati
   }
   checkCounts(cap, card.model, references);
 
+  const imageTag = isKlingOmni(cap) && mode === 'all_modal' ? klingImageTag : undefined;
   const prompt =
-    mode === 'text_to_video' ? card.prompt.replace(/@?(图|视频)\d+\s*/g, '').trim() : renumberPrompt(card.prompt, refs);
+    mode === 'text_to_video' ? card.prompt.replace(/@?(图|视频)\d+\s*/g, '').trim() : renumberPrompt(card.prompt, refs, imageTag);
   if (!prompt && references.length === 0) throw new Error('请先填写提示词');
 
-  const parameters: Record<string, unknown> = effectiveParams(cap, card.capParams);
+  const parameters = sentParams(cap, card);
   // First/last frame: the frame sets the shape; send "adaptive" where the model has it, else no ratio.
   if (mode === 'first_last_frame') {
     if (cap.parameters?.aspect_ratio?.enum?.includes('adaptive')) parameters.aspect_ratio = 'adaptive';
     else delete parameters.aspect_ratio;
   }
+  const options = sentOptions(cap, card);
+  applyVideoRules(cap, {
+    mode,
+    imageRefs: references.filter((r) => r.role === 'reference' && r.type === 'image').length,
+    videoRefs: references.filter((r) => r.type === 'video').length,
+    parameters,
+    options,
+  });
 
   const payload: CreateTaskPayload = {
     provider: card.provider!,
@@ -183,23 +207,47 @@ export function compileHeighlinerVideoPayload(card: SpatialCard, allCards: Spati
     task_type: 'video_generation',
     task_mode: mode,
     prompt: checkPrompt(cap, prompt),
-    params: compiledParams(cap, parameters, card),
+    params: compiledParams(parameters, options),
   };
   if (references.length) payload.reference_assets = references;
   return payload;
 }
 
 /**
- * A 3D card: each connected image goes as its view's role (主图 = `reference`). The prompt
- * is optional when images are connected; the gateway decides which combinations work.
+ * 生成正式视频: renders the full video from the finished sample on result card `source`. The
+ * gateway inherits prompt, references, duration, ratio, seed and audio from the sample and
+ * refuses them sent again, so only the resolution (explicit, 1080p) goes along with the sample's
+ * task; the backend adds the gateway task ID after checking the sample offered this action.
+ */
+export function compileFinalizePayload(source: SpatialCard, action: ResultActionDto): CreateTaskPayload {
+  if (!source.taskId || source.status !== 'succeeded') throw new Error(`「${source.title}」还没有可以操作的生成结果`);
+  return {
+    provider: source.provider!,
+    model: source.model,
+    task_type: 'video_generation',
+    task_mode: 'action',
+    // Only recorded; the gateway takes the prompt from the sample.
+    prompt: source.prompt.trim() || action.label || '生成正式视频',
+    params: { parameters: { resolution: FINAL_RESOLUTION }, source_task_id: source.taskId, action_id: action.id },
+  };
+}
+
+/**
+ * A 3D card: each connected image goes as its view's role (主图 = `reference`). The model's
+ * rules (heighlinerRules.apply3DRules) decide whether the prompt goes along with images and
+ * which role a 主图 takes among other views.
  */
 export function compileHeighliner3DPayload(card: SpatialCard, allCards: SpatialCard[] = []): CreateTaskPayload {
   const cap = requireCapability(card);
   const refs = card.references ?? [];
-  const references = refs.map((ref, i) => connectedRef(cap, card.model, ref, viewOf(ref), 'image', i + 1, allCards));
+  const typed = card.prompt.trim();
+  if (!typed && refs.length === 0) throw new Error('请先填写提示词，或连入参考图');
+
+  const parameters = effectiveParams(cap, card.capParams);
+  const options = effectiveOptions(cap, card.capOptions);
+  const { prompt, roles } = apply3DRules(cap, { prompt: typed, roles: refs.map(viewOf), parameters, options });
+  const references = refs.map((ref, i) => connectedRef(cap, card.model, ref, roles[i], 'image', i + 1, allCards));
   checkCounts(cap, card.model, references);
-  const prompt = card.prompt.trim();
-  if (!prompt && references.length === 0) throw new Error('请先填写提示词，或连入参考图');
 
   const payload: CreateTaskPayload = {
     provider: card.provider!,
@@ -207,7 +255,7 @@ export function compileHeighliner3DPayload(card: SpatialCard, allCards: SpatialC
     task_type: '3d_generation',
     task_mode: 'single',
     prompt: checkPrompt(cap, prompt),
-    params: compiledParams(cap, effectiveParams(cap, card.capParams), card),
+    params: compiledParams(parameters, options),
   };
   if (references.length) payload.reference_assets = references;
   return payload;

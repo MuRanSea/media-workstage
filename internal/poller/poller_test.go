@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -714,6 +715,97 @@ func TestTaskPoller_AllDownloadsFailedMarksTaskFailed(t *testing.T) {
 	if assets != 0 {
 		t.Fatalf("no asset rows should be kept for a failed download, got %d", assets)
 	}
+}
+
+// flakyDeliveryAdapter's first downloads fail, as an expired signed link would, and it
+// asks for the task to be queried again (adapter.DeliveryRetrier) a limited number of times.
+type flakyDeliveryAdapter struct {
+	*adapter.FakeProviderAdapter
+	mu        sync.Mutex
+	failures  int // downloads still to fail
+	retries   int // RetryDelivery answers still true
+	retried   int
+	downloads int
+}
+
+func (a *flakyDeliveryAdapter) DownloadAsset(_ context.Context, _ string, target string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.downloads++
+	if a.failures > 0 {
+		a.failures--
+		return fmt.Errorf("asset download returned HTTP 403")
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(target, []byte("png"), 0644)
+}
+
+func (a *flakyDeliveryAdapter) RetryDelivery(*model.MediaTask) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.retries == 0 {
+		return false
+	}
+	a.retries--
+	a.retried++
+	return true
+}
+
+func TestTaskPoller_FailedDownloadQueriesTheTaskAgainWhenTheAdapterAsks(t *testing.T) {
+	run := func(t *testing.T, failures, retries int) (model.MediaTask, *flakyDeliveryAdapter) {
+		database := setupTestDB(t)
+		fake := adapter.NewFakeProviderAdapter("hl")
+		flaky := &flakyDeliveryAdapter{FakeProviderAdapter: fake, failures: failures, retries: retries}
+		poller := NewTaskPoller(TaskPollerConfig{
+			DB:                database,
+			Adapters:          map[string]adapter.ProviderAdapter{"hl": flaky},
+			AssetDir:          t.TempDir(),
+			ImagePollInterval: 10 * time.Millisecond,
+			ImageInitialDelay: 10 * time.Millisecond,
+		})
+		taskID := uuid.New().String()
+		now := time.Now().UTC()
+		task := model.MediaTask{
+			ID: taskID, Provider: "hl", Model: "m", TaskType: "image_generation",
+			Prompt: "p", ParamsJSON: `{}`, Status: model.TaskStatusQueued, CreatedAt: now, UpdatedAt: now,
+		}
+		if err := database.Create(&task).Error; err != nil {
+			t.Fatalf("failed to create task: %v", err)
+		}
+		fake.SetNextPollResult(taskID, &adapter.PollResult{
+			Status: model.TaskStatusSucceeded, Progress: 100,
+			Assets: []model.TaskAsset{{Kind: "image_base", RemoteURL: "https://gw/signed/0", LocalPath: "images/" + taskID + "/base.png"}},
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		poller.ProcessTask(ctx, taskID)
+		var got model.MediaTask
+		if err := database.First(&got, "id = ?", taskID).Error; err != nil {
+			t.Fatalf("reload task: %v", err)
+		}
+		return got, flaky
+	}
+
+	t.Run("a fresh link downloads", func(t *testing.T) {
+		got, flaky := run(t, 2, 3)
+		if got.Status != model.TaskStatusSucceeded {
+			t.Fatalf("want succeeded, got %s/%s (%s)", got.Status, got.ErrorCode, got.ErrorMessage)
+		}
+		if flaky.retried != 2 || flaky.downloads != 3 {
+			t.Fatalf("want 2 re-queries and 3 downloads, got %d and %d", flaky.retried, flaky.downloads)
+		}
+	})
+	t.Run("retries run out", func(t *testing.T) {
+		got, flaky := run(t, 10, 2)
+		if got.Status != model.TaskStatusFailed || got.ErrorCode != "DownloadFailed" {
+			t.Fatalf("want failed/DownloadFailed, got %s/%s", got.Status, got.ErrorCode)
+		}
+		if flaky.downloads != 3 {
+			t.Fatalf("want 3 downloads (first + 2 retries), got %d", flaky.downloads)
+		}
+	})
 }
 
 func TestTaskPoller_StoresResultActionsAndTextWithoutAssets(t *testing.T) {

@@ -6,6 +6,7 @@ import { removeReferencePatch } from '../../engine/cardParams.ts';
 import { cardCapability } from '../../engine/capability.ts';
 import { NO_3D_MODELS_HINT, capViews, model3DPatch, setViewPatch, viewLabel, viewOf } from '../../engine/model3d.ts';
 import { compileHeighliner3DPayload } from '../../engine/heighlinerCompiler.ts';
+import { isHunyuan3D, promptGoesWithImages } from '../../engine/heighlinerRules.ts';
 import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from '../cards/ProviderModelPicker.tsx';
 import { Section, inputClass } from '../ui/index.ts';
@@ -27,6 +28,7 @@ export const ThreeDInspector: React.FC<Props> = ({ card, cards, update, linkedPr
   const refs = card.references ?? [];
   const cap = cardCapability(card);
   const views = cap ? capViews(cap) : [];
+  const promptDropped = !!cap && refs.length > 0 && !!card.prompt.trim() && !promptGoesWithImages(cap, card.capOptions);
 
   return (
     <>
@@ -51,7 +53,7 @@ export const ThreeDInspector: React.FC<Props> = ({ card, cards, update, linkedPr
       <Section title={`参考图 ${refs.length}/${views.length || '–'}`}>
         {refs.length === 0 ? (
           <p className="text-[11px] leading-relaxed text-slate-500">
-            从图片结果卡或上传的图片右侧的圆点拖线到这张卡片。第一张默认作为主图，之后可以给每张选视角，每个视角一张；哪些组合可用由网关校验。
+            从图片结果卡或上传的图片右侧的圆点拖线到这张卡片。第一张默认作为主图，之后可以给每张选视角，每个视角一张；主图和正面只能二选一，多视图需要其中一张。
           </p>
         ) : (
           <ul className="space-y-1">
@@ -81,6 +83,11 @@ export const ThreeDInspector: React.FC<Props> = ({ card, cards, update, linkedPr
               );
             })}
           </ul>
+        )}
+        {promptDropped && (
+          <p className="text-[11px] leading-relaxed text-amber-300/90">
+            {card.model} 连了参考图时只按图片生成，提示词不会发送{isHunyuan3D(cap) ? '（草图 Sketch 模式除外）' : ''}。
+          </p>
         )}
         {views.length > 0 && <p className="text-[11px] text-slate-500">可选视角：{views.map(viewLabel).join('、')}。选一个已被占用的视角时，两张图互换。</p>}
       </Section>

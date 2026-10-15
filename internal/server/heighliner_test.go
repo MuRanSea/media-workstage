@@ -94,6 +94,20 @@ func TestListHeighlinerModels_SortsBothCatalogsIntoCardKinds(t *testing.T) {
 		"Seedream lists \"openai\" in /v1/models too but stays an image model")
 }
 
+func TestListHeighlinerModels_TextModelsAreThoseWithNativeEndpointTypes(t *testing.T) {
+	// With no media catalog, Seedream's "openai" in supported_endpoint_types must still not
+	// make it a chat model: only native_endpoint_types (an array, null for media) decides.
+	gw := newHeighlinerGateway(t, `{"data":[]}`)
+	models, err := listHeighlinerModels(context.Background(), gw.Client(), gw.URL, "hl-key")
+	require.NoError(t, err)
+	types := typesByID(models)
+	assert.NotContains(t, types, "doubao-seedream-5-0-lite-260128")
+	assert.NotContains(t, types, "doubao-seedream-5-0-pro-260628")
+	assert.NotContains(t, types, "kling-3.0-omni")
+	assert.Equal(t, "chat", types["deepseek-flash"])
+	assert.Len(t, models, 18)
+}
+
 func TestListHeighlinerModels_SkipsUnknownMediaTypes(t *testing.T) {
 	gw := newHeighlinerGateway(t, `{"data":[{"id":"some-tts","type":"audio"},{"id":"img-1","type":"image","parameters":{}}]}`)
 	models, err := listHeighlinerModels(context.Background(), gw.Client(), gw.URL, "hl-key")

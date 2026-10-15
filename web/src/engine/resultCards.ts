@@ -6,7 +6,7 @@ import { firstFreeSlotBelow, firstFreeSlotRight } from './layout.ts';
 import { previewAspect } from './cardParams.ts';
 import { assetStoredPath } from './assetPaths.ts';
 import { sentVideoSettings } from './videoCompiler.ts';
-import { cardCapability, effectiveOptions, effectiveParams, isHeighliner } from './capability.ts';
+import { FINAL_RESOLUTION, cardCapability, isHeighliner, isSampleRun, sentOptions, sentParams } from './capability.ts';
 import { coverPath } from './model3d.ts';
 
 /** Image settings a result card records and reuses to shape its preview. */
@@ -131,9 +131,10 @@ export function snapshotOf(submitted: SpatialCard): ResultSnapshot {
   };
   if (cap || is3D) {
     delete snapshot.seed;
-    snapshot.capParams = effectiveParams(cap, submitted.capParams);
-    const options = effectiveOptions(cap, submitted.capOptions);
+    snapshot.capParams = sentParams(cap, submitted);
+    const options = sentOptions(cap, submitted);
     if (Object.keys(options).length) snapshot.capOptions = options;
+    if (isSampleRun(submitted)) params.sampleMode = true;
   }
   if (!isVideo && submitted.references?.length) {
     // Midjourney and Heighliner reference images; 3D ones with the view each showed.
@@ -262,15 +263,15 @@ export function runningActionIds(cards: SpatialCard[], sourceId: string): Set<st
 
 /** What runs an operation: result actions run on the source's own provider; Describe on a Midjourney one. */
 export interface OriginRunner {
-  type: 'image' | 'text';
+  type: 'image' | 'text' | 'video';
   provider?: SpatialCard['provider'];
   model: string;
 }
 
 /**
  * Adds the result card for a task the backend just accepted from an operation on
- * the result card `source`: a result action yields an image result, Describe a
- * text one. It is linked to `source`, sits in the first free slot right of it and
+ * the result card `source`: a result action yields an image result (a video sample's,
+ * a video one), Describe a text one. It is linked to `source`, sits in the first free slot right of it and
  * folds in the latest known task state. Idempotent per task.
  */
 export function addOriginResult(
@@ -290,6 +291,8 @@ export function addOriginResult(
     model: runner.model,
     prompt: runner.type === 'text' ? '' : source.prompt,
     references: undefined,
+    // 生成正式视频 from a sample: a full-size run, no longer a sample.
+    ...(runner.type === 'video' ? { sampleMode: false, capParams: { ...source.capParams, resolution: FINAL_RESOLUTION } } : {}),
   };
   const draft: SpatialCard = {
     ...resultDraft(submitted, resultIdFor(task.id), `${source.title} · ${origin.label}`),

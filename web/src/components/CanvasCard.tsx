@@ -137,6 +137,8 @@ export const CanvasCard = React.memo(function CanvasCard({
       isSubmitting={isSubmitting}
       runsInProgress={runsInProgress}
       onStartConnect={onStartConnect}
+      onRunAction={actions.runAction && card.role === 'result' ? (action) => actions.runAction?.(card.id, action) : undefined}
+      busyActionIds={busyActionIds}
     />
   );
 });

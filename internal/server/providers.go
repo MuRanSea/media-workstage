@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -827,17 +828,24 @@ func listHeighlinerModels(ctx context.Context, client *http.Client, baseURL, api
 	}
 	var text struct {
 		Data []struct {
-			ID                     string   `json:"id"`
-			SupportedEndpointTypes []string `json:"supported_endpoint_types"`
+			ID                     string          `json:"id"`
+			SupportedEndpointTypes []string        `json:"supported_endpoint_types"`
+			NativeEndpointTypes    json.RawMessage `json:"native_endpoint_types"`
 		} `json:"data"`
 	}
 	if err := fetchJSON(client, req, &text); err != nil {
 		return nil, err
 	}
 	for _, m := range text.Data {
-		if mediaIDs[m.ID] {
+		// Text models are the entries whose native_endpoint_types is an array (maybe []);
+		// image, video and 3D models carry null there but may still list "openai" among
+		// their supported types, so that field alone would mix them in.
+		native := bytes.TrimSpace(m.NativeEndpointTypes)
+		if mediaIDs[m.ID] || len(native) == 0 || native[0] != '[' {
 			continue
 		}
+		// Chat runs over /v1/chat/completions, which the platform serves natively or by
+		// conversion wherever "openai" is supported.
 		for _, t := range m.SupportedEndpointTypes {
 			if t == "openai" {
 				models = append(models, chat(m.ID))
