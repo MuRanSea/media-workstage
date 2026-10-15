@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  Box,
   ChevronsDownUp,
   ChevronsUpDown,
   Copy,
@@ -42,13 +43,16 @@ import {
   sectionRect,
 } from '../engine/sections.ts';
 import { cardsToRender, isAwaitingTask, lineMayCross, visibleWorldRect } from '../engine/culling.ts';
+import { viewLabel, viewOf } from '../engine/model3d.ts';
 import { dropOptions, type DropCardType, type DropRole } from '../engine/dropToCreate.ts';
 import { arrangeCards } from '../engine/arrange.ts';
 import { InspectorPanel, INSPECTOR_WIDTH } from './inspector/InspectorPanel.tsx';
 import { NavigationDock } from './NavigationDock.tsx';
 import { ADD_CARD_ITEMS, CanvasHeader } from './CanvasHeader.tsx';
 import { SettingsModal } from './SettingsModal.tsx';
-import { MediaViewer, type ViewerMedia } from './MediaViewer.tsx';
+import { MediaViewer } from './MediaViewer.tsx';
+import { Model3DViewer } from './Model3DViewer.tsx';
+import type { OpenableMedia } from './cards/cardProps.ts';
 import { ShortcutsDialog } from './ShortcutsDialog.tsx';
 import { Menu, useDialogs, useToast, type MenuEntry } from './ui/index.ts';
 
@@ -85,7 +89,7 @@ interface Ray {
   /** Source lines of results made by an operation on another result: the operation ("U2", "反推"). */
   sourceLabel?: string;
   /** Colour of the source card: pink image, indigo video, amber upload, emerald text; source lines are grey. */
-  tone?: 'pink' | 'amber' | 'emerald' | 'indigo';
+  tone?: 'pink' | 'amber' | 'emerald' | 'indigo' | 'sky';
   pathData: string;
   midX: number;
   midY: number;
@@ -126,9 +130,10 @@ const RAY_COLORS = {
   amber: { stroke: 'rgb(var(--c-amber-400))', pill: 'border-amber-500/60 text-amber-300' },
   indigo: { stroke: 'rgb(var(--c-indigo-400))', pill: 'border-indigo-500/60 text-indigo-300' },
   emerald: { stroke: 'rgb(var(--c-emerald-400))', pill: 'border-emerald-500/60 text-emerald-300' },
+  sky: { stroke: 'rgb(var(--c-sky-400))', pill: 'border-sky-500/60 text-sky-300' },
 } as const;
 
-const RAY_TONE = { image: 'pink', video: 'indigo', upload: 'amber', text: 'emerald' } as const;
+const RAY_TONE = { image: 'pink', video: 'indigo', upload: 'amber', text: 'emerald', '3d': 'sky' } as const;
 
 /** How far a connection curve bulges sideways past its end points. */
 const bulgeOf = (srcX: number, tgtX: number) => Math.max(80, Math.abs(tgtX - srcX) * 0.5);
@@ -140,11 +145,12 @@ const bezier = (srcX: number, srcY: number, tgtX: number, tgtY: number) => {
 
 const NO_CARDS: SpatialCard[] = [];
 
-const DROP_CARD_LABEL: Record<DropCardType, string> = { text: '文本卡片', image: '图片卡片', video: '视频卡片' };
+const DROP_CARD_LABEL: Record<DropCardType, string> = { text: '文本卡片', image: '图片卡片', video: '视频卡片', '3d': '3D' };
 const DROP_CARD_ICON: Record<DropCardType, React.ReactNode> = {
   text: <FileText className="w-4 h-4 text-emerald-400" />,
   image: <ImageIcon className="w-4 h-4 text-pink-400" />,
   video: <Film className="w-4 h-4 text-indigo-400" />,
+  '3d': <Box className="w-4 h-4 text-sky-400" />,
 };
 const DROP_ROLE_HINT: Record<DropRole, string> = {
   prompt: '作为提示词',
@@ -190,7 +196,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [linkDrag, setLinkDrag] = useState<LinkDrag | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-  const [viewer, setViewer] = useState<ViewerMedia | null>(null);
+  const [viewer, setViewer] = useState<OpenableMedia | null>(null);
   const [minimapVisible, setMinimapVisible] = useMinimapVisible();
   const toast = useToast();
   const channels = useChannels();
@@ -265,7 +271,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     onViewportChange?.(transform);
   }, [transform, onViewportChange]);
 
-  // A video takes minutes and its result card may be off screen by the time it is done: say so, and offer to jump to it.
+  // A video or 3D model takes minutes and its result card may be off screen by the time it is done: say so, and offer to jump to it.
   // A result finishing inside a collapsed section cannot be seen at all: say so too, and open the section to show it.
   const finishedIds = useRef<Set<string> | null>(null);
   useEffect(() => {
@@ -276,11 +282,11 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
     for (const card of cards) {
       if (!isFinished(card) || seen.has(card.id)) continue;
       const hiddenIn = collapsedSectionOf(card.id, sections, sectionMembers);
-      const isVideo = card.type === 'video' && card.status === 'succeeded' && !!card.sourceId;
-      if (!isVideo && !hiddenIn) continue;
+      const isLongRun = (card.type === 'video' || card.type === '3d') && card.status === 'succeeded' && !!card.sourceId;
+      if (!isLongRun && !hiddenIn) continue;
       const source = cards.find((c) => c.id === card.sourceId);
-      const message = isVideo
-        ? `「${source?.title ?? '视频'}」生成完成，结果在卡片「${card.title}」`
+      const message = isLongRun
+        ? `「${source?.title ?? (card.type === '3d' ? '3D' : '视频')}」生成完成，结果在卡片「${card.title}」`
         : `折叠的分区「${hiddenIn!.title}」里，「${card.title}」${card.status === 'failed' ? '生成失败' : '已生成'}`;
       toast(message, {
         tone: card.status === 'failed' ? 'warning' : 'success',
@@ -896,7 +902,8 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           ends: [srcX, srcY, tgtX, tgtY],
           midX: (srcX + tgtX) / 2,
           midY: (srcY + tgtY) / 2,
-          label: refTag(ref),
+          // A 3D card's lines name the view each image shows.
+          label: card.type === '3d' ? viewLabel(viewOf(ref)) : refTag(ref),
           onRemove: () => handleUpdateCard(card.id, removeReferencePatch(card, src.id)),
         });
       });
@@ -1044,7 +1051,12 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
 
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
       <ShortcutsDialog open={showShortcuts} onClose={() => setShowShortcuts(false)} />
-      {viewer && <MediaViewer media={viewer} onClose={() => setViewer(null)} />}
+      {viewer &&
+        (viewer.kind === 'model3d' ? (
+          <Model3DViewer media={viewer} onClose={() => setViewer(null)} />
+        ) : (
+          <MediaViewer media={viewer} onClose={() => setViewer(null)} />
+        ))}
       {contextMenu && (
         <Menu at={contextMenu.at} items={contextMenu.items} title={contextMenu.title} onClose={() => setContextMenu(null)} />
       )}
@@ -1098,12 +1110,13 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
           <div className="pointer-events-auto w-[min(92vw,440px)] p-6 rounded-2xl bg-canvas-surface/90 border border-slate-800 text-center shadow-2xl shadow-black/40">
             <h2 className="text-sm font-semibold text-slate-100">从一张卡片开始</h2>
             <p className="mt-1 text-xs text-slate-500">每张卡片完成一步生成，卡片之间可以连线传递提示词和参考图。</p>
-            <div className="mt-5 grid grid-cols-6 gap-2">
+            <div className="mt-5 grid grid-cols-12 gap-2">
               {(
                 [
                   ['text', undefined, '文本', '写提示词', <FileText key="t" className="w-5 h-5 text-emerald-400" />],
                   ['image', undefined, '图片', '生成图片', <ImageIcon key="i" className="w-5 h-5 text-pink-400" />],
                   ['video', undefined, '视频', '生成视频', <Film key="v" className="w-5 h-5 text-indigo-400" />],
+                  ['3d', undefined, '3D', '生成模型', <Box key="3d" className="w-5 h-5 text-sky-400" />],
                   ['upload', 'image', '上传图片', '本地图片', <Upload key="ui" className="w-5 h-5 text-amber-400" />],
                   ['upload', 'video', '上传视频', '本地视频', <Upload key="uv" className="w-5 h-5 text-amber-400" />],
                 ] as const
@@ -1112,7 +1125,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
                   key={`${type}-${kind ?? ''}`}
                   type="button"
                   onClick={() => addCard(type, undefined, kind)}
-                  className={`${i < 3 ? 'col-span-2' : 'col-span-3'} flex flex-col items-center gap-1.5 py-4 rounded-xl border border-slate-800 bg-canvas-bg hover:border-slate-600 hover:bg-slate-900 transition`}
+                  className={`${i < 4 ? 'col-span-3' : 'col-span-6'} flex flex-col items-center gap-1.5 py-4 rounded-xl border border-slate-800 bg-canvas-bg hover:border-slate-600 hover:bg-slate-900 transition`}
                 >
                   {icon}
                   <span className="text-xs font-semibold text-slate-200">{label}</span>

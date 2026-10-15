@@ -48,7 +48,7 @@ var anthropicImageTypes = map[string]bool{"image/jpeg": true, "image/png": true,
 func Supported(protocol model.Protocol) bool {
 	switch protocol {
 	case model.ProtocolOpenAICompatible, model.ProtocolAPIMart, model.ProtocolArk, model.ProtocolMiniMax, model.ProtocolGemini,
-		model.ProtocolAnthropic:
+		model.ProtocolAnthropic, model.ProtocolHeighliner:
 		return true
 	}
 	return false
@@ -71,6 +71,10 @@ func Generate(ctx context.Context, client *http.Client, protocol model.Protocol,
 			map[string]any{"thinking": map[string]string{"type": "disabled"}})
 	case model.ProtocolMiniMax:
 		text, err = chatCompletions(ctx, client, baseURL+"/text/chatcompletion_v2", apiKey, req, nil)
+	case model.ProtocolHeighliner:
+		// The base URL is the gateway root; its text entry lives under /v1. Standard
+		// fields only: the gateway routes to many vendors and rejects unknown ones.
+		text, err = chatCompletions(ctx, client, baseURL+"/v1/chat/completions", apiKey, req, nil)
 	case model.ProtocolGemini:
 		text, err = geminiGenerate(ctx, client, baseURL, apiKey, req)
 	case model.ProtocolAnthropic:

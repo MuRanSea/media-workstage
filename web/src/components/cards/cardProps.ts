@@ -2,6 +2,11 @@ import type React from 'react';
 import type { SpatialCard } from '../../types/canvas.ts';
 import type { MenuEntry } from '../ui/Menu.tsx';
 import type { ConnectHint } from './CardPorts.tsx';
+import type { ViewerMedia } from '../MediaViewer.tsx';
+import type { Model3DMedia } from '../Model3DViewer.tsx';
+
+/** What the full-screen viewer can open. */
+export type OpenableMedia = ViewerMedia | Model3DMedia;
 
 /** What the canvas hands every card view. */
 export interface CardViewProps {
@@ -15,6 +20,6 @@ export interface CardViewProps {
   onTriggerGenerate: (cardId: string) => void;
   /** Standard ⋯ menu entries (duplicate, delete) built by the canvas. */
   menuItems: MenuEntry[];
-  /** Opens the full-size media viewer. */
-  onOpenViewer: (media: { url: string; kind: 'image' | 'video'; title: string }) => void;
+  /** Opens the full-size media viewer, or the 3D preview. */
+  onOpenViewer: (media: OpenableMedia) => void;
 }

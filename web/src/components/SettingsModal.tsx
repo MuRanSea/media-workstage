@@ -551,6 +551,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   models={form.models}
                   presets={current.presets}
                   defaultType={meta.textOnly ? 'chat' : undefined}
+                  allow3d={meta.runs3d}
                   onChange={(models) => patchForm(channel.id, { models, modelsDirty: true })}
                 />
               </section>

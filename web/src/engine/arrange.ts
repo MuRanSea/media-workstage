@@ -14,7 +14,7 @@ const LOOSE_COLUMNS = 3;
 /** Inside a section: distance from its edges (below the title bar). */
 const SECTION_INSET = 40;
 
-const TYPE_ORDER: SpatialCard['type'][] = ['text', 'image', 'video', 'upload'];
+const TYPE_ORDER: SpatialCard['type'][] = ['text', 'image', 'video', '3d', 'upload'];
 
 export interface ArrangeResult {
   /** New top-left of every card that moved. */

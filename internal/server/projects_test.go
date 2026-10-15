@@ -280,3 +280,42 @@ func TestProjectsAPI_ExportImportDuplicate(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
 	assert.Len(t, list.Projects, 3)
 }
+
+// TestRevealAsset_ShowsProjectFilesOnly reveals a 3D model inside the project and refuses
+// paths that are missing or climb out of the assets folder.
+func TestRevealAsset_ShowsProjectFilesOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	database, err := db.InitDB(filepath.Join(t.TempDir(), "p.db"))
+	require.NoError(t, err)
+	sqlDB, _ := database.DB()
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	store, err := project.NewStore(t.TempDir())
+	require.NoError(t, err)
+	r := NewServer(database, t.TempDir(), adapter.NewAdapterRegistry(nil), store).SetupRouter()
+
+	var revealed []string
+	prev := revealFileFn
+	revealFileFn = func(path string) error { revealed = append(revealed, path); return nil }
+	t.Cleanup(func() { revealFileFn = prev })
+
+	w := postJSON(r, "/api/projects", map[string]string{"name": "3D"})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created project.Document
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	dir, err := store.Dir(created.ID)
+	require.NoError(t, err)
+	model := filepath.Join(dir, project.AssetsDir, "models", "t1", "model_00.glb")
+	require.NoError(t, os.MkdirAll(filepath.Dir(model), 0755))
+	require.NoError(t, os.WriteFile(model, []byte("glb"), 0644))
+
+	base := "/api/projects/" + created.ID + "/reveal-asset"
+	w = postJSON(r, base, map[string]string{"path": "/assets/models/t1/model_00.glb"})
+	require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+	assert.Equal(t, []string{model}, revealed)
+
+	w = postJSON(r, base, map[string]string{"path": "/assets/models/t1/missing.glb"})
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	w = postJSON(r, base, map[string]string{"path": "/assets/../project.json"})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Len(t, revealed, 1, "nothing else is revealed")
+}

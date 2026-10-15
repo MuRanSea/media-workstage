@@ -22,7 +22,11 @@ import (
 // boundModel is a model ID a provider offers, tagged by what it generates.
 type boundModel struct {
 	ID   string `json:"id"`
-	Type string `json:"type"` // image | video | chat | audio | other
+	Type string `json:"type"` // image | video | 3d | chat | audio | other
+	// Capability is the model's capability descriptor from a Heighliner gateway's media
+	// catalog. Catalog listings carry it, and it is saved per provider under
+	// "<id>_capabilities" when the catalog is fetched, never with the binding itself.
+	Capability json.RawMessage `json:"capability,omitempty"`
 }
 
 func img(id string) boundModel  { return boundModel{ID: id, Type: "image"} }
@@ -125,6 +129,14 @@ var protocolSpecs = map[model.Protocol]protocolSpec{
 		},
 		probeNeeds2xx: true,
 		listModels:    listAPIMartModels,
+	},
+	model.ProtocolHeighliner: {
+		newProbe: func(ctx context.Context, baseURL, apiKey string, _ map[string]string) (*http.Request, error) {
+			return newBearerRequest(ctx, http.MethodGet, baseURL+"/media/v1/models", apiKey)
+		},
+		probeNeeds2xx: true,
+		listModels:    listHeighlinerModels,
+		notFoundHint:  "接口路径不存在 (HTTP 404: %s)：Base URL 请填写网关根地址，如 https://platform.sgt.site，不要带 /v1 或 /media/v1",
 	},
 }
 
@@ -439,17 +451,56 @@ func boundModels(spec providerSpec, stored map[string]string) []boundModel {
 	if models == nil {
 		models = []boundModel{}
 	}
+	if caps := storedCapabilities(stored, spec.ID); len(caps) > 0 {
+		withCaps := make([]boundModel, len(models))
+		for i, m := range models {
+			m.Capability = caps[m.ID]
+			withCaps[i] = m
+		}
+		models = withCaps
+	}
 	return models
 }
 
-// sanitizeBoundModels trims, dedupes and keeps only bindable types: image, video and
-// chat (LLMs for text cards).
+// capabilitiesKey stores a provider's capability descriptors, model ID -> descriptor.
+func capabilitiesKey(id string) string { return id + "_capabilities" }
+
+// storedCapabilities reads the capability descriptors last fetched for a provider.
+func storedCapabilities(stored map[string]string, id string) map[string]json.RawMessage {
+	var caps map[string]json.RawMessage
+	if raw := stored[capabilitiesKey(id)]; raw != "" {
+		_ = json.Unmarshal([]byte(raw), &caps)
+	}
+	return caps
+}
+
+// catalogCapabilities collects the descriptors a fetched catalog carries; nil when it carries none.
+func catalogCapabilities(models []boundModel) map[string]json.RawMessage {
+	var caps map[string]json.RawMessage
+	for _, m := range models {
+		if len(m.Capability) == 0 {
+			continue
+		}
+		if caps == nil {
+			caps = make(map[string]json.RawMessage)
+		}
+		caps[m.ID] = m.Capability
+	}
+	return caps
+}
+
+// bindableTypes are what a model can be bound as: image, video and 3D cards, and chat
+// (LLMs for text cards).
+var bindableTypes = map[string]bool{"image": true, "video": true, "3d": true, "chat": true}
+
+// sanitizeBoundModels trims, dedupes and keeps only bindable types. Descriptors are
+// dropped: they are saved from the fetched catalog, not from what the client sends.
 func sanitizeBoundModels(in []boundModel) []boundModel {
 	out := make([]boundModel, 0, len(in))
 	seen := make(map[string]bool)
 	for _, m := range in {
 		id := strings.TrimSpace(m.ID)
-		if id == "" || seen[id] || (m.Type != "image" && m.Type != "video" && m.Type != "chat") {
+		if id == "" || seen[id] || !bindableTypes[m.Type] {
 			continue
 		}
 		seen[id] = true
@@ -580,17 +631,17 @@ func inferModelType(id string) string {
 	return "chat"
 }
 
-// sortModels puts image models first, then video, then the rest, each alphabetically.
+// sortModels puts image models first, then video, 3D, chat, then the rest, each alphabetically.
 func sortModels(models []boundModel) []boundModel {
-	rank := map[string]int{"image": 0, "video": 1, "chat": 2, "audio": 3}
+	rank := map[string]int{"image": 0, "video": 1, "3d": 2, "chat": 3, "audio": 4}
 	sort.SliceStable(models, func(i, j int) bool {
 		ri, ok := rank[models[i].Type]
 		if !ok {
-			ri = 4
+			ri = 5
 		}
 		rj, ok := rank[models[j].Type]
 		if !ok {
-			rj = 4
+			rj = 5
 		}
 		if ri != rj {
 			return ri < rj
@@ -730,6 +781,69 @@ func listAPIMartModels(ctx context.Context, client *http.Client, baseURL, apiKey
 			typ = inferModelType(m.ID)
 		}
 		models = append(models, boundModel{ID: m.ID, Type: typ})
+	}
+	return sortModels(models), nil
+}
+
+// heighlinerMediaTypes maps a media catalog model's type to the card kind it binds as.
+var heighlinerMediaTypes = map[string]string{"image": "image", "video": "video", "3d": "3d"}
+
+// listHeighlinerModels reads both catalogs of a Heighliner gateway (baseURL is its root):
+// /media/v1/models binds image, video and 3D models with their capability descriptors,
+// and /v1/models adds the chat models, those served over Chat Completions ("openai")
+// that are not media models (Seedream lists "openai" there too).
+func listHeighlinerModels(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]boundModel, error) {
+	req, err := newBearerRequest(ctx, http.MethodGet, baseURL+"/media/v1/models", apiKey)
+	if err != nil {
+		return nil, err
+	}
+	var media struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if err := fetchJSON(client, req, &media); err != nil {
+		return nil, err
+	}
+	var models []boundModel
+	mediaIDs := make(map[string]bool)
+	for _, raw := range media.Data {
+		var m struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &m) != nil || m.ID == "" {
+			continue
+		}
+		mediaIDs[m.ID] = true
+		typ, ok := heighlinerMediaTypes[m.Type]
+		if !ok {
+			continue // a kind no card runs yet
+		}
+		models = append(models, boundModel{ID: m.ID, Type: typ, Capability: raw})
+	}
+
+	req, err = newBearerRequest(ctx, http.MethodGet, baseURL+"/v1/models", apiKey)
+	if err != nil {
+		return nil, err
+	}
+	var text struct {
+		Data []struct {
+			ID                     string   `json:"id"`
+			SupportedEndpointTypes []string `json:"supported_endpoint_types"`
+		} `json:"data"`
+	}
+	if err := fetchJSON(client, req, &text); err != nil {
+		return nil, err
+	}
+	for _, m := range text.Data {
+		if mediaIDs[m.ID] {
+			continue
+		}
+		for _, t := range m.SupportedEndpointTypes {
+			if t == "openai" {
+				models = append(models, chat(m.ID))
+				break
+			}
+		}
 	}
 	return sortModels(models), nil
 }

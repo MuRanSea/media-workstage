@@ -7,7 +7,7 @@ import {
   type ListModelsResponse,
 } from '../services/api.ts';
 
-type BindableType = 'image' | 'video' | 'chat';
+type BindableType = 'image' | 'video' | '3d' | 'chat';
 type CatalogFilter = BindableType | 'other' | 'all';
 
 interface ModelBindingPanelProps {
@@ -22,12 +22,15 @@ interface ModelBindingPanelProps {
   presets?: BoundModel[];
   /** The kind the catalog opens on and hand-added IDs default to. */
   defaultType?: BindableType;
+  /** Offers 3D as a kind to bind by hand (only protocols that run 3D cards). */
+  allow3d?: boolean;
   onChange: (models: BoundModel[]) => void;
 }
 
 const TYPE_LABEL: Record<string, string> = {
   image: '图',
   video: '视频',
+  '3d': '3D',
   chat: '文本',
   audio: '音频',
   other: '其他',
@@ -36,11 +39,12 @@ const OTHER_BADGE = 'bg-slate-500/15 text-slate-400 border-slate-500/30';
 const TYPE_BADGE: Record<string, string> = {
   image: 'bg-pink-500/15 text-pink-300 border-pink-500/30',
   video: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+  '3d': 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
   chat: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
 };
 
 const isBindable = (m: BoundModel): m is BoundModel & { type: BindableType } =>
-  m.type === 'image' || m.type === 'video' || m.type === 'chat';
+  m.type === 'image' || m.type === 'video' || m.type === '3d' || m.type === 'chat';
 
 /**
  * Lets a channel bind the models cards may use: fetch the live catalog (or presets),
@@ -55,6 +59,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
   models,
   presets,
   defaultType = 'image',
+  allow3d = false,
   onChange,
 }) => {
   const [catalog, setCatalog] = useState<{
@@ -95,6 +100,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
   const counts: Record<CatalogFilter, number> = {
     image: catalogModels.filter((m) => m.type === 'image').length,
     video: catalogModels.filter((m) => m.type === 'video').length,
+    '3d': catalogModels.filter((m) => m.type === '3d').length,
     chat: catalogModels.filter((m) => m.type === 'chat').length,
     other: catalogModels.filter((m) => !isBindable(m)).length,
     all: catalogModels.length,
@@ -239,11 +245,14 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
               [
                 ['image', '图片'],
                 ['video', '视频'],
+                ['3d', '3D'],
                 ['chat', '文本'],
                 ['other', '其他'],
                 ['all', '全部'],
               ] as const
-            ).map(([key, label]) => (
+            )
+              .filter(([key]) => key !== '3d' || allow3d || counts['3d'] > 0)
+              .map(([key, label]) => (
               <button
                 key={key}
                 type="button"
@@ -363,6 +372,7 @@ export const ModelBindingPanel: React.FC<ModelBindingPanelProps> = ({
         >
           <option value="image">图片</option>
           <option value="video">视频</option>
+          {allow3d && <option value="3d">3D</option>}
           <option value="chat">文本</option>
         </select>
         <button

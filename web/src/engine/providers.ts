@@ -1,4 +1,4 @@
-import type { Protocol, ProviderConfigItem, ProviderId } from '../services/api.ts';
+import type { CapabilityDescriptor, Protocol, ProviderConfigItem, ProviderId } from '../services/api.ts';
 
 /**
  * Provider → Protocol lookup. Cards store only a provider ID; everything that depends on
@@ -19,11 +19,34 @@ const PRESETS: Record<string, { protocol: Protocol; name: string }> = {
 };
 
 let known = new Map<ProviderId, { protocol: Protocol; name: string }>(Object.entries(PRESETS));
+/** Capability descriptors of bound models (Heighliner), keyed by provider + model ID. */
+let capabilities = new Map<string, CapabilityDescriptor>();
+const capKey = (provider: ProviderId, model: string) => `${provider}\u0000${model}`;
+/** 3D models of configured Heighliner providers, in config order: new 3D cards start on the first. */
+let models3d: { provider: ProviderId; model: string }[] = [];
 
 /** Records the configured providers; the channel store calls this on every load. */
 export function rememberProviders(providers: ProviderConfigItem[]): void {
   known = new Map(Object.entries(PRESETS));
-  for (const p of providers) known.set(p.id, { protocol: p.protocol, name: p.name });
+  capabilities = new Map();
+  models3d = [];
+  for (const p of providers) {
+    known.set(p.id, { protocol: p.protocol, name: p.name });
+    for (const m of p.models) {
+      if (m.capability) capabilities.set(capKey(p.id, m.id), m.capability);
+      if (m.type === '3d' && p.protocol === 'heighliner' && p.is_configured) models3d.push({ provider: p.id, model: m.id });
+    }
+  }
+}
+
+/** The model a new 3D card starts on; undefined while no Heighliner provider offers one. */
+export function default3DModel(): { provider: ProviderId; model: string } | undefined {
+  return models3d[0];
+}
+
+/** The capability descriptor the gateway published for a bound model, if any. */
+export function capabilityOf(provider: ProviderId | undefined, model: string): CapabilityDescriptor | undefined {
+  return provider === undefined ? undefined : capabilities.get(capKey(provider, model));
 }
 
 /** The protocol a provider speaks; undefined for providers that are not configured here. */

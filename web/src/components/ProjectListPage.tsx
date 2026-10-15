@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Copy, Download, FileText, FileUp, Film, FolderOpen, Image as ImageIcon, MoreHorizontal, Pencil, Plus, Settings, Sparkles, Trash2 } from 'lucide-react';
+import { Box, Copy, Download, FileText, FileUp, Film, FolderOpen, Image as ImageIcon, MoreHorizontal, Pencil, Plus, Settings, Sparkles, Trash2 } from 'lucide-react';
 import { apiListProjects, apiRevealProject, type ProjectList, type ProjectSummary } from '../services/projects.ts';
 import { navigate, projectHref } from '../services/router.ts';
 import { assetUrl } from '../engine/assetPaths.ts';
@@ -143,6 +143,11 @@ export const ProjectListPage: React.FC = () => {
                     <span className="flex items-center gap-1">
                       <Film className="w-3.5 h-3.5 text-indigo-400" /> {p.cardCounts.video ?? 0}
                     </span>
+                    {!!p.cardCounts['3d'] && (
+                      <span className="flex items-center gap-1">
+                        <Box className="w-3.5 h-3.5 text-sky-400" /> {p.cardCounts['3d']}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

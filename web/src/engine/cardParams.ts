@@ -4,16 +4,29 @@ import {
   maxReferenceVideos,
   type AssetKind,
   type AssetRef,
+  type ReferenceItem,
   resolveVideoModelDef,
   type SpatialCard,
   type VideoModelDef,
   type VideoReferType,
   type VideoTaskMode,
 } from '../types/canvas.ts';
+import type { CapabilityDescriptor } from '../services/api.ts';
 import type { ModelOption } from './channelModels.ts';
-import { protocolOf } from './providers.ts';
+import { capabilityOf, protocolOf } from './providers.ts';
 import { withoutRefTag } from './refTags.ts';
 import { inferVideoProvider } from './videoCompiler.ts';
+import { MJ_MAX_REFERENCES } from './midjourney.ts';
+import {
+  capAssetKinds,
+  capReferenceLimit,
+  capValuesPatch,
+  capVideoDef,
+  capVideoModes,
+  cardCapability,
+  effectiveParams,
+  slotLimit,
+} from './capability.ts';
 
 /**
  * Parameter changes shared by cards and the inspector panel. Each returns the
@@ -24,6 +37,18 @@ import { inferVideoProvider } from './videoCompiler.ts';
 
 /** Switching an image card's model: Seedream (Ark protocol) gets its tier defaults, other protocols ratio + resolution. */
 export function imageModelPatch(card: SpatialCard, option: ModelOption): Partial<SpatialCard> {
+  if (option.protocol === 'heighliner') {
+    const cap = capabilityOf(option.provider, option.id);
+    return {
+      provider: option.provider,
+      model: option.id,
+      imageMode: 'single',
+      mjSpeed: undefined,
+      mjOperation: undefined,
+      ...capValuesPatch(cap, card),
+      ...fitReferences(card, slotLimit(cap, 'reference', 'image')),
+    };
+  }
   if (option.protocol === 'ark') {
     const def = IMAGE_MODELS.find((m) => m.id === option.id);
     return {
@@ -45,6 +70,22 @@ export function imageModelPatch(card: SpatialCard, option: ModelOption): Partial
   };
 }
 
+/** References beyond `limit` are dropped with their prompt tags; the rest become plain reference images. */
+function fitReferences(card: SpatialCard, limit: number): Partial<SpatialCard> {
+  const refs = card.references ?? [];
+  let prompt = card.prompt;
+  for (const dropped of refs.slice(limit)) prompt = withoutRefTag(prompt, dropped);
+  return { prompt, references: refs.slice(0, limit).map((r) => ({ ...r, role: 'reference_image' })) };
+}
+
+/** How many images an image card takes as references: Midjourney's 5, a Heighliner model's `reference` limit, else none. */
+export function imageReferenceLimit(card: SpatialCard): number {
+  const protocol = protocolOf(card.provider ?? 'ark');
+  if (protocol === 'midjourney') return MJ_MAX_REFERENCES;
+  if (protocol === 'heighliner') return slotLimit(cardCapability(card), 'reference', 'image');
+  return 0;
+}
+
 /** Midjourney-only settings (speed, Blend, reference images) do not carry over to other providers. */
 function midjourneyOnlyReset(option: ModelOption): Partial<SpatialCard> {
   return option.protocol === 'midjourney' ? {} : { mjSpeed: undefined, mjOperation: undefined, references: undefined };
@@ -54,6 +95,11 @@ function midjourneyOnlyReset(option: ModelOption): Partial<SpatialCard> {
 export function imageSizeSummary(card: SpatialCard): string {
   const ratio = card.imageRatioPreset ?? '16:9';
   const protocol = protocolOf(card.provider ?? 'ark');
+  if (protocol === 'heighliner') {
+    const v = effectiveParams(cardCapability(card), card.capParams);
+    const count = typeof v.n === 'number' && v.n > 1 ? `${v.n} 张` : '';
+    return [v.resolution, v.aspect_ratio, count].filter(Boolean).join(' · ') || '模型默认';
+  }
   if (protocol === 'midjourney') {
     const parts = [card.mjOperation === 'blend' ? 'Blend' : '', ratio, card.mjSpeed ? MJ_SPEED_LABELS[card.mjSpeed] : ''];
     return parts.filter(Boolean).join(' · ');
@@ -76,6 +122,13 @@ export function parseAspect(value: string | undefined): number | undefined {
 
 /** The shape the card asked for, used to size its preview before a result has loaded. */
 export function requestedAspect(card: SpatialCard): number | undefined {
+  // A 3D card's face is the gateway's square cover.
+  if (card.type === '3d') return 1;
+  if (protocolOf(card.provider) === 'heighliner') {
+    if (card.type === 'video' && card.mode === 'first_last_frame') return undefined;
+    const ratio = card.capParams?.aspect_ratio;
+    return typeof ratio === 'string' ? parseAspect(ratio) : undefined;
+  }
   if (card.type === 'video') return card.mode === 'first_last_frame' ? undefined : parseAspect(card.ratio);
   if (protocolOf(card.provider ?? 'ark') === 'ark' && card.sizeMode === 'custom_pixels') return parseAspect(card.customPixels);
   return parseAspect(card.imageRatioPreset ?? '16:9');
@@ -103,7 +156,57 @@ export function previewAspect(card: SpatialCard): number | undefined {
 // --- Video ---------------------------------------------------------------------
 
 export function videoModelDef(card: SpatialCard): VideoModelDef {
-  return resolveVideoModelDef(protocolOf(card.provider ?? inferVideoProvider(card.model)), card.model);
+  const protocol = protocolOf(card.provider ?? inferVideoProvider(card.model));
+  if (protocol === 'heighliner') return capVideoDef(cardCapability(card), card.model);
+  return resolveVideoModelDef(protocol, card.model);
+}
+
+/** How many connected references a video card takes in `mode` (images and videos together). */
+export function referenceCapacity(card: SpatialCard, mode: VideoTaskMode = card.mode ?? 'all_modal'): number {
+  if (protocolOf(card.provider) === 'heighliner') {
+    const cap = cardCapability(card);
+    return capReferenceLimit(cap, mode, 'image') + capReferenceLimit(cap, mode, 'video');
+  }
+  const def = videoModelDef(card);
+  return mode === 'first_last_frame' ? Math.min(2, def.maxRefs) : def.maxRefs;
+}
+
+/** Whether a video card asks for sound: its generate_audio value on Heighliner, its toggle elsewhere. */
+export function generatesAudio(card: SpatialCard): boolean {
+  if (protocolOf(card.provider) === 'heighliner') {
+    return effectiveParams(cardCapability(card), card.capParams).generate_audio === true;
+  }
+  return !!card.generateAudio && videoModelDef(card).supportsAudio;
+}
+
+/**
+ * A Heighliner video card's mode change: references are kept per kind up to what the
+ * mode's roles take (first/last frame keeps images only), and dropped ones lose their tags.
+ */
+function capModePatch(card: SpatialCard, cap: CapabilityDescriptor | undefined, mode: VideoTaskMode): Partial<SpatialCard> {
+  const refs = card.references ?? [];
+  let kept: ReferenceItem[];
+  if (mode === 'text_to_video') {
+    kept = [];
+  } else if (mode === 'first_last_frame') {
+    kept = refs
+      .filter((r) => r.role !== 'reference_video')
+      .slice(0, capReferenceLimit(cap, mode, 'image'))
+      .map((r, i) => ({ ...r, role: i === 0 ? 'first_frame' : 'last_frame' }));
+  } else {
+    const assets = card.assetRefs ?? [];
+    const room = (kind: AssetKind) => Math.max(0, capReferenceLimit(cap, mode, kind) - assets.filter((a) => a.kind === kind).length);
+    const images = refs.filter((r) => r.role !== 'reference_video').slice(0, room('image'));
+    const videos = refs.filter((r) => r.role === 'reference_video').slice(0, room('video'));
+    kept = refs
+      .filter((r) => images.includes(r) || videos.includes(r))
+      .map((r) => ({ ...r, role: r.role === 'reference_video' ? r.role : 'reference_image' }));
+  }
+  let prompt = card.prompt;
+  if (mode !== 'text_to_video') {
+    for (const dropped of refs.filter((r) => !kept.some((k) => k.cardId === r.cardId))) prompt = withoutRefTag(prompt, dropped);
+  }
+  return { mode, prompt, references: kept };
 }
 
 /** Changing mode drops or re-roles references to fit the mode and the model's limit. */
@@ -113,6 +216,7 @@ export function videoModePatch(
   maxRefs: number,
   ratio = card.ratio
 ): Partial<SpatialCard> {
+  if (protocolOf(card.provider) === 'heighliner') return capModePatch(card, cardCapability(card), mode);
   let references = (card.references ?? []).slice(0, maxRefs);
   let nextRatio = ratio;
   if (mode === 'text_to_video') {
@@ -148,6 +252,7 @@ function dropUnsupportedVideoRefs(card: SpatialCard, option: ModelOption): Parti
  * supports, and moves to a mode it accepts (keeping attached images as frames when possible).
  */
 export function videoModelPatch(card: SpatialCard, option: ModelOption): Partial<SpatialCard> {
+  if (option.protocol === 'heighliner') return capVideoModelPatch(card, option);
   const def = resolveVideoModelDef(option.protocol, option.id);
   const current = card.mode ?? 'all_modal';
   let mode = current;
@@ -168,6 +273,30 @@ export function videoModelPatch(card: SpatialCard, option: ModelOption): Partial
   return patch;
 }
 
+/**
+ * Switching a video card to a Heighliner model: values are fitted to its descriptor, the
+ * mode moves to one its roles open, and references and asset items beyond its limits go.
+ */
+function capVideoModelPatch(card: SpatialCard, option: ModelOption): Partial<SpatialCard> {
+  const cap = capabilityOf(option.provider, option.id);
+  const modes = capVideoModes(cap);
+  const current = card.mode ?? 'all_modal';
+  const preferred: VideoTaskMode = (card.references?.length ?? 0) > 0 ? 'first_last_frame' : 'text_to_video';
+  const mode = modes.includes(current) ? current : modes.includes(preferred) ? preferred : modes[0];
+  const kinds = capAssetKinds(cap);
+  const assetRefs = card.assetRefs?.filter((a) => kinds.includes(a.kind));
+  const next: SpatialCard = { ...card, provider: option.provider, model: option.id, assetRefs };
+  const patch: Partial<SpatialCard> = {
+    provider: option.provider,
+    model: option.id,
+    videoReferType: undefined,
+    ...capValuesPatch(cap, card),
+    ...capModePatch(next, cap, mode),
+  };
+  patch.assetRefs = mode === 'all_modal' ? fitAssetRefs({ ...next, ...patch }, capVideoDef(cap, option.id)) : assetRefs;
+  return patch;
+}
+
 /** Removing a reference also removes its @图N tags from the prompt. */
 export function removeReferencePatch(card: SpatialCard, refCardId: string): Partial<SpatialCard> {
   const ref = card.references?.find((r) => r.cardId === refCardId);
@@ -177,6 +306,12 @@ export function removeReferencePatch(card: SpatialCard, refCardId: string): Part
 
 /** e.g. "720p · 5s · 16:9"; "自适应" for adaptive duration. */
 export function videoSpecSummary(card: SpatialCard): string {
+  if (protocolOf(card.provider) === 'heighliner') {
+    const v = effectiveParams(cardCapability(card), card.capParams);
+    const duration = v.duration === undefined ? '' : v.duration === -1 ? '自适应时长' : `${v.duration}s`;
+    const ratio = card.mode === 'first_last_frame' ? '随首帧' : v.aspect_ratio === 'adaptive' ? '自适应' : v.aspect_ratio;
+    return [v.resolution, duration, ratio].filter(Boolean).join(' · ') || '模型默认';
+  }
   const duration = card.duration === -1 ? '自适应时长' : `${card.duration ?? 5}s`;
   const ratio = card.mode === 'first_last_frame' ? '随首帧' : card.ratio;
   return [card.resolution, duration, ratio].filter(Boolean).join(' · ');
@@ -199,9 +334,17 @@ export const ASSET_KIND_LABELS: Record<AssetKind, string> = { image: '图片', v
 /** The word the prompt uses for each kind, as for connected cards (图N, 视频N). */
 const ASSET_PROMPT_NOUN: Record<AssetKind, string> = { image: '图', video: '视频', audio: '音频' };
 
-/** Asset-library references are Seedance's: only cards on an Ark-protocol provider take them. */
+/** Asset-library references: Seedance on Ark, and Heighliner models whose roles take asset IDs. */
 export function supportsAssetRefs(card: SpatialCard): boolean {
-  return protocolOf(card.provider ?? inferVideoProvider(card.model)) === 'ark';
+  return assetKindsFor(card).length > 0;
+}
+
+/** Kinds of asset-library items the card's model takes by ID. */
+export function assetKindsFor(card: SpatialCard): AssetKind[] {
+  const protocol = protocolOf(card.provider ?? inferVideoProvider(card.model));
+  if (protocol === 'ark') return ['image', 'video', 'audio'];
+  if (protocol === 'heighliner') return capAssetKinds(cardCapability(card));
+  return [];
 }
 
 /** "asset://asset-2026…" or "asset-2026…" → the bare ID; empty when the input is not a usable ID. */
@@ -212,6 +355,7 @@ export function normalizeAssetId(input: string): string {
 
 /** How many references of `kind` the model takes in multi-reference mode, connected cards and assets together. */
 export function kindLimit(card: SpatialCard, kind: AssetKind, def = videoModelDef(card)): number {
+  if (protocolOf(card.provider) === 'heighliner') return capReferenceLimit(cardCapability(card), 'all_modal', kind);
   if (kind === 'video') return maxReferenceVideos(protocolOf(card.provider ?? inferVideoProvider(card.model)), card.model);
   if (kind === 'audio') return def.maxAudioRefs ?? 0;
   return def.maxRefs;
@@ -254,6 +398,7 @@ export function addAssetRefPatch(
   kind: AssetKind
 ): { ok: true; patch: Partial<SpatialCard> } | { ok: false; reason: string } {
   if (!supportsAssetRefs(card)) return { ok: false, reason: '素材库只支持火山方舟的 Seedance 模型' };
+  if (!assetKindsFor(card).includes(kind)) return { ok: false, reason: `${card.model} 的${ASSET_KIND_LABELS[kind]}参考不支持素材 ID` };
   const assetId = normalizeAssetId(input);
   if (!assetId) return { ok: false, reason: '请填入素材 ID，例如 asset-20260401123823-6d4x2' };
   const assets = card.assetRefs ?? [];

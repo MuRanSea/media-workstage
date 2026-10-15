@@ -1,6 +1,6 @@
 import type { Protocol, ProviderId } from '../services/api.ts';
 
-export type CardType = 'image' | 'video' | 'text' | 'upload';
+export type CardType = 'image' | 'video' | 'text' | 'upload' | '3d';
 /** What an upload card holds. */
 export type UploadKind = 'image' | 'video';
 /** Review state of an asset uploaded to a provider's asset library. */
@@ -13,6 +13,11 @@ export type CanvasTool = 'select' | 'hand';
 export type MjSpeed = 'FAST' | 'RELAX' | 'TURBO';
 /** Midjourney: imagine from the prompt, or blend the reference images. */
 export type MjOperation = 'imagine' | 'blend';
+/** A Heighliner capability parameter's value, and values by name. */
+export type CapValue = string | number | boolean;
+export type CapValues = Record<string, CapValue>;
+/** Vendor options by namespace, e.g. { kling: { multi_shot: true } }. */
+export type CapOptions = Record<string, CapValues>;
 
 export const MJ_SPEED_LABELS: Record<MjSpeed, string> = { FAST: 'Fast', RELAX: 'Relax', TURBO: 'Turbo' };
 
@@ -20,7 +25,8 @@ export interface TaskAssetDto {
   id: string;
   task_id: string;
   asset_index: number;
-  kind: 'image_base' | 'image_layer' | 'image_frame' | 'video';
+  /** 3D runs: `model3d` files (one per format), the Express preview `video` and the `cover` image. */
+  kind: 'image_base' | 'image_layer' | 'image_frame' | 'video' | 'model3d' | 'cover';
   name?: string;
   description?: string;
   z_index: number;
@@ -63,6 +69,8 @@ export interface ReferenceItem {
   tagIndex: number;
   role: 'reference_image' | 'reference_video' | 'first_frame' | 'last_frame';
   label: string;
+  /** 3D cards: the view this image shows, as the gateway role (`reference` = 主图, `multi_view_left` …). */
+  view?: string;
 }
 
 /**
@@ -80,8 +88,11 @@ export interface ResultSnapshot {
   model: string;
   params: Record<string, string | number | boolean>;
   seed?: number;
-  /** Video runs: the reference images and videos they were submitted with. */
-  references?: Pick<ReferenceItem, 'cardId' | 'tagIndex' | 'role' | 'label'>[];
+  /** Heighliner runs: the gateway parameters and vendor options sent. */
+  capParams?: CapValues;
+  capOptions?: CapOptions;
+  /** Runs with references: the reference images and videos they were submitted with (3D: and each one's view). */
+  references?: Pick<ReferenceItem, 'cardId' | 'tagIndex' | 'role' | 'label' | 'view'>[];
 }
 
 /**
@@ -169,6 +180,12 @@ export interface SpatialCard {
   references?: ReferenceItem[];
   /** Seedance (Ark protocol), multi-reference mode: items already in the Ark asset library. */
   assetRefs?: AssetRef[];
+  /**
+   * Heighliner cards: values for the model's capability parameters (aspect_ratio, n, …) and
+   * vendor options by namespace (provider_options.<ns>), as the descriptor names them (ADR 0010).
+   */
+  capParams?: CapValues;
+  capOptions?: CapOptions;
 
   // Image parameters for non-Seedream channels (ratio reuses imageRatioPreset)
   imageResolution?: '1K' | '2K' | '4K';

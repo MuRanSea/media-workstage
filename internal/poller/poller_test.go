@@ -761,3 +761,57 @@ func TestTaskPoller_StoresResultActionsAndTextWithoutAssets(t *testing.T) {
 		t.Fatalf("result actions not stored: %+v", got.ResultActions)
 	}
 }
+
+// glbDownloadAdapter writes a GLB wherever it is asked to, as a gateway that names no format does.
+type glbDownloadAdapter struct {
+	*adapter.FakeProviderAdapter
+}
+
+func (glbDownloadAdapter) DownloadAsset(_ context.Context, _ string, target string) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(target, []byte("glTF\x02\x00\x00\x00"), 0644)
+}
+
+func TestTaskPoller_SniffedGLBKeepsItsExtension(t *testing.T) {
+	database := setupTestDB(t)
+	dir := t.TempDir()
+	fake := adapter.NewFakeProviderAdapter("heighliner")
+	poller := NewTaskPoller(TaskPollerConfig{
+		DB:                database,
+		Adapters:          map[string]adapter.ProviderAdapter{"heighliner": glbDownloadAdapter{fake}},
+		AssetDir:          dir,
+		VideoPollInterval: 10 * time.Millisecond,
+		VideoInitialDelay: 10 * time.Millisecond,
+	})
+
+	taskID := uuid.New().String()
+	now := time.Now().UTC()
+	task := model.MediaTask{
+		ID: taskID, Provider: "heighliner", Model: "tripo-3d-3.1", TaskType: "3d_generation",
+		Prompt: "小熊", ParamsJSON: `{}`, Status: model.TaskStatusQueued, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := database.Create(&task).Error; err != nil {
+		t.Fatalf("failed to create task: %v", err)
+	}
+	fake.SetNextPollResult(taskID, &adapter.PollResult{
+		Status: model.TaskStatusSucceeded, Progress: 100,
+		Assets: []model.TaskAsset{{Kind: "model3d", Name: "bin", RemoteURL: "https://gw/artifacts/0", LocalPath: "models/" + taskID + "/model_00.bin"}},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	poller.ProcessTask(ctx, taskID)
+
+	var asset model.TaskAsset
+	if err := database.First(&asset, "task_id = ?", taskID).Error; err != nil {
+		t.Fatalf("reload asset: %v", err)
+	}
+	if asset.LocalPath != "models/"+taskID+"/model_00.glb" || asset.Name != "glb" {
+		t.Fatalf("want the GLB stored as .glb, got %s (%s)", asset.LocalPath, asset.Name)
+	}
+	if _, err := os.Stat(filepath.Join(dir, asset.LocalPath)); err != nil {
+		t.Fatalf("renamed file missing: %v", err)
+	}
+}

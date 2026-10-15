@@ -1,7 +1,8 @@
-import { SEEDREAM_PIXEL_MAP, type MjOperation, type MjSpeed, type ReferenceItem, type SpatialCard } from '../types/canvas.ts';
+import { SEEDREAM_PIXEL_MAP, type CapOptions, type CapValues, type MjOperation, type MjSpeed, type ReferenceItem, type SpatialCard } from '../types/canvas.ts';
 import type { CreateTaskPayload, ProviderId } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
 import { MJ_MAX_REFERENCES, MJ_MIN_BLEND_IMAGES, midjourneyReferences } from './midjourney.ts';
+import { compileHeighlinerImagePayload } from './heighlinerCompiler.ts';
 
 export interface ImageCompilationInput {
   /** Provider running the model; defaults to 'ark'. Ark-protocol providers get Seedream rules. */
@@ -19,7 +20,10 @@ export interface ImageCompilationInput {
   imageResolution?: '1K' | '2K' | '4K';
   mjSpeed?: MjSpeed;
   mjOperation?: MjOperation;
-  /** Midjourney reference images, resolved against `allCards`. */
+  /** Heighliner: capability parameter values and vendor options (ADR 0010). */
+  capParams?: CapValues;
+  capOptions?: CapOptions;
+  /** Midjourney and Heighliner reference images, resolved against `allCards`. */
   references?: ReferenceItem[];
   allCards?: SpatialCard[];
 }
@@ -30,6 +34,7 @@ export interface ImageCompilationInput {
  */
 export function compileImageTaskPayload(input: ImageCompilationInput): CreateTaskPayload {
   const provider = input.provider ?? 'ark';
+  if (protocolOf(provider) === 'heighliner') return compileHeighlinerImagePayload(provider, input);
   if (protocolOf(provider) !== 'ark') {
     return compileChannelImagePayload(provider, input);
   }
@@ -144,6 +149,8 @@ export function compileCardImagePayload(card: SpatialCard, allCards: SpatialCard
     imageResolution: card.imageResolution,
     mjSpeed: card.mjSpeed,
     mjOperation: card.mjOperation,
+    capParams: card.capParams,
+    capOptions: card.capOptions,
     references: card.references,
     allCards,
   });

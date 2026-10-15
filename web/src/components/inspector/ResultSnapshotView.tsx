@@ -3,6 +3,9 @@ import { MJ_SPEED_LABELS, type SpatialCard } from '../../types/canvas.ts';
 import { compileCardImagePayload } from '../../engine/compiler.ts';
 import { VIDEO_MODE_LABELS } from '../../engine/cardParams.ts';
 import { TEXT_PRESETS } from '../../engine/textPresets.ts';
+import { SPEC_LABELS } from '../../engine/capability.ts';
+import { refTag } from '../../engine/refTags.ts';
+import { viewLabel } from '../../engine/model3d.ts';
 import { useChannels } from '../../services/channels.ts';
 import { Section } from '../ui/index.ts';
 import { DevJson } from './DevJson.tsx';
@@ -31,6 +34,7 @@ const REFERENCE_ROLE_LABELS: Record<string, string> = {
   first_frame: '首帧',
   last_frame: '尾帧',
   reference_image: '参考',
+  reference_video: '参考视频',
 };
 
 const VALUE_LABELS: Record<string, string> = {
@@ -103,14 +107,27 @@ export const ResultSnapshotView: React.FC<{ card: SpatialCard; sourceTitle?: str
             {formatValue(key, value)}
           </Row>
         ))}
-        {!isText && <Row label="Seed">{snapshot.seed === undefined || snapshot.seed === -1 ? '随机' : snapshot.seed}</Row>}
+        {Object.entries(snapshot.capParams ?? {}).map(([key, value]) => (
+          <Row key={key} label={SPEC_LABELS[key] ?? key}>
+            {formatValue(key, value)}
+          </Row>
+        ))}
+        {Object.entries(snapshot.capOptions ?? {}).flatMap(([ns, values]) =>
+          Object.entries(values).map(([key, value]) => (
+            <Row key={`${ns}.${key}`} label={`${ns}.${key}`}>
+              {formatValue(key, value)}
+            </Row>
+          ))
+        )}
+        {!isText && !snapshot.capParams && <Row label="Seed">{snapshot.seed === undefined || snapshot.seed === -1 ? '随机' : snapshot.seed}</Row>}
         <p className="text-[11px] leading-relaxed text-slate-500">生成时的参数，只读。要换参数请改生成卡后再生成。</p>
       </Section>
       {snapshot.references?.length ? (
         <Section title="参考图">
           {snapshot.references.map((ref) => (
-            <Row key={ref.cardId} label={REFERENCE_ROLE_LABELS[ref.role] ?? ref.role}>
-              @图{ref.tagIndex} {ref.label}
+            // 3D references name their view instead of a tag, since 3D prompts do not mention images.
+            <Row key={ref.cardId} label={ref.view ? viewLabel(ref.view) : REFERENCE_ROLE_LABELS[ref.role] ?? ref.role}>
+              {ref.view ? ref.label : `${refTag(ref)} ${ref.label}`}
             </Row>
           ))}
         </Section>
@@ -119,7 +136,7 @@ export const ResultSnapshotView: React.FC<{ card: SpatialCard; sourceTitle?: str
         compile={() =>
           // Video payloads and reference images need the referenced cards, which may be gone, and an
           // operation on another result ran with its own request: show the raw record.
-          card.type !== 'image' || card.origin || snapshot.references?.length ? { origin: card.origin, snapshot } : compileCardImagePayload({
+          card.type !== 'image' || card.origin || snapshot.references?.length || snapshot.capParams ? { origin: card.origin, snapshot } : compileCardImagePayload({
             ...card,
             ...snapshot.params,
             prompt: snapshot.prompt,

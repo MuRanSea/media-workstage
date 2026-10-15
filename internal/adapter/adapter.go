@@ -96,6 +96,8 @@ func NewProviderAdapter(protocol model.Protocol, providerID, baseURL, apiKey str
 		return NewAPIMartAdapter(cfg), true
 	case model.ProtocolMidjourney:
 		return NewMidjourneyAdapter(cfg), true
+	case model.ProtocolHeighliner:
+		return NewHeighlinerAdapter(cfg), true
 	}
 	return nil, false
 }

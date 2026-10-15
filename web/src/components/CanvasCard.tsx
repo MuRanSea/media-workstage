@@ -5,9 +5,9 @@ import { ImageCardView } from './cards/ImageCardView.tsx';
 import { VideoCardView } from './cards/VideoCardView.tsx';
 import { TextCardView } from './cards/TextCardView.tsx';
 import { UploadCardView } from './cards/UploadCardView.tsx';
+import { ThreeDCardView } from './cards/ThreeDCardView.tsx';
 import type { ConnectHint } from './cards/CardPorts.tsx';
-import type { CardViewProps } from './cards/cardProps.ts';
-import type { ViewerMedia } from './MediaViewer.tsx';
+import type { CardViewProps, OpenableMedia } from './cards/cardProps.ts';
 import type { MenuEntry } from './ui/index.ts';
 
 /**
@@ -22,7 +22,7 @@ export interface CardActions {
   updateCard: CardViewProps['onUpdateCard'];
   triggerGenerate: (cardId: string) => void;
   menuItems: (card: SpatialCard) => MenuEntry[];
-  openViewer: (media: ViewerMedia) => void;
+  openViewer: (media: OpenableMedia) => void;
   notice: (message: string) => void;
   /** Absent when the page cannot run result actions. */
   runAction?: (cardId: string, action: ResultActionDto) => void;
@@ -100,6 +100,18 @@ export const CanvasCard = React.memo(function CanvasCard({
   }
   if (card.type === 'upload') {
     return <UploadCardView {...common} onStartConnect={(e) => actions.startConnect(card, e)} />;
+  }
+  if (card.type === '3d') {
+    return (
+      <ThreeDCardView
+        {...common}
+        linkedPrompt={linkedPrompt}
+        onUnlinkPrompt={onUnlinkPrompt}
+        isSubmitting={isSubmitting}
+        runsInProgress={runsInProgress}
+        onNotice={actions.notice}
+      />
+    );
   }
   if (card.type === 'image') {
     return (

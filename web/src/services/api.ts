@@ -13,6 +13,8 @@ export interface CreateTaskPayload {
     card_id: string;
     tag_index: number;
     role: string;
+    /** Heighliner: the media type, since its roles do not imply it ("image" | "video" | "audio"). */
+    type?: string;
     label: string;
     url?: string;
     local_path?: string;
@@ -50,13 +52,70 @@ export interface BackendTaskResponse {
 export type ProviderId = string;
 
 /** API dialect a provider speaks; decides the adapter and which card kinds it can run. */
-export type Protocol = 'ark' | 'minimax' | 'kling' | 'midjourney' | 'gemini' | 'openai_compatible' | 'anthropic' | 'apimart';
+export type Protocol =
+  | 'ark'
+  | 'minimax'
+  | 'kling'
+  | 'midjourney'
+  | 'gemini'
+  | 'openai_compatible'
+  | 'anthropic'
+  | 'apimart'
+  | 'heighliner';
 
-export type ModelType = 'image' | 'video' | 'chat' | 'audio' | 'other';
+export type ModelType = 'image' | 'video' | '3d' | 'chat' | 'audio' | 'other';
 
 export interface BoundModel {
   id: string;
   type: ModelType;
+  /**
+   * The model's capability descriptor as the gateway's catalog gave it (Heighliner only);
+   * saved with the binding when models are fetched, never sent back.
+   */
+  capability?: CapabilityDescriptor;
+}
+
+/** One field of a capability descriptor's `parameters` or `provider_options_schema`. */
+export interface CapabilityParam {
+  type: 'string' | 'integer' | 'number' | 'boolean' | 'object' | 'array';
+  enum?: (string | number)[];
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
+  default?: unknown;
+  required?: boolean;
+  description?: string;
+  /** Object schemas (`provider_options_schema` and its namespaces). */
+  properties?: Record<string, CapabilityParam>;
+  additionalProperties?: boolean;
+}
+
+/**
+ * A reference role a model accepts: what media, how many, and whether asset IDs work.
+ * A role may appear once per media type (e.g. `reference` for images and for video).
+ */
+export interface CapabilityReference {
+  role: string;
+  types: string[];
+  max_count?: number;
+  max_bytes?: number;
+  supports_asset?: boolean;
+  requires_asset?: boolean;
+}
+
+/** A Heighliner media model's entry in `GET /media/v1/models` (ADR 0010). */
+export interface CapabilityDescriptor {
+  id: string;
+  type: 'image' | 'video' | '3d';
+  provider?: string;
+  sync?: boolean;
+  supports_cancel?: boolean;
+  capability_version?: number;
+  parameters?: Record<string, CapabilityParam>;
+  references?: CapabilityReference[];
+  /** JSON Schema object whose properties are vendor namespaces (`kling`, `tencent`…). */
+  provider_options_schema?: CapabilityParam;
 }
 
 export interface ProviderConfigItem {

@@ -25,6 +25,7 @@ describe('dropOptions', () => {
       ['text', 'prompt'],
       ['image', 'prompt'],
       ['video', 'prompt'],
+      ['3d', 'prompt'],
     ]);
     for (const o of out) {
       expect(o.card.role).toBe('generation');
@@ -32,16 +33,21 @@ describe('dropOptions', () => {
     }
   });
 
-  it('offers a text card (reads the image) and a video card (reference) for an image result', () => {
+  it('offers a text card (reads the image), a video card and a 3D card (reference) for an image result', () => {
     const img = card({ id: 'i1', type: 'image', role: 'result', tagIndex: 3, provider: 'ark', model: 'doubao-seedream-5-0-pro-260628' });
     const out = dropOptions(img, at, [img]);
     expect(out.map((o) => [o.type, o.role])).toEqual([
       ['text', 'read_image'],
       ['video', 'reference_image'],
+      ['3d', 'reference_image'],
     ]);
     const video = out.find((o) => o.type === 'video')!.card;
     expect(video.references?.[0]).toMatchObject({ cardId: 'i1', tagIndex: 3 });
     expect(video.prompt).toContain('@图3');
+    // A 3D card takes it as the main image and does not tag its prompt.
+    const model = out.find((o) => o.type === '3d')!.card;
+    expect(model.references?.[0]).toMatchObject({ cardId: 'i1', view: 'reference' });
+    expect(model.prompt).toBe('');
   });
 
   it('offers only a video card for a video result', () => {

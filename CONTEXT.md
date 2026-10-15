@@ -34,12 +34,16 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   Any card on the canvas. Two kinds: a **Generation Card** (where a generation is configured) and a **Result Card** (what a generation produced).
 
 - **Generation Card (生成卡)**:
-  A card that holds the prompt, model and parameters of an image, video or text (LLM) generation and can be run any number of times. It holds no output itself: every run yields new Result Cards linked to it.
+  A card that holds the prompt, model and parameters of an image, video, 3D or text (LLM) generation and can be run any number of times. It holds no output itself: every run yields new Result Cards linked to it.
   _Avoid_: 参数卡
 
 - **Result Card (结果卡)**:
   A card holding exactly one finished output — one image, one video or one text — linked to the Generation Card whose run produced it (or to the Result Card a `Result action` or Midjourney Describe ran on), and the thing other cards connect to and reuse. It appears as soon as the backend accepts the run and shows the run's progress until the output arrives (a text run is synchronous, so its Result Card appears when the text returns). A generation that yields several outputs (layers, storyboard frames) yields one Result Card per output. Image Result Cards carry an `@图N` tag and video Result Cards an `@视频N` tag (one shared counter); text ones carry none. An **Upload Card** is a Result Card with no source. Deleting its Generation Card leaves a Result Card standing on its own, without a source.
   _Avoid_: 素材卡, asset card (collides with `TaskAsset`), 输出卡
+
+- **3D Generation Card / 3D Result Card (3D 生成卡 / 3D 结果卡)**:
+  The 3D kind of Generation Card and Result Card, run only on a Heighliner Provider. A 3D Generation Card takes image cards as references, each assigned a view (主图, or 正面 / 左 / 右 / 背 / 顶 / 底 / 左前 / 右前). One run yields exactly one 3D Result Card holding one **model**: every file format of it the run produced, with the gateway's cover image as its face. A 3D Result Card carries no tag and cannot be connected onward — nothing consumes a model.
+  _Avoid_: 模型卡 ("model" already names the AI model a card runs)
 
 - **MediaTask (媒体生成任务)**:
   An asynchronous generation job managed by the local Go backend (`media_tasks` table). Transitions through `Queued` → `Running` → `Succeeded` / `Failed` / `Cancelled` / `Expired`. Tracks token usage (`usage_tokens`) and billing metadata (`billing_details_json`).
@@ -58,8 +62,16 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   A Provider that ships with the app (火山方舟, MiniMax, OpenAI, …) under a fixed legacy ID. It can be renamed and have its credential cleared, but never deleted. User-added Providers are **Custom Providers (自定义服务商)** and can be deleted; one can be added for any Protocol that can run cards, and it offers the same built-in models as the Preset Provider of its Protocol.
 
 - **Protocol (接入协议)**:
-  The API dialect a Provider speaks (Ark native, MiniMax, OpenAI-compatible, Anthropic, Gemini, APIMart, MJ Proxy). The Anthropic protocol (Messages API) runs text cards only. Determines which `ProviderAdapter` serves the Provider and which card kinds it can run.
+  The API dialect a Provider speaks (Ark native, MiniMax, OpenAI-compatible, Anthropic, Gemini, APIMart, MJ Proxy, Heighliner). The Anthropic protocol (Messages API) runs text cards only. Determines which `ProviderAdapter` serves the Provider and which card kinds it can run.
   _Avoid_: provider type, vendor
+
+- **Heighliner protocol (Heighliner 平台协议)**:
+  The Heighliner gateway's own protocol: its media platform protocol (`/media/v1`) for image, video and 3D cards plus its Chat Completions entry for text cards, all through one key. A Heighliner Provider is configured with the gateway's root address and is only ever user-added (no Preset Provider); its models come from the gateway's catalogs. The gateway's vendor-native and APIMart entries are not this protocol.
+  _Avoid_: 媒体平台 (alone — the gateway also serves text), 网关服务商
+
+- **Capability descriptor (能力描述)**:
+  What one model on a Heighliner Provider declares it accepts, as listed in the gateway's catalog: its parameters with their allowed values, the reference roles it takes (and whether each takes an asset library item), and its vendor options. A Heighliner card offers exactly what the descriptor declares, never what the same model accepts on another Protocol.
+  _Avoid_: model spec, 模型定义 (the hand-written limits other Protocols use)
 
 - **ProviderAdapter (服务商适配器)**:
   The architectural boundary seam that isolates one `Protocol`'s third-party API contract. Translates generic `MediaTaskRequest` into protocol-specific payloads and normalizes polling responses; each Provider gets its own adapter instance.

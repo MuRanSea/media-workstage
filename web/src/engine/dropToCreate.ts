@@ -4,7 +4,7 @@ import { cascadeFrom, createCard } from './cardFactory.ts';
 import { connectCards } from './connections.ts';
 
 /** Generation card kinds a line dropped on empty canvas can create. */
-const CREATABLE = ['text', 'image', 'video'] as const;
+const CREATABLE = ['text', 'image', 'video', '3d'] as const;
 export type DropCardType = (typeof CREATABLE)[number];
 
 /** What the new card will do with the source's output. */

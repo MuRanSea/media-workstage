@@ -6,6 +6,8 @@ import { firstFreeSlotBelow, firstFreeSlotRight } from './layout.ts';
 import { previewAspect } from './cardParams.ts';
 import { assetStoredPath } from './assetPaths.ts';
 import { sentVideoSettings } from './videoCompiler.ts';
+import { cardCapability, effectiveOptions, effectiveParams, isHeighliner } from './capability.ts';
+import { coverPath } from './model3d.ts';
 
 /** Image settings a result card records and reuses to shape its preview. */
 const IMAGE_PARAMS = [
@@ -38,13 +40,15 @@ const PREVIEW_MAX_HEIGHT = 480;
 /** Model / spec summary row under a result card's preview. */
 const SUMMARY_ROW = 30;
 /** Generation card body: prompt, summary row and the Generate button; video adds reference chips. */
-const GENERATION_BODY = { image: 150, video: 180, text: 150, upload: 0 } as const;
+const GENERATION_BODY = { image: 150, video: 180, text: 150, upload: 0, '3d': 170 } as const;
 /** Upload panel under an uploaded or generated image or video: provider, upload buttons and what was uploaded. */
 const UPLOAD_PANEL = 110;
 /** One row of result action buttons (Midjourney's U row, V row, …). */
 const ACTION_ROW = 30;
 /** Text result card body: summary row and a few rows of editable text. */
 const TEXT_RESULT_BODY = 160;
+/** 3D result card: the format chips and the 在文件夹中显示 button under its cover. */
+const MODEL_FILES_ROW = 64;
 
 /**
  * Height to leave room for when placing new cards: what the card measures, but
@@ -67,6 +71,7 @@ export function estimateCardHeight(card: SpatialCard): number {
   // No preview on generation cards.
   if (card.role === 'generation') return HEADER + PADDING + GENERATION_BODY[card.type];
   if (card.type === 'text') return HEADER + PADDING + TEXT_RESULT_BODY;
+  if (card.type === '3d') return HEADER + PADDING + preview + SUMMARY_ROW + MODEL_FILES_ROW;
   const { upscale, variation, other } = groupActions(card.resultActions ?? []);
   const actionRows = [upscale, variation, other].filter((row) => row.length).length;
   return HEADER + PADDING + preview + SUMMARY_ROW + UPLOAD_PANEL + actionRows * ACTION_ROW;
@@ -109,8 +114,11 @@ export function snapshotOf(submitted: SpatialCard): ResultSnapshot {
     };
   }
   const isVideo = submitted.type === 'video';
+  const is3D = submitted.type === '3d';
   const params: ResultSnapshot['params'] = {};
-  for (const key of isVideo ? VIDEO_PARAMS : IMAGE_PARAMS) {
+  const cap = isHeighliner(submitted.provider) ? cardCapability(submitted) : undefined;
+  // Heighliner settings live in the descriptor's own parameters; the built-in fields do not apply.
+  for (const key of cap || is3D ? [] : isVideo ? VIDEO_PARAMS : IMAGE_PARAMS) {
     const value = submitted[key];
     if (value !== undefined) params[key] = value;
   }
@@ -121,15 +129,24 @@ export function snapshotOf(submitted: SpatialCard): ResultSnapshot {
     params,
     seed: isVideo ? submitted.seed : submitted.seedImage,
   };
+  if (cap || is3D) {
+    delete snapshot.seed;
+    snapshot.capParams = effectiveParams(cap, submitted.capParams);
+    const options = effectiveOptions(cap, submitted.capOptions);
+    if (Object.keys(options).length) snapshot.capOptions = options;
+  }
   if (!isVideo && submitted.references?.length) {
-    // Midjourney reference images.
-    snapshot.references = submitted.references.map(({ cardId, tagIndex, role, label }) => ({ cardId, tagIndex, role, label }));
+    // Midjourney and Heighliner reference images; 3D ones with the view each showed.
+    snapshot.references = submitted.references.map(({ cardId, tagIndex, role, label, view }) =>
+      is3D ? { cardId, tagIndex, role, label, view: view ?? 'reference' } : { cardId, tagIndex, role, label }
+    );
   }
   if (isVideo) {
     // Record what the compiler sends, which the mode can rewrite.
     const sent = sentVideoSettings(submitted);
     params.mode = sent.mode;
     params.ratio = sent.ratio;
+    if (cap) delete params.ratio;
     if (sent.references.length) {
       snapshot.references = sent.references.map(({ cardId, tagIndex, role, label }) => ({ cardId, tagIndex, role, label }));
     }
@@ -153,7 +170,8 @@ export function addPendingResult(
   const draft: SpatialCard = {
     ...resultDraft(submitted, resultIdFor(task.id), `${submitted.title} #${resultCardsOf(cards, submitted.id).length + 1}`),
     taskId: task.id,
-    tagIndex: submitted.type === 'text' ? undefined : nextTagIndex(cards),
+    // Text and 3D results are never referenced by tag.
+    tagIndex: submitted.type === 'text' || submitted.type === '3d' ? undefined : nextTagIndex(cards),
   };
 
   return settleResult([...cards, placeResult(cards, submitted, draft, heightOf)], draft.id, task, heightOf);
@@ -179,6 +197,7 @@ export function resultDraft(submitted: SpatialCard, id: string, title: string): 
     provider: submitted.provider,
     model: submitted.model,
     ...snapshot.params,
+    ...(snapshot.capParams ? { capParams: snapshot.capParams } : {}),
     status: 'queued',
     progress: 0,
   };
@@ -329,6 +348,8 @@ export function applyTaskToCards(
 const ASSET_KINDS: Record<TaskAssetDto['kind'], { rank: number; label?: string }> = {
   video: { rank: 0 },
   image_base: { rank: 0 },
+  model3d: { rank: 0 },
+  cover: { rank: 0 },
   image_layer: { rank: 1, label: '图层' },
   image_frame: { rank: 2, label: '分镜' },
 };
@@ -349,6 +370,11 @@ export function orderedAssets(assets: TaskAssetDto[]): TaskAssetDto[] {
 function settleResult(cards: SpatialCard[], placeholderId: string, task: BackendTaskResponse, heightOf: HeightOf): SpatialCard[] {
   const assets = task.status === 'succeeded' ? orderedAssets(task.assets ?? []) : [];
   let first = applyTaskToCard(cards.find((c) => c.id === placeholderId)!, task);
+  // A 3D run is one model: every file stays on its one card, the cover as its face.
+  if (first.type === '3d') {
+    if (assets.length) first = { ...first, outputAssets: assets, resultUrl: coverPath(assets) };
+    return cards.map((c) => (c.id === placeholderId ? first : c));
+  }
   if (assets.length) first = { ...first, outputAssets: [assets[0]], resultUrl: assetStoredPath(assets[0]) };
   let next = cards.map((c) => (c.id === placeholderId ? first : c));
   // A video task's extra assets (a returned last frame) belong to the video.

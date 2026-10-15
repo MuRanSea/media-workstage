@@ -3,6 +3,8 @@ import { inferVideoProvider } from './videoCompiler.ts';
 import { protocolOf } from './providers.ts';
 import { mentionsTag, refTag, withoutRefTag } from './refTags.ts';
 import { MJ_MAX_REFERENCES, isMidjourney } from './midjourney.ts';
+import { capReferenceLimit, capVideoModes, cardCapability, isHeighliner, slotLimit } from './capability.ts';
+import { nextView, viewLabel } from './model3d.ts';
 
 export type ConnectResult =
   | { ok: true; patch: Partial<SpatialCard> }
@@ -10,15 +12,15 @@ export type ConnectResult =
 
 /**
  * Which cards expose an output port (can be dragged from): result cards, uploads
- * included. Generation cards hold no output.
+ * included. Generation cards hold no output, and nothing takes a 3D model.
  */
 export function hasOutputPort(card: SpatialCard): boolean {
-  return card.role === 'result';
+  return card.role === 'result' && card.type !== '3d';
 }
 
 /** Which cards expose input slots (can be dropped on): generation cards. Results are finished. */
 export function hasInputPort(card: SpatialCard): boolean {
-  return card.role === 'generation' && (card.type === 'image' || card.type === 'video' || card.type === 'text');
+  return card.role === 'generation' && card.type !== 'upload';
 }
 
 /** How many images a text card sends to its LLM (internal/llm.MaxImages). */
@@ -33,11 +35,13 @@ export const TEXT_MAX_IMAGES = 6;
  *   upload → video      : the uploaded image or video becomes a reference
  *   image → Midjourney image card (uploads included): a reference image to imagine or blend from
  *   image → text        : the image goes to the LLM with the prompt (uploads included)
+ *   image → 3D          : the image shows one view of the object (uploads included)
  */
 export function connectCards(source: SpatialCard, target: SpatialCard): ConnectResult {
   if (source.id === target.id) return { ok: false, reason: '不能连接到自己' };
   if (source.role === 'generation') return { ok: false, reason: '生成卡没有输出端口，请从它的结果卡连线' };
   if (target.role === 'result') return { ok: false, reason: '结果卡没有输入端口' };
+  if (source.type === '3d') return { ok: false, reason: '3D 结果卡不能连接到其他卡片' };
 
   if (source.type === 'text') {
     if (target.promptSourceId === source.id) return { ok: false, reason: '已经连接过了' };
@@ -49,7 +53,12 @@ export function connectCards(source: SpatialCard, target: SpatialCard): ConnectR
     if (!isImage) return { ok: false, reason: '文本卡片只接收图片，不接收视频' };
     return attachImageToText(source, target);
   }
+  if (target.type === '3d') {
+    if (!isImage) return { ok: false, reason: '3D 卡片只接收图片' };
+    return attachImageTo3D(source, target);
+  }
   if (isImage && target.type === 'image') {
+    if (isHeighliner(target.provider)) return attachImageToCapImage(source, target);
     if (!isMidjourney(target)) return { ok: false, reason: '只有 Midjourney 图片卡片支持连入参考图' };
     return attachImageToMidjourney(source, target);
   }
@@ -68,6 +77,7 @@ export function connectCards(source: SpatialCard, target: SpatialCard): ConnectR
 function attachImageToVideo(image: SpatialCard, video: SpatialCard): ConnectResult {
   const refs = video.references ?? [];
   if (refs.some((r) => r.cardId === image.id)) return { ok: false, reason: '已经连接过了' };
+  if (isHeighliner(video.provider)) return attachImageToCapVideo(image, video);
 
   const provider = video.provider ?? inferVideoProvider(video.model);
   const def = resolveVideoModelDef(protocolOf(provider), video.model);
@@ -101,6 +111,19 @@ function attachImageToVideo(image: SpatialCard, video: SpatialCard): ConnectResu
   return { ok: true, patch: { mode, ratio, prompt, references: [...refs, newRef] } };
 }
 
+/** A 3D card takes one image per view; the first free view is assigned (主图 first) and can be changed in the panel. */
+function attachImageTo3D(image: SpatialCard, card: SpatialCard): ConnectResult {
+  const refs = card.references ?? [];
+  if (refs.some((r) => r.cardId === image.id)) return { ok: false, reason: '已经连接过了' };
+  if (image.tagIndex === undefined) return { ok: false, reason: '这张图片卡没有 @图 编号，无法引用' };
+  const { view, views } = nextView(card);
+  if (!view) {
+    return { ok: false, reason: `${card.model || '当前模型'} 最多 ${views.length} 张参考图（${views.map(viewLabel).join('、')}各一张）` };
+  }
+  const newRef: ReferenceItem = { cardId: image.id, tagIndex: image.tagIndex, role: 'reference_image', label: image.title.slice(0, 10), view };
+  return { ok: true, patch: { references: [...refs, newRef] } };
+}
+
 /** A Midjourney card takes up to 5 images; its prompt does not name them, so no tag is added. */
 function attachImageToMidjourney(image: SpatialCard, card: SpatialCard): ConnectResult {
   const refs = card.references ?? [];
@@ -127,6 +150,7 @@ function attachImageToText(image: SpatialCard, card: SpatialCard): ConnectResult
 function attachVideoToVideo(clip: SpatialCard, video: SpatialCard): ConnectResult {
   const refs = video.references ?? [];
   if (refs.some((r) => r.cardId === clip.id)) return { ok: false, reason: '已经连接过了' };
+  if (isHeighliner(video.provider)) return attachVideoToCapVideo(clip, video);
 
   const provider = video.provider ?? inferVideoProvider(video.model);
   const protocol = protocolOf(provider);
@@ -151,6 +175,76 @@ function attachVideoToVideo(clip: SpatialCard, video: SpatialCard): ConnectResul
   const tag = refTag(newRef);
   const prompt = mentionsTag(video.prompt, tag) ? video.prompt : `${video.prompt} ${tag}`.trim();
   return { ok: true, patch: { mode: 'all_modal', prompt, references: [...refs, newRef] } };
+}
+
+// --- Heighliner: limits come from the model's reference roles (ADR 0010) ---------------
+
+function taggedRef(source: SpatialCard, role: ReferenceItem['role']): ConnectResult | ReferenceItem {
+  if (source.tagIndex === undefined) {
+    return { ok: false, reason: role === 'reference_video' ? '这段视频没有 @视频 编号，无法引用' : '这张图片卡没有 @图 编号，无法引用' };
+  }
+  return { cardId: source.id, tagIndex: source.tagIndex, role, label: source.title.slice(0, 10) };
+}
+
+function withTag(prompt: string, ref: ReferenceItem): string {
+  const tag = refTag(ref);
+  return mentionsTag(prompt, tag) ? prompt : `${prompt} ${tag}`.trim();
+}
+
+/** A Heighliner image card takes images as `reference`, up to the role's max_count. */
+function attachImageToCapImage(image: SpatialCard, card: SpatialCard): ConnectResult {
+  const refs = card.references ?? [];
+  if (refs.some((r) => r.cardId === image.id)) return { ok: false, reason: '已经连接过了' };
+  const limit = slotLimit(cardCapability(card), 'reference', 'image');
+  if (limit === 0) return { ok: false, reason: `${card.model} 不支持参考图` };
+  if (refs.length >= limit) return { ok: false, reason: `${card.model} 最多 ${limit} 张参考图` };
+  const ref = taggedRef(image, 'reference_image');
+  if ('ok' in ref) return ref;
+  return { ok: true, patch: { prompt: withTag(card.prompt, ref), references: [...refs, ref] } };
+}
+
+/** Images a Heighliner video card already sends in `mode`: connected ones, plus image assets in multi-reference mode. */
+function imagesUsed(video: SpatialCard, mode: NonNullable<SpatialCard['mode']>): number {
+  const refs = video.references ?? [];
+  if (mode === 'first_last_frame') return refs.length;
+  return refs.filter((r) => r.role !== 'reference_video').length + (video.assetRefs ?? []).filter((a) => a.kind === 'image').length;
+}
+
+function attachImageToCapVideo(image: SpatialCard, video: SpatialCard): ConnectResult {
+  const refs = video.references ?? [];
+  const cap = cardCapability(video);
+  const modes = capVideoModes(cap);
+  let mode = video.mode ?? 'all_modal';
+  // A text-only card (or one on a mode the model lacks) moves to a mode whose roles take images.
+  if (mode === 'text_to_video' || !modes.includes(mode)) {
+    if (modes.includes('all_modal') && capReferenceLimit(cap, 'all_modal', 'image') > 0) mode = 'all_modal';
+    else if (modes.includes('first_last_frame')) mode = 'first_last_frame';
+    else return { ok: false, reason: `${video.model} 不支持参考图` };
+  }
+  const limit = capReferenceLimit(cap, mode, 'image');
+  if (imagesUsed(video, mode) >= limit) {
+    return { ok: false, reason: limit === 0 ? `${video.model} 在当前模式下不支持参考图` : `${video.model} 在当前模式下最多 ${limit} 张参考图` };
+  }
+  const role: ReferenceItem['role'] =
+    mode === 'first_last_frame' ? (refs.length === 0 ? 'first_frame' : 'last_frame') : 'reference_image';
+  const ref = taggedRef(image, role);
+  if ('ok' in ref) return ref;
+  return { ok: true, patch: { mode, prompt: withTag(video.prompt, ref), references: [...refs, ref] } };
+}
+
+function attachVideoToCapVideo(clip: SpatialCard, video: SpatialCard): ConnectResult {
+  const refs = video.references ?? [];
+  const cap = cardCapability(video);
+  const limit = capReferenceLimit(cap, 'all_modal', 'video');
+  if (limit === 0 || !capVideoModes(cap).includes('all_modal')) return { ok: false, reason: `${video.model} 不支持参考视频` };
+  if ((video.mode ?? 'all_modal') === 'first_last_frame') {
+    return { ok: false, reason: '首尾帧模式不能带参考视频，请先切换到「多图参考」' };
+  }
+  const used = refs.filter((r) => r.role === 'reference_video').length + (video.assetRefs ?? []).filter((a) => a.kind === 'video').length;
+  if (used >= limit) return { ok: false, reason: `${video.model} 最多 ${limit} 个参考视频` };
+  const ref = taggedRef(clip, 'reference_video');
+  if ('ok' in ref) return ref;
+  return { ok: true, patch: { mode: 'all_modal', prompt: withTag(video.prompt, ref), references: [...refs, ref] } };
 }
 
 /** The prompt a card actually generates with: its linked text card's output, if any. */

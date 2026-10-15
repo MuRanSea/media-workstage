@@ -8,7 +8,14 @@ import {
   isModelReady,
   isProviderMissing,
 } from '../../engine/channelModels.ts';
-import { assetPromptName, requestedAspect, videoModelDef, videoSpecSummary } from '../../engine/cardParams.ts';
+import {
+  assetPromptName,
+  generatesAudio,
+  referenceCapacity,
+  requestedAspect,
+  videoModelDef,
+  videoSpecSummary,
+} from '../../engine/cardParams.ts';
 import { connectCards } from '../../engine/connections.ts';
 import { cardTag, refTag } from '../../engine/refTags.ts';
 import { UPLOAD_REF_LABELS, mediaKindOf, offersUpload, sendsUploadedCopy, uploadRefKind } from '../../engine/uploadRefs.ts';
@@ -167,7 +174,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
     <SummaryRow
       model={modelLabel}
       spec={videoSpecSummary(card)}
-      extra={card.generateAudio && def.supportsAudio ? <Volume2 className="w-3 h-3 text-emerald-400 flex-shrink-0" /> : null}
+      extra={generatesAudio(card) ? <Volume2 className="w-3 h-3 text-emerald-400 flex-shrink-0" /> : null}
     />
   );
 
@@ -232,7 +239,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
             <Plus className="w-3 h-3" /> 添加
           </button>
           <span className="ml-auto text-slate-600 font-mono">
-            {refs.length}/{card.mode === 'first_last_frame' ? Math.min(2, def.maxRefs) : def.maxRefs}
+            {refs.length}/{referenceCapacity(card)}
           </span>
         </div>
       )}

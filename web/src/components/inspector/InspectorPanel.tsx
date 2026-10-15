@@ -6,6 +6,7 @@ import {
   AlignLeft,
   AlignRight,
   AlignStartVertical,
+  Box,
   FileText,
   Film,
   Image as ImageIcon,
@@ -23,6 +24,7 @@ import { VideoInspector } from './VideoInspector.tsx';
 import { TextInspector } from './TextInspector.tsx';
 import { ResultSnapshotView } from './ResultSnapshotView.tsx';
 import { UploadInspector } from './UploadInspector.tsx';
+import { ThreeDInspector } from './ThreeDInspector.tsx';
 
 export const INSPECTOR_WIDTH = 320;
 
@@ -31,6 +33,7 @@ const TYPE_META = {
   video: { label: '视频卡片', icon: Film },
   text: { label: '文本卡片', icon: FileText },
   upload: { label: '上传卡片', icon: Upload },
+  '3d': { label: '3D 卡片', icon: Box },
 } as const;
 
 const ROLE_LABEL = { generation: '生成卡', result: '结果卡' } as const;
@@ -118,6 +121,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               <VideoInspector card={single} cards={cards} update={update} linkedPromptText={linkedPromptFor(single)?.text} />
             )}
             {single?.type === 'text' && <TextInspector card={single} update={update} />}
+            {single?.type === '3d' && <ThreeDInspector card={single} cards={cards} update={update} linkedPromptText={linkedPromptFor(single)?.text} />}
           </>
         )}
 

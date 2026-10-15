@@ -2,17 +2,18 @@ import type { Protocol, ProviderConfigItem, ProviderId } from '../services/api.t
 import { IMAGE_MODELS, VIDEO_MODELS, isAPIMartVideoModel } from '../types/canvas.ts';
 import { protocolOf, providerName } from './providers.ts';
 
-export type MediaKind = 'image' | 'video' | 'text';
+export type MediaKind = 'image' | 'video' | 'text' | '3d';
 
 /** Protocols whose backend adapter can run every model of each kind (text = LLM chat). */
 export const READY_PROTOCOLS: Record<MediaKind, ReadonlySet<Protocol>> = {
-  image: new Set<Protocol>(['ark', 'openai_compatible', 'gemini', 'apimart', 'midjourney']),
-  video: new Set<Protocol>(['ark', 'minimax']),
-  text: new Set<Protocol>(['ark', 'minimax', 'openai_compatible', 'anthropic', 'gemini', 'apimart']),
+  image: new Set<Protocol>(['ark', 'openai_compatible', 'gemini', 'apimart', 'midjourney', 'heighliner']),
+  video: new Set<Protocol>(['ark', 'minimax', 'heighliner']),
+  text: new Set<Protocol>(['ark', 'minimax', 'openai_compatible', 'anthropic', 'gemini', 'apimart', 'heighliner']),
+  '3d': new Set<Protocol>(['heighliner']),
 };
 
 /** Bound model type each card kind draws from; text cards use chat (LLM) models. */
-const MODEL_TYPE: Record<MediaKind, string> = { image: 'image', video: 'video', text: 'chat' };
+const MODEL_TYPE: Record<MediaKind, string> = { image: 'image', video: 'video', text: 'chat', '3d': '3d' };
 
 function readyFor(kind: MediaKind, protocol: Protocol | undefined, modelId: string): boolean {
   if (!protocol) return false;
@@ -55,12 +56,16 @@ export interface ProviderGroup {
 }
 
 function optionFor(kind: MediaKind, provider: ProviderId, protocol: Protocol, id: string): ModelOption {
+  // Heighliner routes vendor models under their own IDs, so a matching built-in model lends its name.
+  const relayed = protocol === 'heighliner';
   const known =
-    kind === 'image'
-      ? protocol === 'ark'
+    kind === '3d'
+      ? undefined
+      : kind === 'image'
+      ? protocol === 'ark' || relayed
         ? IMAGE_MODELS.find((m) => m.id === id)
         : undefined
-      : VIDEO_MODELS.find((m) => m.id === id && m.protocol === protocol);
+      : VIDEO_MODELS.find((m) => m.id === id && (relayed || m.protocol === protocol));
   return { provider, protocol, id, label: known?.name ?? id, tag: known?.tag, ready: readyFor(kind, protocol, id) };
 }
 
@@ -76,7 +81,7 @@ function group(kind: MediaKind, provider: ProviderId, protocol: Protocol, name: 
  */
 export function buildProviderGroups(providers: ProviderConfigItem[], kind: MediaKind): ProviderGroup[] {
   if (providers.length === 0) {
-    if (kind === 'text') return [];
+    if (kind === 'text' || kind === '3d') return [];
     if (kind === 'image') {
       return [group('image', 'ark', 'ark', providerName('ark'), IMAGE_MODELS.map((m) => m.id))];
     }
@@ -87,8 +92,8 @@ export function buildProviderGroups(providers: ProviderConfigItem[], kind: Media
 
   const groups: ProviderGroup[] = [];
   for (const p of providers) {
-    // Mock adapters only generate media; a text card needs a real key.
-    if (!p.is_configured && (kind === 'text' || !runsMockedWithoutKey(p))) continue;
+    // Mock adapters only generate images and videos; text and 3D cards need a real key.
+    if (!p.is_configured && (kind === 'text' || kind === '3d' || !runsMockedWithoutKey(p))) continue;
     const ids = p.models.filter((m) => m.type === MODEL_TYPE[kind]).map((m) => m.id);
     if (ids.length > 0) groups.push(group(kind, p.id, p.protocol, p.name, ids));
   }

@@ -43,6 +43,11 @@ export function supportsAssetId(protocol: Protocol): boolean {
   return protocol === 'ark';
 }
 
+/** Protocols whose adapter uploads a referenced project file itself, so any saved file can go. */
+export function uploadsLocalFiles(protocol: Protocol): boolean {
+  return protocol === 'heighliner';
+}
+
 function assetProblem(card: SpatialCard): string {
   if (!card.assetId) return `卡片「${card.title}」选了「素材 ID」，但还没有上传到素材库`;
   if (card.assetStatus === 'Failed') return `卡片「${card.title}」的素材审核未通过：${card.assetError ?? '未知原因'}`;
@@ -61,11 +66,15 @@ function urlProblem(card: SpatialCard): string {
  * download URL, and an image that was never uploaded falls back to the saved file.
  * Throws a message telling the user what to do when the choice cannot be honoured.
  */
-export function uploadReference(card: SpatialCard, protocol: Protocol): { url?: string; localPath?: string } {
+export function uploadReference(
+  card: SpatialCard,
+  protocol: Protocol,
+  assetOk = supportsAssetId(protocol)
+): { url?: string; localPath?: string } {
   const choice = card.uploadRefMode;
 
   if (choice === 'asset') {
-    if (!supportsAssetId(protocol)) {
+    if (!assetOk) {
       throw new Error(`卡片「${card.title}」选了「素材 ID」，但该模型只支持链接（素材 ID 仅 Seedance 可用），请改选「链接」`);
     }
     const uri = assetUri(card);
@@ -86,6 +95,8 @@ export function uploadReference(card: SpatialCard, protocol: Protocol): { url?: 
   if (!card.resultUrl) {
     throw new Error(card.type === 'upload' ? `卡片「${card.title}」还没有选择${kind === 'video' ? '视频' : '图片'}` : `卡片「${card.title}」还没有生成完成`);
   }
+  // Heighliner uploads the project's own file to the gateway, videos included.
+  if (uploadsLocalFiles(protocol)) return { localPath: card.resultUrl };
   if (kind === 'video') {
     if (supportsAssetId(protocol) && card.assetId && card.assetStatus !== 'Active') throw new Error(assetProblem(card));
     throw new Error(

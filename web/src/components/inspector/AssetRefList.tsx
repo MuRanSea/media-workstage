@@ -2,16 +2,20 @@ import React, { useState } from 'react';
 import { X } from 'lucide-react';
 import type { AssetKind, SpatialCard } from '../../types/canvas.ts';
 import { ASSET_KIND_LABELS, addAssetRefPatch, assetPromptName, removeAssetRefPatch } from '../../engine/cardParams.ts';
+import { protocolOf } from '../../engine/providers.ts';
 import { Button, Segmented, inputClass } from '../ui/index.ts';
 
 interface Props {
   card: SpatialCard;
   update: (patch: Partial<SpatialCard>) => void;
+  /** Kinds the model takes by asset ID; all three when omitted. */
+  kinds?: AssetKind[];
 }
 
 /** A Seedance card's references to items already in the Ark asset library, entered by asset ID. */
-export const AssetRefList: React.FC<Props> = ({ card, update }) => {
-  const [kind, setKind] = useState<AssetKind>('image');
+export const AssetRefList: React.FC<Props> = ({ card, update, kinds = ['image', 'video', 'audio'] }) => {
+  const [picked, setKind] = useState<AssetKind>(kinds[0] ?? 'image');
+  const kind = kinds.includes(picked) ? picked : kinds[0] ?? 'image';
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const assets = card.assetRefs ?? [];
@@ -49,7 +53,7 @@ export const AssetRefList: React.FC<Props> = ({ card, update }) => {
       <Segmented
         value={kind}
         onChange={setKind}
-        options={(Object.keys(ASSET_KIND_LABELS) as AssetKind[]).map((k) => ({ value: k, label: ASSET_KIND_LABELS[k] }))}
+        options={kinds.map((k) => ({ value: k, label: ASSET_KIND_LABELS[k] }))}
       />
       <div className="flex gap-1.5">
         <input
@@ -70,7 +74,7 @@ export const AssetRefList: React.FC<Props> = ({ card, update }) => {
       </div>
       {error && <p className="text-[11px] text-rose-400">{error}</p>}
       <p className="text-[11px] leading-relaxed text-slate-500">
-        填入方舟素材库或虚拟人像库里已有素材的 ID；自己的文件请用上传卡片。提示词里用左侧的名字（如「视频1」）指代，不要写 ID。
+        填入{protocolOf(card.provider) === 'heighliner' ? '网关可用的素材库' : '方舟素材库或虚拟人像库'}里已有素材的 ID；自己的文件请用上传卡片。提示词里用左侧的名字（如「视频1」）指代，不要写 ID。
       </p>
     </div>
   );
