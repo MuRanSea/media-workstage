@@ -186,6 +186,12 @@ export interface SpatialCard {
    */
   capParams?: CapValues;
   capOptions?: CapOptions;
+  /**
+   * Heighliner Seedance 2.5 video cards: render a 480p sample (样片) instead of the video.
+   * Its result card offers 生成正式视频, which renders the full video from the sample. A result
+   * card carries the flag of the run that made it.
+   */
+  sampleMode?: boolean;
 
   // Image parameters for non-Seedream channels (ratio reuses imageRatioPreset)
   imageResolution?: '1K' | '2K' | '4K';

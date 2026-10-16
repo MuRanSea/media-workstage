@@ -15,7 +15,7 @@ import { useProjectActions } from './useProjectActions.ts';
 import { Button, useToast } from './ui/index.ts';
 import { compileCardImagePayload } from '../engine/compiler.ts';
 import { compileCardVideoPayload } from '../engine/videoCompiler.ts';
-import { compileHeighliner3DPayload } from '../engine/heighlinerCompiler.ts';
+import { compileFinalizePayload, compileHeighliner3DPayload } from '../engine/heighlinerCompiler.ts';
 import { withEffectivePrompt } from '../engine/connections.ts';
 import { compileTextPayload } from '../engine/textCompiler.ts';
 import { MISSING_PROVIDER_HINT, isProviderMissing } from '../engine/channelModels.ts';
@@ -278,8 +278,13 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
     runOnResult(sourceId, actionKey(sourceId, action.id), async (source) => {
       if (isProviderMissing(providers, source.provider)) throw new Error(MISSING_PROVIDER_HINT);
       const label = actionLabel(action);
-      const accepted = await apiCreateTask({ ...compileActionPayload(source, action, label), project_id: projectId });
-      const runner = { type: 'image' as const, provider: source.provider, model: source.model };
+      // A video sample's 生成正式视频 yields a video; every other result action (Midjourney's) an image.
+      const isVideo = source.type === 'video';
+      const accepted = await apiCreateTask({
+        ...(isVideo ? compileFinalizePayload(source, action) : compileActionPayload(source, action, label)),
+        project_id: projectId,
+      });
+      const runner = { type: isVideo ? ('video' as const) : ('image' as const), provider: source.provider, model: source.model };
       return {
         accepted,
         add: (all, src) => addOriginResult(all, src, { operation: 'action', label, actionId: action.id }, runner, accepted, measuredHeight),

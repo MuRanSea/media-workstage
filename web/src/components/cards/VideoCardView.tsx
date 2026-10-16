@@ -1,6 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { AtSign, Film, Maximize2, Plus, Sparkles, Volume2 } from 'lucide-react';
-import type { SpatialCard } from '../../types/canvas.ts';
+import { AtSign, Film, Loader2, Maximize2, Plus, Sparkles, Volume2 } from 'lucide-react';
+import type { ResultActionDto, SpatialCard } from '../../types/canvas.ts';
+import { actionLabel } from '../../engine/resultCards.ts';
+import { FINAL_RESOLUTION, SAMPLE_RESOLUTION } from '../../engine/capability.ts';
 import {
   MISSING_PROVIDER_HINT,
   buildProviderGroups,
@@ -52,6 +54,10 @@ interface VideoCardViewProps extends CardViewProps {
   runsInProgress?: number;
   /** Result cards: drag from the output port to use the video as a reference video. */
   onStartConnect?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  /** Result cards: runs a follow-up the finished task offers (a sample's 生成正式视频). */
+  onRunAction?: (action: ResultActionDto) => void;
+  /** Ids of result actions being submitted or with a run in progress. */
+  busyActionIds?: ReadonlySet<string>;
 }
 
 export const VideoCardView: React.FC<VideoCardViewProps> = ({
@@ -71,6 +77,8 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   isSubmitting = false,
   runsInProgress = 0,
   onStartConnect,
+  onRunAction,
+  busyActionIds,
 }) => {
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -174,7 +182,14 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
     <SummaryRow
       model={modelLabel}
       spec={videoSpecSummary(card)}
-      extra={generatesAudio(card) ? <Volume2 className="w-3 h-3 text-emerald-400 flex-shrink-0" /> : null}
+      extra={
+        <>
+          {generatesAudio(card) ? <Volume2 className="w-3 h-3 text-emerald-400 flex-shrink-0" /> : null}
+          {card.role === 'result' && card.sampleMode && (
+            <span className="flex-shrink-0 px-1 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">样片</span>
+          )}
+        </>
+      }
     />
   );
 
@@ -327,6 +342,32 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       >
         {player}
         {summary}
+        {card.status === 'succeeded' && !!card.resultActions?.length && onRunAction && (
+          <div className="flex flex-wrap gap-1">
+            {card.resultActions.map((action) => {
+              const running = busyActionIds?.has(action.id);
+              const label = actionLabel(action);
+              return (
+                <button
+                  key={action.id}
+                  type="button"
+                  disabled={running}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => onRunAction(action)}
+                  title={
+                    running
+                      ? `${label} 正在生成`
+                      : `用这条 ${SAMPLE_RESOLUTION} 样片生成 ${FINAL_RESOLUTION} 正式视频（新的一张结果卡，单独计费；样片 7 天内有效）`
+                  }
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-700 bg-slate-800/60 text-[11px] text-slate-200 hover:border-indigo-500/60 hover:text-indigo-200 disabled:opacity-50"
+                >
+                  {running ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {offersUpload(card) && <UploadPanel card={card} onUpdateCard={onUpdateCard} accent="indigo" />}
         {card.errorMessage && <ErrorBox message={card.errorMessage} />}
       </CardShell>

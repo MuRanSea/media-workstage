@@ -25,6 +25,7 @@ const PARAM_LABELS: Record<string, string> = {
   duration: '时长',
   ratio: '比例',
   generateAudio: '生成音频',
+  sampleMode: '样片',
   textPreset: '预设',
   mjSpeed: '速度',
   mjOperation: 'Midjourney',

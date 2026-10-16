@@ -124,9 +124,10 @@ describe('views', () => {
 
   it('makes the first image the main one and gives later ones the next free view, with no prompt tag', () => {
     const out = connectAll(model3d(HY30), image('a', 1), image('b', 2));
+    // 正面 is the main image's own slot, so the second image goes to the next view.
     expect(out.references?.map((r) => [r.cardId, r.view])).toEqual([
       ['a', 'reference'],
-      ['b', 'multi_view_front'],
+      ['b', 'multi_view_left'],
     ]);
     expect(out.prompt).toBe('');
   });
@@ -162,11 +163,11 @@ describe('views', () => {
     const start = connectAll(model3d(HY30), image('a', 1), image('b', 2), image('c', 3));
     const withViews = { ...start, ...setViewPatch(start, 'c', 'multi_view_top'), capOptions: { tencent: { generate_type: 'LowPoly', face_count: 5000 } } };
     const tripo = { ...withViews, ...model3DPatch(withViews, { provider: HL, id: TRIPO_P1 }) };
-    // Tripo has no top view: that image takes the first free one.
+    // Tripo has no top view: that image takes the first free one (not 正面, the main image's slot).
     expect(tripo.references?.map((r) => [r.cardId, r.view])).toEqual([
       ['a', 'reference'],
-      ['b', 'multi_view_front'],
-      ['c', 'multi_view_left'],
+      ['b', 'multi_view_left'],
+      ['c', 'multi_view_right'],
     ]);
     expect(effectiveOptions(cap(TRIPO_P1), tripo.capOptions).tencent).not.toHaveProperty('generate_type');
     const express = { ...tripo, ...model3DPatch(tripo, { provider: HL, id: EXPRESS }) };

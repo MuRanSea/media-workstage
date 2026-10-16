@@ -189,7 +189,9 @@ export const CapabilitySections: React.FC<{
   update: (patch: Partial<SpatialCard>) => void;
   accent: Accent;
   ratioNote?: string;
-}> = ({ card, update, accent, ratioNote }) => {
+  /** Common parameters fixed by a mode of the card (a sample is always 480p): shown, not editable. */
+  locked?: Record<string, string>;
+}> = ({ card, update, accent, ratioNote, locked }) => {
   const cap = cardCapability(card);
   if (!cap) {
     return (
@@ -202,7 +204,7 @@ export const CapabilitySections: React.FC<{
   }
   const values = effectiveParams(cap, card.capParams);
   const options = effectiveOptions(cap, card.capOptions);
-  const spec = specFields(cap).filter((f) => !(ratioNote && f.name === 'aspect_ratio'));
+  const spec = specFields(cap).filter((f) => !(ratioNote && f.name === 'aspect_ratio') && !locked?.[f.name]);
   const groups = optionGroups(cap);
   return (
     <>
@@ -212,7 +214,12 @@ export const CapabilitySections: React.FC<{
             <p className="text-xs text-slate-400">{ratioNote}</p>
           </Field>
         )}
-        {spec.length === 0 && !ratioNote && <p className="text-[11px] text-slate-500">这个模型没有可调的通用参数。</p>}
+        {Object.entries(locked ?? {}).map(([name, text]) => (
+          <Field key={name} label={SPEC_LABELS[name] ?? name}>
+            <p className="text-xs text-slate-400">{text}</p>
+          </Field>
+        ))}
+        {spec.length === 0 && !ratioNote && !locked && <p className="text-[11px] text-slate-500">这个模型没有可调的通用参数。</p>}
         <CapabilityFields
           fields={spec}
           values={values}

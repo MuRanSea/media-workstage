@@ -220,6 +220,8 @@ func TestHeighliner_ExpiredFileIsUploadedAgainOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "task_ok", id)
 	assert.Equal(t, 2, g.uploads)
+	assert.Equal(t, []string{"x", "x", "x-reupload"}, g.idemKeys,
+		"the body names a new file, so the resubmission must not reuse the key")
 }
 
 func TestHeighliner_SubmitErrorsKeepGatewayCodeAndMessage(t *testing.T) {
@@ -297,9 +299,11 @@ func TestHeighliner_PollKeepsWaitingWhileReconcilingOrPending(t *testing.T) {
 	res, err = a.PollTask(context.Background(), task)
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStatusSucceeded, res.Status)
-	require.Len(t, res.Assets, 1, "last frames and audio are not results")
+	require.Len(t, res.Assets, 2, "audio is not a result; a returned last frame goes with the video")
 	assert.Equal(t, "video", res.Assets[0].Kind)
 	assert.Equal(t, "videos/vid/output.mp4", res.Assets[0].LocalPath)
+	assert.Equal(t, "image_frame", res.Assets[1].Kind)
+	assert.Equal(t, "videos/vid/last_frame.png", res.Assets[1].LocalPath)
 	assert.JSONEq(t, `{"status":"settled","currency":"CNY","amount":"1.200000"}`, res.BillingDetailsJSON)
 }
 
@@ -410,7 +414,7 @@ func TestHeighliner_UpstreamDownloadsNeverCarryTheKey(t *testing.T) {
 
 func TestHeighliner_PollTimeout(t *testing.T) {
 	a := NewHeighlinerAdapter(ChannelConfig{})
-	assert.Equal(t, 15*time.Minute, a.PollTimeout(&model.MediaTask{TaskType: "image_generation"}))
+	assert.Equal(t, 30*time.Minute, a.PollTimeout(&model.MediaTask{TaskType: "image_generation"}))
 	assert.Zero(t, a.PollTimeout(&model.MediaTask{TaskType: "3d_generation"}))
 	ad, ok := NewProviderAdapter(model.ProtocolHeighliner, "hl-1", "https://platform.sgt.site", "k", nil)
 	require.True(t, ok)
@@ -432,10 +436,278 @@ func TestRenameSniffedModel(t *testing.T) {
 	assert.FileExists(t, renamed)
 	assert.NoFileExists(t, glb)
 
-	// Unknown bytes, and files that already have a real extension, stay as they are.
-	other := write("model_01.bin", "PK\x03\x04zip")
+	// A ZIP (an OBJ or FBX with its textures) and a binary FBX are named too.
+	zip := write("model_01.bin", "PK\x03\x04zip")
+	assert.Equal(t, filepath.Join(dir, "model_01.zip"), RenameSniffedModel(zip))
+	fbx := write("model_03.bin", "Kaydara FBX Binary  \x00\x1a\x00")
+	assert.Equal(t, filepath.Join(dir, "model_03.fbx"), RenameSniffedModel(fbx))
+
+	// Unknown bytes (an OBJ is plain text), and files that already have a real extension,
+	// stay as they are.
+	other := write("model_04.bin", "v 0 0 0\n")
 	assert.Equal(t, other, RenameSniffedModel(other))
 	named := write("model_02.fbx", "glTF")
 	assert.Equal(t, named, RenameSniffedModel(named))
 	assert.Equal(t, filepath.Join(dir, "missing.bin"), RenameSniffedModel(filepath.Join(dir, "missing.bin")))
+}
+
+func TestHeighliner_SampleSubmitPassesDraftOptionThrough(t *testing.T) {
+	g := newFakeGateway(t)
+	a := g.adapter()
+	task := &model.MediaTask{ID: "s1", Model: "doubao-seedance-2-5-260628", TaskType: "video_generation", Prompt: "蓝色杯子",
+		ParamsJSON: paramsJSON(t, map[string]any{
+			"parameters":       map[string]any{"resolution": "480p", "duration": 4, "generate_audio": false},
+			"provider_options": map[string]any{"volcengine": map[string]any{"draft": true}},
+		})}
+	_, err := a.SubmitTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{
+		"model": "doubao-seedance-2-5-260628", "prompt": "蓝色杯子", "resolution": "480p", "duration": float64(4), "generate_audio": false,
+		"provider_options": map[string]any{"volcengine": map[string]any{"draft": true}},
+		"wait":             float64(0),
+	}, g.submits[0])
+}
+
+func TestHeighliner_FinalizeSendsOnlyDraftTaskAndOutputSettings(t *testing.T) {
+	g := newFakeGateway(t)
+	a := g.adapter()
+	task := &model.MediaTask{ID: "f1", Model: "doubao-seedance-2-5-260628", TaskType: "video_generation", Prompt: "蓝色杯子",
+		ParamsJSON: paramsJSON(t, map[string]any{
+			"parameters":              map[string]any{"resolution": "1080p", "duration": 4, "prompt": "ignored"},
+			"provider_options":        map[string]any{"volcengine": map[string]any{"return_last_frame": true, "draft": true, "other": 1}},
+			"action_id":               HeighlinerActionFinalize,
+			"source_task_id":          "local-sample",
+			"source_provider_task_id": "task_sample",
+		})}
+	_, err := a.SubmitTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, "/media/v1/videos/generations", g.submitPaths[0])
+	assert.Equal(t, "f1", g.idemKeys[0], "a new local task is a new, explicit generation")
+	assert.Equal(t, map[string]any{
+		"model": "doubao-seedance-2-5-260628", "resolution": "1080p",
+		"provider_options": map[string]any{"volcengine": map[string]any{"draft_task_id": "task_sample", "return_last_frame": true}},
+		"wait":             float64(0),
+	}, g.submits[0], "prompt, duration and the like are inherited from the sample and must not be sent again")
+
+	task.ParamsJSON = paramsJSON(t, map[string]any{"action_id": HeighlinerActionFinalize})
+	_, err = a.SubmitTask(context.Background(), task)
+	assert.Error(t, err, "without the sample's gateway task ID there is nothing to build on")
+}
+
+func TestHeighliner_SucceededSampleOffersFinalize(t *testing.T) {
+	g := newFakeGateway(t)
+	a := g.adapter()
+	g.onTask = func(w http.ResponseWriter, n int) {
+		stage := `"generation_stage":"draft",`
+		if n == 2 {
+			stage = ""
+		}
+		if n == 3 {
+			stage = `"generation_stage":"final","source_task_id":"task_sample",`
+		}
+		_, _ = io.WriteString(w, `{"id":"task_1",`+stage+`"status":"succeeded","artifacts":[
+			{"index":0,"kind":"video","mime_type":"video/mp4","state":"available","url":"https://cdn.example.com/v.mp4"}]}`)
+	}
+	finalize := []model.ResultAction{{ID: HeighlinerActionFinalize, Label: "生成正式视频"}}
+
+	res, err := a.PollTask(context.Background(), &model.MediaTask{ID: "a", ProviderTaskID: "task_1", TaskType: "video_generation"})
+	require.NoError(t, err)
+	assert.Equal(t, finalize, res.ResultActions, "the gateway says it is a sample")
+
+	sampleParams := paramsJSON(t, map[string]any{"provider_options": map[string]any{"volcengine": map[string]any{"draft": true}}})
+	res, err = a.PollTask(context.Background(), &model.MediaTask{ID: "b", ProviderTaskID: "task_1", TaskType: "video_generation", ParamsJSON: sampleParams})
+	require.NoError(t, err)
+	assert.Equal(t, finalize, res.ResultActions, "no stage reported: fall back to what the card asked for")
+
+	res, err = a.PollTask(context.Background(), &model.MediaTask{ID: "c", ProviderTaskID: "task_1", TaskType: "video_generation", ParamsJSON: sampleParams})
+	require.NoError(t, err)
+	assert.Empty(t, res.ResultActions, "a final video offers no further finalize")
+}
+
+func TestHeighliner_SucceededWithUnreadableResultKeepsPolling(t *testing.T) {
+	g := newFakeGateway(t)
+	a := g.adapter()
+	g.onTask = func(w http.ResponseWriter, n int) {
+		if n == 1 {
+			_, _ = io.WriteString(w, `{"id":"task_1","status":"succeeded","artifacts":[],
+				"error":{"code":"provider_unavailable","message":"result temporarily unreadable","stage":"delivery","retryable":true}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"task_1","status":"succeeded","artifacts":[
+			{"index":0,"kind":"video","state":"available","url":"https://cdn.example.com/v.mp4"}]}`)
+	}
+	task := &model.MediaTask{ID: "vid", ProviderTaskID: "task_1", TaskType: "video_generation"}
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusRunning, res.Status, "ask again later, never regenerate")
+	res, err = a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSucceeded, res.Status)
+}
+
+func TestHeighliner_SubmitReplaysTimeoutsAnd5xxWithTheSameKey(t *testing.T) {
+	g := newFakeGateway(t)
+	a := g.adapter()
+	g.onSubmit = func(w http.ResponseWriter, n int) {
+		switch n {
+		case 1:
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"error":{"code":"provider_unavailable","message":"try later","stage":"submission","retryable":true}}`)
+		case 2:
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":{"code":"internal_error","message":"boom","stage":"submission","retryable":false}}`)
+		default:
+			_, _ = io.WriteString(w, `{"id":"task_replayed"}`)
+		}
+	}
+	id, err := a.SubmitTask(context.Background(), &model.MediaTask{ID: "k1", Model: "m", TaskType: "video_generation", Prompt: "p"})
+	require.NoError(t, err)
+	assert.Equal(t, "task_replayed", id)
+	assert.Equal(t, []string{"k1", "k1", "k1"}, g.idemKeys)
+	assert.Equal(t, g.submits[0], g.submits[2], "a replay sends the very same body")
+}
+
+func TestHeighliner_SubmitNeverReplaysARejection(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+	}{
+		{http.StatusBadGateway, `{"error":{"code":"provider_rejected","message":"content policy","stage":"submission","retryable":false}}`},
+		{http.StatusConflict, `{"error":{"code":"idempotency_conflict","message":"key used with a different request"}}`},
+		{http.StatusPaymentRequired, `{"error":{"code":"insufficient_budget","message":"no budget"}}`},
+	} {
+		g := newFakeGateway(t)
+		a := g.adapter()
+		g.onSubmit = func(w http.ResponseWriter, _ int) {
+			w.WriteHeader(tc.status)
+			_, _ = io.WriteString(w, tc.body)
+		}
+		_, err := a.SubmitTask(context.Background(), &model.MediaTask{ID: "k", Model: "m", TaskType: "image_generation", Prompt: "p"})
+		require.Error(t, err)
+		assert.Len(t, g.submits, 1, tc.body)
+	}
+}
+
+func TestHeighliner_SubmitReplaysAfterABrokenConnection(t *testing.T) {
+	g := newFakeGateway(t)
+	a := g.adapter()
+	g.onSubmit = func(w http.ResponseWriter, n int) {
+		if n == 1 {
+			// The gateway took the request but the answer never arrived.
+			hj, ok := w.(http.Hijacker)
+			require.True(t, ok)
+			conn, _, err := hj.Hijack()
+			require.NoError(t, err)
+			_ = conn.Close()
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"task_original"}`)
+	}
+	id, err := a.SubmitTask(context.Background(), &model.MediaTask{ID: "net", Model: "m", TaskType: "image_generation", Prompt: "p"})
+	require.NoError(t, err)
+	assert.Equal(t, "task_original", id)
+	assert.Equal(t, []string{"net", "net"}, g.idemKeys)
+}
+
+func TestHeighliner_SucceededTaskWaitsForEveryArtifactWithinTheGrace(t *testing.T) {
+	g := newFakeGateway(t)
+	a := g.adapter()
+	clock := time.Unix(1_800_000_000, 0)
+	a.now = func() time.Time { return clock }
+	g.onTask = func(w http.ResponseWriter, _ int) {
+		_, _ = io.WriteString(w, `{"id":"task_1","status":"succeeded","artifacts":[
+			{"index":0,"kind":"image","mime_type":"image/png","state":"available","url":"https://cdn.example.com/0"},
+			{"index":1,"kind":"image","mime_type":"image/png","state":"unavailable","url":null,
+			 "error":{"code":"provider_unavailable","message":"upstream file not readable","stage":"delivery","retryable":true}},
+			{"index":2,"kind":"image","mime_type":"image/png","state":"archiving","url":"https://cdn.example.com/2"},
+			{"index":3,"kind":"image","mime_type":"image/png","state":"available","url":""}]}`)
+	}
+	task := &model.MediaTask{ID: "img", ProviderTaskID: "task_1", TaskType: "image_generation"}
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusRunning, res.Status, "unavailable, unknown states and empty URLs are not readable yet")
+
+	clock = clock.Add(heighlinerDeliveryGrace - time.Second)
+	res, err = a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusRunning, res.Status)
+
+	clock = clock.Add(2 * time.Second)
+	res, err = a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSucceeded, res.Status, "past the grace, what is readable is delivered")
+	require.Len(t, res.Assets, 1)
+	assert.Equal(t, "https://cdn.example.com/0", res.Assets[0].RemoteURL)
+}
+
+func TestHeighliner_SucceededTaskWithNothingReadableFailsWithItsGatewayID(t *testing.T) {
+	g := newFakeGateway(t)
+	a := g.adapter()
+	clock := time.Unix(1_800_000_000, 0)
+	a.now = func() time.Time { return clock }
+	g.onTask = func(w http.ResponseWriter, _ int) {
+		_, _ = io.WriteString(w, `{"id":"task_lost","status":"succeeded","artifacts":[],
+			"error":{"code":"provider_unavailable","message":"Generation succeeded but the output is not yet readable","stage":"delivery","retryable":true}}`)
+	}
+	task := &model.MediaTask{ID: "vid", ProviderTaskID: "task_lost", TaskType: "video_generation"}
+	res, err := a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusRunning, res.Status, "an empty success is asked again, not taken as final")
+
+	clock = clock.Add(heighlinerDeliveryGrace)
+	res, err = a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailed, res.Status)
+	assert.Equal(t, "provider_unavailable", res.ErrorCode)
+	assert.Contains(t, res.ErrorMessage, "task_lost")
+	assert.Contains(t, res.ErrorMessage, "不要重新生成")
+}
+
+func TestHeighliner_VideoKeepsItsContainerAndReturnedLastFrame(t *testing.T) {
+	g := newFakeGateway(t)
+	a := g.adapter()
+	g.onTask = func(w http.ResponseWriter, _ int) {
+		_, _ = io.WriteString(w, `{"id":"task_1","status":"succeeded","artifacts":[
+			{"index":0,"kind":"last_frame","mime_type":"image/jpeg","state":"available","url":"https://cdn.example.com/last"},
+			{"index":1,"kind":"video","mime_type":"video/quicktime","state":"available","url":"https://cdn.example.com/v"}]}`)
+	}
+	res, err := a.PollTask(context.Background(), &model.MediaTask{ID: "mov", ProviderTaskID: "task_1", TaskType: "video_generation"})
+	require.NoError(t, err)
+	require.Len(t, res.Assets, 2)
+	assert.Equal(t, "videos/mov/output.mov", res.Assets[0].LocalPath, "a MOV is not renamed to MP4")
+	assert.Equal(t, "https://cdn.example.com/v", res.ResultURL, "the video comes first, whatever its index")
+	assert.Equal(t, model.TaskAsset{AssetIndex: 1, Kind: "image_frame", Name: "last_frame.jpg",
+		RemoteURL: "https://cdn.example.com/last", LocalPath: "videos/mov/last_frame.jpg"}, res.Assets[1])
+}
+
+func TestHeighliner_RetryDeliveryPacesAndRunsOut(t *testing.T) {
+	g := newFakeGateway(t)
+	a := g.adapter()
+	clock := time.Unix(1_800_000_000, 0)
+	a.now = func() time.Time { return clock }
+	g.onTask = func(w http.ResponseWriter, _ int) {
+		_, _ = io.WriteString(w, `{"id":"task_1","status":"succeeded","artifacts":[
+			{"index":0,"kind":"image","mime_type":"image/png","state":"available","url":"https://cdn.example.com/0"}]}`)
+	}
+	task := &model.MediaTask{ID: "dl", ProviderTaskID: "task_1", TaskType: "image_generation"}
+	for i := 0; i < heighlinerRedownloads; i++ {
+		require.True(t, a.RetryDelivery(task))
+		polls := g.polls
+		res, err := a.PollTask(context.Background(), task)
+		require.NoError(t, err)
+		assert.Equal(t, model.TaskStatusRunning, res.Status, "the next query waits a little")
+		assert.Equal(t, polls, g.polls)
+		clock = clock.Add(time.Duration(i+1) * 10 * time.Second)
+		res, err = a.PollTask(context.Background(), task)
+		require.NoError(t, err)
+		assert.Equal(t, model.TaskStatusSucceeded, res.Status, "then fresh links are fetched")
+	}
+	assert.False(t, a.RetryDelivery(task), "after a few rounds the poller settles with what it has")
+}
+
+func TestHeighliner_PollInterval(t *testing.T) {
+	a := NewHeighlinerAdapter(ChannelConfig{})
+	assert.Equal(t, 3*time.Second, a.PollInterval(&model.MediaTask{TaskType: "image_generation"}))
+	assert.Equal(t, 5*time.Second, a.PollInterval(&model.MediaTask{TaskType: "video_generation"}))
+	assert.Equal(t, 8*time.Second, a.PollInterval(&model.MediaTask{TaskType: "3d_generation"}))
 }

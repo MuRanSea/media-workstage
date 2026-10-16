@@ -66,6 +66,13 @@ export function specFields(cap: CapabilityDescriptor | undefined): CapField[] {
   }));
 }
 
+/**
+ * Vendor options a card sets through a control of its own, never as a generic field: the
+ * Seedance 2.5 sample switch and the sample a final video is made from, and Kling's
+ * multi_shot, which must be true exactly when Omni has a reference video.
+ */
+const MANAGED_OPTIONS: ReadonlySet<string> = new Set(['volcengine.draft', 'volcengine.draft_task_id', 'kling.multi_shot']);
+
 /** Vendor options by namespace (`provider_options.<ns>`), scalar fields only. */
 export function optionGroups(cap: CapabilityDescriptor | undefined): { ns: string; fields: CapField[] }[] {
   const namespaces = cap?.provider_options_schema?.properties ?? {};
@@ -73,10 +80,41 @@ export function optionGroups(cap: CapabilityDescriptor | undefined): { ns: strin
     .map(([ns, schema]) => ({
       ns,
       fields: Object.entries(schema.properties ?? {})
-        .filter(([, param]) => SCALAR_TYPES.has(param.type))
+        .filter(([name, param]) => SCALAR_TYPES.has(param.type) && !MANAGED_OPTIONS.has(`${ns}.${name}`))
         .map(([name, param]) => ({ name, param })),
     }))
     .filter((g) => g.fields.length > 0);
+}
+
+// --- Seedance 2.5 samples (样片) --------------------------------------------------
+
+/** A sample is 480p, and the full video made from it is 1080p; the gateway wants both explicit. */
+export const SAMPLE_RESOLUTION = '480p';
+export const FINAL_RESOLUTION = '1080p';
+
+/**
+ * Whether a Heighliner video card can render a sample: only Seedance 2.5 can. The gateway's
+ * catalog does not list `draft` among the vendor options, so the model decides.
+ */
+export function supportsSample(card: Pick<SpatialCard, 'provider' | 'model' | 'type'>): boolean {
+  return card.type === 'video' && isHeighliner(card.provider) && /seedance-2[-.]5/.test(card.model);
+}
+
+/** Whether the card is set to render a sample (and could). */
+export function isSampleRun(card: Pick<SpatialCard, 'provider' | 'model' | 'type' | 'sampleMode'>): boolean {
+  return !!card.sampleMode && supportsSample(card);
+}
+
+/** The common parameters a card sends: its own, fitted to the model, with a sample's resolution fixed. */
+export function sentParams(cap: CapabilityDescriptor | undefined, card: Pick<SpatialCard, 'provider' | 'model' | 'type' | 'sampleMode' | 'capParams'>): CapValues {
+  const params = effectiveParams(cap, card.capParams);
+  return isSampleRun(card) && cap?.parameters?.resolution ? { ...params, resolution: SAMPLE_RESOLUTION } : params;
+}
+
+/** The vendor options a card sends: its own, fitted to the model, plus the sample switch. */
+export function sentOptions(cap: CapabilityDescriptor | undefined, card: Pick<SpatialCard, 'provider' | 'model' | 'type' | 'sampleMode' | 'capOptions'>): CapOptions {
+  const options = effectiveOptions(cap, card.capOptions);
+  return isSampleRun(card) ? { ...options, volcengine: { ...options.volcengine, draft: true } } : options;
 }
 
 /** Whether `value` is something `param` accepts: right type, in its enum, inside its range and length. */

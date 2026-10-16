@@ -116,7 +116,7 @@ describe('Heighliner panels from capability descriptors', () => {
   it('lists vendor options by namespace for the advanced page', () => {
     const names = (id: string) => optionGroups(cap(id)).flatMap((g) => g.fields.map((f) => `${g.ns}.${f.name}`));
     expect(names(LITE)).toEqual(['volcengine.watermark']);
-    expect(names(KLING)).toEqual(['kling.multi_shot', 'kling.watermark']);
+    expect(names(KLING)).toEqual(['kling.watermark']);
     expect(names(SEEDANCE_25)).toContain('volcengine.return_last_frame');
   });
 

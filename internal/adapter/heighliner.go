@@ -36,10 +36,15 @@ type HeighlinerAdapter struct {
 	files   map[string]heighlinerFile // "path|size|mtime" -> uploaded reference file
 
 	backoffMu sync.Mutex
-	notBefore map[string]time.Time // local task ID -> no poll before (429 Retry-After)
+	notBefore map[string]time.Time // local task ID -> no poll before (429 Retry-After, redownload)
 
-	// sleep waits between submit retries; tests swap it out.
+	deliveryMu  sync.Mutex
+	undelivered map[string]time.Time // local task ID -> first poll that found it succeeded but not fully readable
+	redownloads map[string]int       // local task ID -> downloads retried after a failed one
+
+	// sleep waits between submit retries and now reads the clock; tests swap them out.
 	sleep func(ctx context.Context, d time.Duration) error
+	now   func() time.Time
 }
 
 type heighlinerFile struct {
@@ -54,7 +59,16 @@ type heighlinerParams struct {
 	// ProviderOptions holds vendor fields under their namespace ({"tencent": {...}}).
 	ProviderOptions map[string]any        `json:"provider_options"`
 	ReferenceAssets []model.ReferenceItem `json:"reference_assets"`
+
+	// ActionID and SourceProviderTaskID mark a follow-up on a finished task (the server
+	// checks the source and fills the gateway's task ID in): today only 样片 → 正式视频.
+	ActionID             string `json:"action_id"`
+	SourceProviderTaskID string `json:"source_provider_task_id"`
 }
+
+// HeighlinerActionFinalize is the result action a succeeded Seedance 2.5 sample (样片)
+// offers: render the full video from it. The gateway never does this by itself.
+const HeighlinerActionFinalize = "finalize"
 
 // heighlinerReference is one entry of a request's references: one source of three.
 type heighlinerReference struct {
@@ -67,10 +81,13 @@ type heighlinerReference struct {
 
 type heighlinerArtifact struct {
 	Index    int    `json:"index"`
-	Kind     string `json:"kind"` // image | video | model3d | audio | cover | last_frame
+	Kind     string `json:"kind"` // image | video | model3d | audio | cover | last_frame, maybe more later
 	MimeType string `json:"mime_type"`
-	State    string `json:"state"` // available | pending | unavailable
-	URL      string `json:"url"`
+	// State is available | pending | unavailable; only available is readable, unknown values never.
+	State   string           `json:"state"`
+	URL     string           `json:"url"`
+	URLType string           `json:"url_type"` // upstream | signed
+	Error   *heighlinerError `json:"error"`
 	// Tolerated when present; signed URLs carry no file extension.
 	Format   string `json:"format"`
 	Filename string `json:"filename"`
@@ -84,12 +101,16 @@ type heighlinerError struct {
 }
 
 type heighlinerTask struct {
-	ID        string               `json:"id"`
-	Status    string               `json:"status"`
-	Progress  int                  `json:"progress"`
-	Artifacts []heighlinerArtifact `json:"artifacts"`
-	Error     *heighlinerError     `json:"error"`
-	Billing   json.RawMessage      `json:"billing"`
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	// GenerationStage is "draft" for a sample and "final" for a video made from one;
+	// SourceTaskID is the sample a final video was made from.
+	GenerationStage string               `json:"generation_stage"`
+	SourceTaskID    string               `json:"source_task_id"`
+	Progress        int                  `json:"progress"`
+	Artifacts       []heighlinerArtifact `json:"artifacts"`
+	Error           *heighlinerError     `json:"error"`
+	Billing         json.RawMessage      `json:"billing"`
 }
 
 // HeighlinerAPIError is a non-2xx gateway response in the media protocol's error shape.
@@ -97,6 +118,8 @@ type HeighlinerAPIError struct {
 	Status     int
 	Code       string
 	Message    string
+	Stage      string
+	Retryable  bool
 	RetryAfter time.Duration
 }
 
@@ -112,12 +135,16 @@ func (e *HeighlinerAPIError) Error() string {
 	return fmt.Sprintf("Heighliner 返回 HTTP %d", e.Status)
 }
 
-// Submit retries: rate limits and an idempotent submission still being accepted are
-// replayed with the same key; waits are capped so a card never hangs on one header.
+// Submit retries replay the same key and body (see submitRetryable); waits are capped so a
+// card never hangs on one header. A succeeded task whose results are not all readable is
+// asked again for heighlinerDeliveryGrace, and a failed download is retried with fresh
+// links heighlinerRedownloads times, before what there is gets delivered.
 const (
 	heighlinerSubmitAttempts = 4
 	heighlinerMaxRetryAfter  = time.Minute
 	heighlinerFileLifetime   = 7 * 24 * time.Hour
+	heighlinerDeliveryGrace  = 15 * time.Minute
+	heighlinerRedownloads    = 3
 )
 
 func NewHeighlinerAdapter(cfg ChannelConfig) *HeighlinerAdapter {
@@ -129,6 +156,9 @@ func NewHeighlinerAdapter(cfg ChannelConfig) *HeighlinerAdapter {
 		channelImageBase: newChannelImageBase("heighliner", "https://platform.sgt.site", cfg),
 		files:            map[string]heighlinerFile{},
 		notBefore:        map[string]time.Time{},
+		undelivered:      map[string]time.Time{},
+		redownloads:      map[string]int{},
+		now:              time.Now,
 	}
 	a.sleep = func(ctx context.Context, d time.Duration) error {
 		select {
@@ -166,18 +196,26 @@ func (a *HeighlinerAdapter) SubmitTask(ctx context.Context, task *model.MediaTas
 		}
 	}
 
-	submit := func() (string, error) {
-		body, err := a.requestBody(ctx, task, params)
+	submit := func(key string) (string, error) {
+		var body []byte
+		var err error
+		if params.ActionID == HeighlinerActionFinalize {
+			body, err = finalizeBody(task, params)
+		} else {
+			body, err = a.requestBody(ctx, task, params)
+		}
 		if err != nil {
 			return "", err
 		}
-		return a.submitWithRetry(ctx, endpoint, task.ID, body)
+		return a.submitWithRetry(ctx, endpoint, key, body)
 	}
-	id, err := submit()
+	id, err := submit(task.ID)
 	// A cached reference file the gateway no longer has: upload afresh and submit once more.
+	// The body now names a new file, and a key once sent with other content is answered
+	// with idempotency_conflict, so the second submission gets a key of its own.
 	var apiErr *HeighlinerAPIError
 	if err != nil && errors.As(err, &apiErr) && (apiErr.Code == "file_expired" || apiErr.Code == "file_not_found") && a.forgetFiles(params.ReferenceAssets) {
-		id, err = submit()
+		id, err = submit(task.ID + "-reupload")
 	}
 	return id, err
 }
@@ -217,6 +255,47 @@ func (a *HeighlinerAdapter) requestBody(ctx context.Context, task *model.MediaTa
 	}
 	body["wait"] = 0
 	return json.Marshal(body)
+}
+
+// finalizeBody renders the full video from a finished sample: the gateway inherits the
+// prompt, references, duration, ratio, seed and audio from the sample and rejects any of
+// them being sent again, so only the output settings go (resolution must be explicit).
+func finalizeBody(task *model.MediaTask, params heighlinerParams) ([]byte, error) {
+	if params.SourceProviderTaskID == "" {
+		return nil, errors.New("正式视频缺少来源样片的任务 ID")
+	}
+	body := map[string]any{"model": task.Model, "resolution": "1080p", "wait": 0}
+	if v, ok := params.Parameters["resolution"].(string); ok && v != "" {
+		body["resolution"] = v
+	}
+	if v, ok := params.Parameters["output_format"].(string); ok && v != "" {
+		body["output_format"] = v
+	}
+	volc := map[string]any{"draft_task_id": params.SourceProviderTaskID}
+	if opts, ok := params.ProviderOptions["volcengine"].(map[string]any); ok {
+		for _, k := range []string{"watermark", "return_last_frame"} {
+			if v, ok := opts[k]; ok && v != nil {
+				volc[k] = v
+			}
+		}
+	}
+	body["provider_options"] = map[string]any{"volcengine": volc}
+	return json.Marshal(body)
+}
+
+// isSampleTask reports whether the task is a Seedance sample, by what the gateway says
+// or, failing that, by what the card asked for.
+func isSampleTask(task *model.MediaTask, resp *heighlinerTask) bool {
+	if resp.GenerationStage != "" {
+		return resp.GenerationStage == "draft"
+	}
+	var params heighlinerParams
+	if json.Unmarshal([]byte(task.ParamsJSON), &params) != nil {
+		return false
+	}
+	volc, _ := params.ProviderOptions["volcengine"].(map[string]any)
+	draft, _ := volc["draft"].(bool)
+	return draft
 }
 
 // referenceType is a reference's media type: as compiled, else implied by a legacy role
@@ -458,11 +537,13 @@ func (a *HeighlinerAdapter) submitWithRetry(ctx context.Context, endpoint, key s
 			return task.ID, nil
 		}
 		lastErr = err
-		var apiErr *HeighlinerAPIError
-		if !errors.As(err, &apiErr) || !(apiErr.Status == http.StatusTooManyRequests || apiErr.Code == "idempotency_in_progress") {
+		if !submitRetryable(ctx, err) {
 			return "", err
 		}
-		wait := apiErr.RetryAfter
+		var wait time.Duration
+		if apiErr := (*HeighlinerAPIError)(nil); errors.As(err, &apiErr) {
+			wait = apiErr.RetryAfter
+		}
 		if wait <= 0 {
 			wait = time.Duration(attempt+1) * 2 * time.Second
 		}
@@ -471,6 +552,27 @@ func (a *HeighlinerAdapter) submitWithRetry(ctx context.Context, endpoint, key s
 		}
 	}
 	return "", lastErr
+}
+
+// submitRetryable reports whether a failed submission is replayed with the same key and
+// body, which returns the original task if the gateway did accept it: a timeout or broken
+// connection before an answer, a rate limit, a submission still being accepted, a 5xx
+// other than an outright rejection, or anything the gateway marks retryable.
+func submitRetryable(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	var apiErr *HeighlinerAPIError
+	if !errors.As(err, &apiErr) {
+		return true
+	}
+	switch {
+	case apiErr.Retryable, apiErr.Status == http.StatusTooManyRequests, apiErr.Code == "idempotency_in_progress":
+		return true
+	case apiErr.Code == "provider_rejected":
+		return false
+	}
+	return apiErr.Status >= 500
 }
 
 // do sends req and decodes a 2xx JSON body into out; anything else becomes a
@@ -492,6 +594,7 @@ func (a *HeighlinerAdapter) do(req *http.Request, out any) (int, error) {
 		}
 		if json.Unmarshal(raw, &env) == nil && env.Error != nil {
 			apiErr.Code, apiErr.Message = env.Error.Code, env.Error.Message
+			apiErr.Stage, apiErr.Retryable = env.Error.Stage, env.Error.Retryable
 		} else {
 			apiErr.Message = errMessage(raw)
 		}
@@ -525,7 +628,7 @@ func (a *HeighlinerAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 	a.backoffMu.Lock()
 	until, backingOff := a.notBefore[task.ID]
 	a.backoffMu.Unlock()
-	if backingOff && time.Now().Before(until) {
+	if backingOff && a.now().Before(until) {
 		return running, nil
 	}
 
@@ -547,7 +650,7 @@ func (a *HeighlinerAdapter) PollTask(ctx context.Context, task *model.MediaTask)
 					wait = 10 * time.Second
 				}
 				a.backoffMu.Lock()
-				a.notBefore[task.ID] = time.Now().Add(min(wait, 10*time.Minute))
+				a.notBefore[task.ID] = a.now().Add(min(wait, 10*time.Minute))
 				a.backoffMu.Unlock()
 				return running, nil
 			case apiErr.Status == http.StatusNotFound || apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusForbidden:
@@ -580,19 +683,40 @@ func (a *HeighlinerAdapter) pollResult(task *model.MediaTask, resp *heighlinerTa
 	}
 	switch resp.Status {
 	case "succeeded":
-		assets, pending := a.collectArtifacts(task, resp.Artifacts)
-		if pending {
-			// Archiving is still going on; this is not a failure and must not be regenerated.
-			return &PollResult{Status: model.TaskStatusRunning, Progress: max(task.Progress, 95)}
+		d := a.collectArtifacts(task, resp.Artifacts)
+		if d.primary == 0 || d.unreadable > 0 {
+			// Generation succeeded but delivery has not: empty artifacts, a pending or
+			// unreadable item, or a delivery error. Asking again later gets the files;
+			// regenerating would be billed twice. Past the grace, what is readable is
+			// delivered, and with nothing readable the task fails with its gateway ID.
+			if a.awaitDelivery(task.ID) {
+				return &PollResult{Status: model.TaskStatusRunning, Progress: max(task.Progress, 95)}
+			}
+			if d.primary == 0 {
+				a.forgetTask(task.ID)
+				code, reason := "EmptyResult", d.reason
+				if resp.Error != nil {
+					code = firstNonEmpty(resp.Error.Code, code)
+					reason = firstNonEmpty(reason, resp.Error.Message)
+				}
+				msg := fmt.Sprintf("Heighliner 任务已生成成功，但 %d 分钟内仍没有可读取的产物（网关任务 %s）。不要重新生成以免重复计费，请把任务 ID 交给平台核对",
+					int(heighlinerDeliveryGrace/time.Minute), firstNonEmpty(resp.ID, task.ProviderTaskID))
+				if reason != "" {
+					msg += "：" + reason
+				}
+				return &PollResult{Status: model.TaskStatusFailed, ErrorCode: code, ErrorMessage: msg, BillingDetailsJSON: billing}
+			}
 		}
-		if len(assets) == 0 {
-			return &PollResult{Status: model.TaskStatusFailed, ErrorCode: "EmptyResult", ErrorMessage: "Heighliner 任务成功但没有可下载的产物", BillingDetailsJSON: billing}
+		a.forgetTask(task.ID)
+		res := &PollResult{Status: model.TaskStatusSucceeded, Progress: 100, Assets: d.assets, BillingDetailsJSON: billing}
+		res.ResultURL = d.assets[0].RemoteURL
+		if task.TaskType == "video_generation" && isSampleTask(task, resp) {
+			res.ResultActions = []model.ResultAction{{ID: HeighlinerActionFinalize, Label: "生成正式视频"}}
 		}
-		res := &PollResult{Status: model.TaskStatusSucceeded, Progress: 100, Assets: assets, BillingDetailsJSON: billing}
-		res.ResultURL = assets[0].RemoteURL
 		return res
 
 	case "failed", "cancelled", "expired":
+		a.forgetTask(task.ID)
 		status := map[string]string{
 			"failed":    model.TaskStatusFailed,
 			"cancelled": model.TaskStatusCancelled,
@@ -619,47 +743,141 @@ func (a *HeighlinerAdapter) pollResult(task *model.MediaTask, resp *heighlinerTa
 	}
 }
 
+// awaitDelivery reports whether a succeeded task whose results are not all readable is
+// still within the grace for asking again, starting the grace on its first such poll.
+func (a *HeighlinerAdapter) awaitDelivery(taskID string) bool {
+	a.deliveryMu.Lock()
+	defer a.deliveryMu.Unlock()
+	first, ok := a.undelivered[taskID]
+	if !ok {
+		a.undelivered[taskID] = a.now()
+		return true
+	}
+	return a.now().Sub(first) < heighlinerDeliveryGrace
+}
+
+// forgetTask drops what the adapter remembers about a task once it is settled.
+func (a *HeighlinerAdapter) forgetTask(taskID string) {
+	a.deliveryMu.Lock()
+	delete(a.undelivered, taskID)
+	a.deliveryMu.Unlock()
+	a.backoffMu.Lock()
+	delete(a.notBefore, taskID)
+	a.backoffMu.Unlock()
+}
+
+// RetryDelivery is asked by the poller when a succeeded task's downloads failed: the
+// gateway's links can expire (403) or be briefly unreadable (502), and querying the task
+// again returns fresh ones. It allows heighlinerRedownloads such rounds, each after a
+// longer pause, then lets the poller settle with what it has.
+func (a *HeighlinerAdapter) RetryDelivery(task *model.MediaTask) bool {
+	a.deliveryMu.Lock()
+	n := a.redownloads[task.ID]
+	if n >= heighlinerRedownloads {
+		delete(a.redownloads, task.ID)
+		a.deliveryMu.Unlock()
+		return false
+	}
+	a.redownloads[task.ID] = n + 1
+	a.deliveryMu.Unlock()
+	a.backoffMu.Lock()
+	a.notBefore[task.ID] = a.now().Add(time.Duration(n+1) * 10 * time.Second)
+	a.backoffMu.Unlock()
+	return true
+}
+
+// heighlinerDelivery is what a succeeded task's artifacts give a card right now.
+type heighlinerDelivery struct {
+	assets     []model.TaskAsset
+	primary    int    // readable main results: images, videos or 3D models
+	unreadable int    // wanted artifacts not readable yet (pending, unavailable, no URL)
+	reason     string // the gateway's word on an unreadable artifact, if any
+}
+
 // collectArtifacts picks the artifacts a card shows. Image and video tasks keep their
-// images or videos, one result each; a 3D task keeps every model file, the Express
-// preview video and the cover. pending reports a wanted artifact still being archived.
-func (a *HeighlinerAdapter) collectArtifacts(task *model.MediaTask, artifacts []heighlinerArtifact) (assets []model.TaskAsset, pending bool) {
+// images or videos, one result each, and a video its returned last frame; a 3D task keeps
+// every model file, the Express preview video and the cover. Only an available artifact
+// with an HTTP(S) URL is readable; any other state, known or not, is waited for.
+func (a *HeighlinerAdapter) collectArtifacts(task *model.MediaTask, artifacts []heighlinerArtifact) heighlinerDelivery {
 	baseURL, _ := a.credentials()
+	var d heighlinerDelivery
+	var lastFrames []string
 	for _, art := range artifacts {
-		var wanted bool
+		var wanted, primary bool
 		switch task.TaskType {
 		case "image_generation":
-			wanted = art.Kind == "image"
+			wanted, primary = art.Kind == "image", art.Kind == "image"
 		case "video_generation":
-			wanted = art.Kind == "video"
+			wanted, primary = art.Kind == "video" || art.Kind == "last_frame", art.Kind == "video"
 		case "3d_generation":
-			// The reference images a 3D task echoes back are not results.
+			// The reference images a 3D task echoes back (Tripo's image kind) are not results.
+			// Express with output_format mp4 may return only the turntable video.
 			wanted = art.Kind == "model3d" || art.Kind == "video" || art.Kind == "cover"
+			primary = art.Kind == "model3d" || art.Kind == "video"
 		}
 		if !wanted {
 			continue
 		}
-		switch art.State {
-		case "pending":
-			pending = true
-			continue
-		case "unavailable":
+		remote := ""
+		if art.URL != "" {
+			remote = resolveArtifactURL(baseURL, art.URL)
+		}
+		if art.State != "available" || !(strings.HasPrefix(remote, "https://") || strings.HasPrefix(remote, "http://")) {
+			d.unreadable++
+			if art.Error != nil && d.reason == "" {
+				d.reason = firstNonEmpty(art.Error.Message, art.Error.Code)
+			}
 			continue
 		}
-		if art.URL == "" {
+		if art.Kind == "last_frame" {
+			lastFrames = append(lastFrames, remote+"\x00"+art.MimeType)
 			continue
 		}
-		remote := resolveArtifactURL(baseURL, art.URL)
-		index := len(assets)
+		if primary {
+			d.primary++
+		}
+		index := len(d.assets)
 		switch task.TaskType {
 		case "image_generation":
-			assets = append(assets, imageAsset(task.ID, index, remote, imageExt(art.MimeType, remote)))
+			d.assets = append(d.assets, imageAsset(task.ID, index, remote, imageExt(art.MimeType, remote)))
 		case "video_generation":
-			assets = append(assets, videoAsset(task.ID, index, remote))
+			d.assets = append(d.assets, heighlinerVideoAsset(task.ID, index, art.MimeType, remote))
 		default:
-			assets = append(assets, model3DAsset(task.ID, index, art, remote))
+			d.assets = append(d.assets, model3DAsset(task.ID, index, art, remote))
 		}
 	}
-	return assets, pending
+	// A returned last frame (Seedance return_last_frame) goes with the video, after it.
+	for i, lf := range lastFrames {
+		remote, mimeType, _ := strings.Cut(lf, "\x00")
+		name := "last_frame"
+		if i > 0 {
+			name = fmt.Sprintf("last_frame_%02d", i)
+		}
+		ext := imageExt(mimeType, remote)
+		d.assets = append(d.assets, model.TaskAsset{
+			AssetIndex: len(d.assets),
+			Kind:       "image_frame",
+			Name:       name + "." + ext,
+			RemoteURL:  remote,
+			LocalPath:  fmt.Sprintf("videos/%s/%s.%s", task.ID, name, ext),
+		})
+	}
+	return d
+}
+
+// heighlinerVideoAsset is videoAsset with the container the gateway names: Seedance can
+// return a MOV (video/quicktime), which keeps its own extension rather than posing as MP4.
+func heighlinerVideoAsset(taskID string, index int, mimeType, remote string) model.TaskAsset {
+	asset := videoAsset(taskID, index, remote)
+	if mt, _, err := mime.ParseMediaType(mimeType); err == nil {
+		switch strings.ToLower(mt) {
+		case "video/quicktime":
+			asset.LocalPath = strings.TrimSuffix(asset.LocalPath, ".mp4") + ".mov"
+		case "video/webm":
+			asset.LocalPath = strings.TrimSuffix(asset.LocalPath, ".mp4") + ".webm"
+		}
+	}
+	return asset
 }
 
 // resolveArtifactURL makes a signed path (/media/v1/tasks/…/artifacts/…) absolute.
@@ -752,9 +970,21 @@ func model3DAsset(taskID string, index int, art heighlinerArtifact, remote strin
 	}
 }
 
+// sniffedModelExts names a 3D file by its first bytes. A ZIP holds an OBJ or FBX with its
+// textures; an OBJ is plain text and cannot be told apart, so it stays ".bin".
+var sniffedModelExts = []struct {
+	magic string
+	ext   string
+}{
+	{"glTF", ".glb"},
+	{"PK\x03\x04", ".zip"},
+	{"Kaydara FBX Binary", ".fbx"},
+}
+
 // RenameSniffedModel gives a downloaded ".bin" its real extension when its bytes say
-// what it is: the gateway can return a GLB with no format, file name or MIME type that
-// names it. It returns the path the file now has, which is the old one when nothing changed.
+// what it is: the gateway can return a model as application/octet-stream with no format,
+// file name or MIME type that names it. It returns the path the file now has, which is
+// the old one when nothing changed.
 func RenameSniffedModel(localPath string) string {
 	if !strings.EqualFold(filepath.Ext(localPath), ".bin") {
 		return localPath
@@ -763,17 +993,21 @@ func RenameSniffedModel(localPath string) string {
 	if err != nil {
 		return localPath
 	}
-	magic := make([]byte, 4)
-	_, err = io.ReadFull(f, magic)
+	head := make([]byte, 32)
+	n, _ := io.ReadFull(f, head)
 	f.Close()
-	if err != nil || string(magic) != "glTF" {
-		return localPath
+	head = head[:n]
+	for _, s := range sniffedModelExts {
+		if !bytes.HasPrefix(head, []byte(s.magic)) {
+			continue
+		}
+		renamed := strings.TrimSuffix(localPath, filepath.Ext(localPath)) + s.ext
+		if err := os.Rename(localPath, renamed); err != nil {
+			return localPath
+		}
+		return renamed
 	}
-	renamed := strings.TrimSuffix(localPath, filepath.Ext(localPath)) + ".glb"
-	if err := os.Rename(localPath, renamed); err != nil {
-		return localPath
-	}
-	return renamed
+	return localPath
 }
 
 // DownloadAsset fetches an artifact without credentials: signed platform links need
@@ -805,11 +1039,23 @@ func (a *HeighlinerAdapter) DownloadAsset(ctx context.Context, remoteURL string,
 	return file.Sync()
 }
 
-// PollTimeout gives gateway-queued images more than the poller's image default; videos
-// and 3D already get its long default.
+// PollTimeout gives gateway-queued images more than the poller's image default, with room
+// for the delivery grace after they succeed; videos and 3D already get its long default.
 func (a *HeighlinerAdapter) PollTimeout(task *model.MediaTask) time.Duration {
 	if task.TaskType == "image_generation" {
-		return 15 * time.Minute
+		return 30 * time.Minute
 	}
 	return 0
+}
+
+// PollInterval is the gateway's advice on how often to ask: images every 3 seconds,
+// videos every 5, 3D every 8 (5–10). Task queries share a per-user limit of 120 a minute.
+func (a *HeighlinerAdapter) PollInterval(task *model.MediaTask) time.Duration {
+	switch task.TaskType {
+	case "image_generation":
+		return 3 * time.Second
+	case "3d_generation":
+		return 8 * time.Second
+	}
+	return 5 * time.Second
 }

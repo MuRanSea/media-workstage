@@ -73,6 +73,12 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   What one model on a Heighliner Provider declares it accepts, as listed in the gateway's catalog: its parameters with their allowed values, the reference roles it takes (and whether each takes an asset library item), and its vendor options. A Heighliner card offers exactly what the descriptor declares, never what the same model accepts on another Protocol.
   _Avoid_: model spec, 模型定义 (the hand-written limits other Protocols use)
 
+- **Delivery (交付)**:
+  When a Heighliner run's outputs become readable: an artifact counts only once the gateway marks it `available` with an http(s) link. A run the gateway reports succeeded with outputs not yet readable is still being delivered, so the card keeps waiting and never offers to generate again, since that would be billed twice. After 15 minutes it settles with what is readable, or fails naming the gateway task. A download that fails asks the gateway again for fresh links (ADR 0012).
+
+- **Sample (样片)**:
+  A Seedance 2.5 video run on a Heighliner Provider that renders only a 480p preview (the card's 样片模式). Its Result Card offers 生成正式视频, a Result Action that renders the full 1080p video from that sample as a separate task and Result Card; the prompt, references, duration, ratio and audio are inherited from the sample, and the gateway honors the sample for 7 days (ADR 0011).
+
 - **ProviderAdapter (服务商适配器)**:
   The architectural boundary seam that isolates one `Protocol`'s third-party API contract. Translates generic `MediaTaskRequest` into protocol-specific payloads and normalizes polling responses; each Provider gets its own adapter instance.
 

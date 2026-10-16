@@ -7,7 +7,7 @@ import { assetStoredPath } from './assetPaths.ts';
 /**
  * 3D cards run only on Heighliner (CONTEXT.md: 3D Generation Card). Each connected image
  * shows one view of the object and goes as that view's gateway role; which views a model
- * takes comes from its descriptor, and which combinations work is the gateway's call.
+ * takes comes from its descriptor; the documented combination rules are heighlinerRules'.
  */
 
 /** Shown wherever a 3D card has no model to run on. */
@@ -26,6 +26,13 @@ export const VIEW_LABELS: Record<string, string> = {
   multi_view_right_front: '右前',
 };
 const VIEW_ORDER = Object.keys(VIEW_LABELS);
+
+/**
+ * 主图 and 正面 are one slot on every 3D model: Hunyuan takes one main image as either, and
+ * Tripo's multi-view sends the main image as the front. Holding one leaves the other unoffered.
+ */
+const TWIN_VIEWS: Record<string, string> = { reference: 'multi_view_front', multi_view_front: 'reference' };
+const withTwins = (views: Iterable<string>) => new Set([...views].flatMap((v) => (TWIN_VIEWS[v] ? [v, TWIN_VIEWS[v]] : [v])));
 
 /** A reference's view; references saved without one are the main image. */
 export const viewOf = (ref: Pick<ReferenceItem, 'view'>): string => ref.view ?? 'reference';
@@ -55,7 +62,7 @@ export function fitViews(refs: ReferenceItem[], views: string[]): ReferenceItem[
   const out: ReferenceItem[] = [];
   refs.forEach((r, i) => {
     if (keeps[i]) return out.push({ ...r, view: viewOf(r) });
-    const free = views.find((v) => !taken.has(v));
+    const free = views.find((v) => !withTwins(taken).has(v));
     if (!free) return;
     taken.add(free);
     out.push({ ...r, view: free });
@@ -64,13 +71,14 @@ export function fitViews(refs: ReferenceItem[], views: string[]): ReferenceItem[
 }
 
 /**
- * The view a newly connected image takes: the first one free. Without a descriptor (no model
- * yet) only the main image is offered, so the card still shows what it was given.
+ * The view a newly connected image takes: the first one free (正面 is not free beside a 主图).
+ * Without a descriptor (no model yet) only the main image is offered, so the card still shows
+ * what it was given.
  */
 export function nextView(card: SpatialCard): { view?: string; views: string[] } {
   const cap = cardCapability(card);
   const views = cap ? capViews(cap) : ['reference'];
-  const used = new Set((card.references ?? []).map(viewOf));
+  const used = withTwins((card.references ?? []).map(viewOf));
   return { view: views.find((v) => !used.has(v)), views };
 }
 
