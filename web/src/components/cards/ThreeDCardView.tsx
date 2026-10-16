@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Box, FolderOpen, Sparkles } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Box, FolderOpen, Maximize2, Sparkles, X } from 'lucide-react';
 import type { TaskAssetDto } from '../../types/canvas.ts';
 import { MISSING_PROVIDER_HINT, buildProviderGroups, findModelOption, isModelReady, isProviderMissing } from '../../engine/channelModels.ts';
 import { NO_3D_MODELS_HINT, modelFiles, previewFile, spec3DSummary, viewLabel, viewOf } from '../../engine/model3d.ts';
@@ -9,6 +9,7 @@ import { apiRevealAsset } from '../../services/projects.ts';
 import { useChannels } from '../../services/channels.ts';
 import { Button } from '../ui/Button.tsx';
 import { InputSlot, LinkedPromptBox } from './CardPorts.tsx';
+import { InlineModelView } from './InlineModelView.tsx';
 import { AutoTextarea, CardShell, ErrorBox, GeneratingOverlay, MediaFrame, RunsBadge, StatusChip, SummaryRow } from './CardShell.tsx';
 import type { CardViewProps } from './cardProps.ts';
 
@@ -45,6 +46,11 @@ export const ThreeDCardView: React.FC<ThreeDCardViewProps> = ({
   onNotice,
 }) => {
   const [loadedAspect, setLoadedAspect] = useState<number>();
+  // The cover is replaced by a live, rotatable view in place while the card stays selected.
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    if (!isSelected) setLive(false);
+  }, [isSelected]);
   const channels = useChannels();
   const groups = useMemo(() => buildProviderGroups(channels, '3d'), [channels]);
   const modelLabel = (card.provider && findModelOption(groups, card.provider, card.model)?.label) || card.model || '未选择模型';
@@ -117,6 +123,7 @@ export const ThreeDCardView: React.FC<ThreeDCardViewProps> = ({
   };
   const primary = files.find((f) => f.asset.kind === 'model3d') ?? files[0];
   const preview = previewFile(card);
+  const previewUrl = preview ? assetUrl(assetStoredPath(preview)) : undefined;
   // Double-click opens the GLB/glTF in the 3D preview, or says the formats it has cannot be previewed.
   const openPreview = () => {
     const models = files.filter((f) => f.asset.kind === 'model3d');
@@ -134,19 +141,47 @@ export const ThreeDCardView: React.FC<ThreeDCardViewProps> = ({
   return (
     <CardShell {...shell}>
       <MediaFrame aspect={(cover && loadedAspect) || previewAspect(card)}>
-        {files.some((f) => f.asset.kind === 'model3d') && (
-          <div
-            className="absolute inset-0 z-[1] cursor-pointer"
-            title={preview ? '双击打开 3D 预览' : '双击查看文件'}
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              openPreview();
-            }}
-          >
-            <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md bg-black/60 text-[10px] text-slate-200 opacity-0 group-hover:opacity-100 transition">
-              {preview ? '双击 3D 预览' : '双击查看'}
+        {live && previewUrl ? (
+          <>
+            <InlineModelView url={previewUrl} onExit={() => setLive(false)} />
+            <div className="absolute top-2 right-2 z-[2] flex items-center gap-1" onMouseDown={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                title="全屏预览"
+                onClick={openPreview}
+                className="p-1 rounded-md bg-black/60 text-slate-200 hover:bg-black/80 hover:text-sky-300"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                title="退出交互（Esc）"
+                onClick={() => setLive(false)}
+                className="p-1 rounded-md bg-black/60 text-slate-200 hover:bg-black/80 hover:text-sky-300"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <span className="absolute bottom-2 left-2 z-[2] px-1.5 py-0.5 rounded-md bg-black/60 text-[10px] text-slate-300 pointer-events-none">
+              拖动旋转 · 滚轮缩放 · 右键平移
             </span>
-          </div>
+          </>
+        ) : (
+          files.some((f) => f.asset.kind === 'model3d') && (
+            <div
+              className="absolute inset-0 z-[1] cursor-pointer"
+              title={preview ? '双击在卡片内旋转预览' : '双击查看文件'}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                if (previewUrl) setLive(true);
+                else openPreview();
+              }}
+            >
+              <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded-md bg-black/60 text-[10px] text-slate-200 opacity-0 group-hover:opacity-100 transition">
+                {preview ? '双击旋转预览' : '双击查看'}
+              </span>
+            </div>
+          )
         )}
         {cover ? (
           <img
