@@ -33,11 +33,12 @@ describe('dropOptions', () => {
     }
   });
 
-  it('offers a text card (reads the image), a video card and a 3D card (reference) for an image result', () => {
+  it('offers a text card (reads the image), a Seedream image card, a video card and a 3D card (reference) for an image result', () => {
     const img = card({ id: 'i1', type: 'image', role: 'result', tagIndex: 3, provider: 'ark', model: 'doubao-seedream-5-0-pro-260628' });
     const out = dropOptions(img, at, [img]);
     expect(out.map((o) => [o.type, o.role])).toEqual([
       ['text', 'read_image'],
+      ['image', 'reference_image'],
       ['video', 'reference_image'],
       ['3d', 'reference_image'],
     ]);

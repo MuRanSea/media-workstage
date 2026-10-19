@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import { IMAGE_MODELS, MJ_SPEED_LABELS, SEEDREAM_PIXEL_MAP, type MjSpeed, type SpatialCard } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
-import { imageModelPatch, imageReferenceLimit, removeReferencePatch } from '../../engine/cardParams.ts';
+import { imageModePatch, imageModelPatch, imageReferenceLimit, removeReferencePatch } from '../../engine/cardParams.ts';
 import { MJ_MAX_REFERENCES, MJ_MIN_BLEND_IMAGES } from '../../engine/midjourney.ts';
 import { refTag } from '../../engine/refTags.ts';
 import { compileCardImagePayload } from '../../engine/compiler.ts';
@@ -119,7 +119,7 @@ export const ImageInspector: React.FC<Props> = ({ card, cards, update, linkedPro
         </Section>
       )}
 
-      {(isMidjourney || (isHeighliner && refLimit > 0)) && (
+      {(isMidjourney || ((isHeighliner || isSeedream) && refLimit > 0)) && (
         <Section title={`参考图 ${refs.length}/${isMidjourney ? MJ_MAX_REFERENCES : refLimit}`}>
           {isMidjourney && (
             <Field
@@ -181,7 +181,7 @@ export const ImageInspector: React.FC<Props> = ({ card, cards, update, linkedPro
             <Segmented
               accent="pink"
               value={mode}
-              onChange={(m) => update({ imageMode: m })}
+              onChange={(m) => update(imageModePatch(card, m))}
               options={[
                 { value: 'single', label: '单张' },
                 { value: 'layer_decomp', label: '拆分图层', disabled: !def.supportsLayerDecomp, title: def.supportsLayerDecomp ? undefined : '当前模型不支持' },

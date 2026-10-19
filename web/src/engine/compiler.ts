@@ -2,6 +2,7 @@ import { SEEDREAM_PIXEL_MAP, type CapOptions, type CapValues, type MjOperation, 
 import type { CreateTaskPayload, ProviderId } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
 import { MJ_MAX_REFERENCES, MJ_MIN_BLEND_IMAGES, midjourneyReferences } from './midjourney.ts';
+import { SEEDREAM_MAX_REFERENCES } from './cardParams.ts';
 import { compileHeighlinerImagePayload } from './heighlinerCompiler.ts';
 
 export interface ImageCompilationInput {
@@ -76,12 +77,19 @@ export function compileImageTaskPayload(input: ImageCompilationInput): CreateTas
     ? 'sequential'
     : 'single';
 
+  const references = input.references ?? [];
+  if (references.length > SEEDREAM_MAX_REFERENCES) {
+    throw new Error(`Seedream 最多 ${SEEDREAM_MAX_REFERENCES} 张参考图，当前 ${references.length} 张`);
+  }
+  const assets = references.length ? midjourneyReferences(references, input.allCards ?? []) : undefined;
+
   return {
     provider,
     model: input.model,
     task_type: 'image_generation',
     task_mode: taskMode,
-    prompt: input.prompt,
+    prompt: assets ? renumberTags(input.prompt, references) : input.prompt,
+    ...(assets ? { reference_assets: assets } : {}),
     params: {
       size: finalSize,
       response_format: 'url',
@@ -92,6 +100,12 @@ export function compileImageTaskPayload(input: ImageCompilationInput): CreateTas
       sequential_image_generation: isSequential ? 'auto' : 'disabled',
     },
   };
+}
+
+/** The prompt with each `@图N` rewritten to 图M, M being that image's place in the request (the model reads images by order). */
+function renumberTags(prompt: string, references: ReferenceItem[]): string {
+  const order = new Map(references.map((r, i) => [r.tagIndex, i + 1]));
+  return prompt.replace(/@图(\d+)(?!\d)/g, (tag, n) => (order.has(Number(n)) ? `图${order.get(Number(n))}` : tag));
 }
 
 /**
@@ -134,6 +148,9 @@ function compileChannelImagePayload(provider: ProviderId, input: ImageCompilatio
  * Convenience helper to compile directly from a SpatialCard.
  */
 export function compileCardImagePayload(card: SpatialCard, allCards: SpatialCard[] = []): CreateTaskPayload {
+  if (card.imageMode === 'layer_decomp' && protocolOf(card.provider ?? 'ark') === 'ark' && (card.references?.length ?? 0) !== 1) {
+    throw new Error('拆分图层需要连入一张图片');
+  }
   return compileImageTaskPayload({
     provider: card.provider,
     model: card.model,

@@ -65,7 +65,7 @@ describe('connectCards', () => {
       references: [{ cardId: 'x', tagIndex: 9, role: 'first_frame', label: 'x' }],
     });
     for (const [src, tgt, reason] of [
-      [img, { ...img, id: 'i2', role: 'generation' }, '只有 Midjourney 图片卡片'],
+      [img, { ...img, id: 'i2', role: 'generation', provider: 'openai' }, '不支持连入参考图'],
       [card({ id: 'vr', type: 'video', role: 'result', tagIndex: 2 }), { ...text, id: 't2', role: 'generation' }, '只接收图片'],
       [img, img, '不能连接到自己'],
       [img, text, '没有输入端口'],
@@ -152,7 +152,7 @@ describe('connecting result cards', () => {
 
   it('refuses every other pairing, and repeats, with a reason', () => {
     const cases: [SpatialCard, SpatialCard, string][] = [
-      [imgResult, genImg, '只有 Midjourney 图片卡片'],
+      [imgResult, { ...genImg, provider: 'openai' }, '不支持连入参考图'],
       [videoResult, genText, '只接收图片'],
       [videoResult, genImg, '视频只能连接到视频卡片'],
       [videoResult, genVideo, '没有 @视频 编号'],

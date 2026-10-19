@@ -119,7 +119,7 @@ describe('upload cards as video references', () => {
   });
 
   it('only connects uploads to video cards, and refuses duplicates', () => {
-    expect(connectCards(uploadImage(), card({ id: 'i', type: 'image' })).ok).toBe(false);
+    expect(connectCards(uploadImage(), card({ id: 'i', type: 'image', provider: 'openai' })).ok).toBe(false);
     const target = video({ references: [{ cardId: 'u2', tagIndex: 4, role: 'reference_video', label: '动作' }] });
     expect(connectCards(uploadVideo(), target).ok).toBe(false);
   });

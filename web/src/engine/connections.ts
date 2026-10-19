@@ -5,6 +5,7 @@ import { mentionsTag, refTag, withoutRefTag } from './refTags.ts';
 import { MJ_MAX_REFERENCES, isMidjourney } from './midjourney.ts';
 import { capReferenceLimit, capVideoModes, cardCapability, isHeighliner, slotLimit } from './capability.ts';
 import { nextView, viewLabel } from './model3d.ts';
+import { SEEDREAM_MAX_REFERENCES } from './cardParams.ts';
 
 export type ConnectResult =
   | { ok: true; patch: Partial<SpatialCard> }
@@ -59,7 +60,8 @@ export function connectCards(source: SpatialCard, target: SpatialCard): ConnectR
   }
   if (isImage && target.type === 'image') {
     if (isHeighliner(target.provider)) return attachImageToCapImage(source, target);
-    if (!isMidjourney(target)) return { ok: false, reason: '只有 Midjourney 图片卡片支持连入参考图' };
+    if (protocolOf(target.provider ?? 'ark') === 'ark') return attachImageToSeedream(source, target);
+    if (!isMidjourney(target)) return { ok: false, reason: '当前模型不支持连入参考图' };
     return attachImageToMidjourney(source, target);
   }
 
@@ -132,6 +134,20 @@ function attachImageToMidjourney(image: SpatialCard, card: SpatialCard): Connect
   if (image.tagIndex === undefined) return { ok: false, reason: '这张图片卡没有 @图 编号，无法引用' };
   const newRef: ReferenceItem = { cardId: image.id, tagIndex: image.tagIndex, role: 'reference_image', label: image.title.slice(0, 10) };
   return { ok: true, patch: { references: [...refs, newRef] } };
+}
+
+/** A Seedream card takes up to 14 reference images (one in layer decomposition); the prompt names them with @图N. */
+function attachImageToSeedream(image: SpatialCard, card: SpatialCard): ConnectResult {
+  const refs = card.references ?? [];
+  if (refs.some((r) => r.cardId === image.id)) return { ok: false, reason: '已经连接过了' };
+  if (card.imageMode === 'layer_decomp') {
+    if (refs.length >= 1) return { ok: false, reason: '拆分图层只能连入一张图片' };
+  } else if (refs.length >= SEEDREAM_MAX_REFERENCES) {
+    return { ok: false, reason: `Seedream 最多 ${SEEDREAM_MAX_REFERENCES} 张参考图` };
+  }
+  const ref = taggedRef(image, 'reference_image');
+  if ('ok' in ref) return ref;
+  return { ok: true, patch: { prompt: withTag(card.prompt, ref), references: [...refs, ref] } };
 }
 
 /** A text card sends its images to the LLM in order; the tag lets the prompt name one ("描述 @图1"). */

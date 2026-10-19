@@ -60,6 +60,7 @@ export function imageModelPatch(card: SpatialCard, option: ModelOption): Partial
       customPixels: def?.defaultCustomPixel ?? '2048x1024',
       imageMode: 'single',
       ...midjourneyOnlyReset(option),
+      ...fitReferences(card, SEEDREAM_MAX_REFERENCES),
     };
   }
   return {
@@ -80,9 +81,19 @@ function fitReferences(card: SpatialCard, limit: number): Partial<SpatialCard> {
   return { prompt, references: refs.slice(0, limit).map((r) => ({ ...r, role: 'reference_image' })) };
 }
 
-/** How many images an image card takes as references: Midjourney's 5, a Heighliner model's `reference` limit, else none. */
+/** Seedream takes up to 14 reference images; layer decomposition takes exactly one. */
+export const SEEDREAM_MAX_REFERENCES = 14;
+
+/** Switching an ark image card's mode; layer decomposition keeps one reference and drops the others' tags. */
+export function imageModePatch(card: SpatialCard, mode: NonNullable<SpatialCard['imageMode']>): Partial<SpatialCard> {
+  if (mode === 'layer_decomp' && (card.references?.length ?? 0) > 1) return { imageMode: mode, ...fitReferences(card, 1) };
+  return { imageMode: mode };
+}
+
+/** How many images an image card takes as references: Seedream's 14 (1 to decompose), Midjourney's 5, a Heighliner model's `reference` limit, else none. */
 export function imageReferenceLimit(card: SpatialCard): number {
   const protocol = protocolOf(card.provider ?? 'ark');
+  if (protocol === 'ark') return card.imageMode === 'layer_decomp' ? 1 : SEEDREAM_MAX_REFERENCES;
   if (protocol === 'midjourney') return MJ_MAX_REFERENCES;
   if (protocol === 'heighliner') return slotLimit(cardCapability(card), 'reference', 'image');
   return 0;
@@ -90,7 +101,9 @@ export function imageReferenceLimit(card: SpatialCard): number {
 
 /** Midjourney-only settings (speed, Blend, reference images) do not carry over to other providers. */
 function midjourneyOnlyReset(option: ModelOption): Partial<SpatialCard> {
-  return option.protocol === 'midjourney' ? {} : { mjSpeed: undefined, mjOperation: undefined, references: undefined };
+  if (option.protocol === 'midjourney') return {};
+  // Seedream keeps the references (fitted by the caller); the rest drop them.
+  return option.protocol === 'ark' ? { mjSpeed: undefined, mjOperation: undefined } : { mjSpeed: undefined, mjOperation: undefined, references: undefined };
 }
 
 /** One-line size description, e.g. "2K · 16:9", "2048x1024" or "Blend · 1:1 · Relax" (Midjourney). */

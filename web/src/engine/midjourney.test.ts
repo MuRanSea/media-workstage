@@ -143,7 +143,7 @@ describe('connecting images to Midjourney cards', () => {
   });
 
   it('refuses other image cards, duplicates and a sixth image', () => {
-    expect(connectCards(imageResult(), mjCard({ provider: 'ark', model: 'doubao-seedream-5-0-pro-260628' }))).toMatchObject({ ok: false });
+    expect(connectCards(imageResult(), mjCard({ provider: 'openai', model: 'gpt-image-1' }))).toMatchObject({ ok: false });
     const linked = mjCard({ references: [ref(imageResult())] });
     expect(connectCards(imageResult(), linked)).toEqual({ ok: false, reason: '已经连接过了' });
     const full = mjCard({ references: [1, 2, 3, 4, 5].map((n) => ref(imageResult({ id: `r${n}0`, tagIndex: n }))) });
