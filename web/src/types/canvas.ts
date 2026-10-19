@@ -359,6 +359,58 @@ export const VIDEO_MODELS: VideoModelDef[] = [
     supportsMov: false,
     maxRefs: 7
   },
+  // Kling's own API. Resolution is passed through as-is (4k on the 3.0 family only).
+  {
+    id: 'kling-3.0-omni',
+    name: 'Kling 3.0 Omni',
+    tag: '多图/视频参考·4K',
+    protocol: 'kling',
+    resolutions: ['720p', '1080p', '4k'],
+    durations: [3, 5, 10, 15],
+    ratios: ['16:9', '9:16', '1:1'],
+    supportsAudio: true,
+    supportsMov: false,
+    maxRefs: 7
+  },
+  {
+    id: 'kling-3.0',
+    name: 'Kling 3.0',
+    tag: '首尾帧·4K',
+    protocol: 'kling',
+    resolutions: ['720p', '1080p', '4k'],
+    durations: [3, 5, 10, 15],
+    ratios: ['16:9', '9:16', '1:1'],
+    supportsAudio: true,
+    supportsMov: false,
+    maxRefs: 2,
+    modes: ['first_last_frame', 'text_to_video']
+  },
+  {
+    id: 'kling-3.0-turbo',
+    name: 'Kling 3.0 Turbo',
+    tag: '首帧/极速',
+    protocol: 'kling',
+    resolutions: ['720p', '1080p'],
+    durations: [3, 5, 10, 15],
+    ratios: ['16:9', '9:16', '1:1'],
+    supportsAudio: false,
+    supportsMov: false,
+    maxRefs: 1,
+    modes: ['first_last_frame', 'text_to_video']
+  },
+  {
+    id: 'kling-2.6',
+    name: 'Kling 2.6',
+    tag: '首尾帧',
+    protocol: 'kling',
+    resolutions: ['720p', '1080p'],
+    durations: [5, 10],
+    ratios: ['16:9', '9:16', '1:1'],
+    supportsAudio: true,
+    supportsMov: false,
+    maxRefs: 2,
+    modes: ['first_last_frame', 'text_to_video']
+  },
   // MiniMax-H3 through APIMart (the MiniMax channel speaks MiniMax's own API instead).
   {
     id: 'MiniMax-H3',
@@ -402,6 +454,11 @@ export function resolveVideoModelDef(protocol: Protocol | undefined, modelId: st
       ? 'kling-3.0-turbo'
       : 'kling-v3';
   }
+  if (protocol === 'kling') {
+    // Unlisted Kling models take after the family they belong to.
+    const m = modelId.toLowerCase();
+    baseId = m.includes('omni') ? 'kling-3.0-omni' : m.includes('turbo') ? 'kling-3.0-turbo' : m.startsWith('kling-3') ? 'kling-3.0' : 'kling-2.6';
+  }
   const base =
     VIDEO_MODELS.find((m) => m.id === baseId && m.protocol === protocol) ??
     VIDEO_MODELS.find((m) => m.id === baseId) ??
@@ -415,10 +472,10 @@ export function resolveVideoModelDef(protocol: Protocol | undefined, modelId: st
  */
 export type VideoReferType = 'base' | 'feature';
 
-/** Whether a model is Kling Omni on APIMart, which asks what its reference video is for. */
+/** Whether a model is Kling Omni (on APIMart or Kling's own API), which asks what its reference video is for. */
 export function takesVideoReferType(protocol: Protocol | undefined, modelId: string): boolean {
   const m = modelId.toLowerCase();
-  return protocol === 'apimart' && m.startsWith('kling') && (m.includes('omni') || m.includes('-o1'));
+  return (protocol === 'apimart' || protocol === 'kling') && m.startsWith('kling') && (m.includes('omni') || m.includes('-o1'));
 }
 
 /** How many reference videos a model takes on a protocol; 0 when it takes none. */

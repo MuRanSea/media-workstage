@@ -171,7 +171,7 @@ func TestCreateProvider_Validation(t *testing.T) {
 		status int
 		msg    string
 	}{
-		{map[string]string{"protocol": "kling", "name": "可灵 B", "base_url": "http://127.0.0.1:9"}, http.StatusBadRequest, "暂不支持"},
+		{map[string]string{"protocol": "nonexistent", "name": "可灵 B", "base_url": "http://127.0.0.1:9"}, http.StatusBadRequest, "暂不支持"},
 		{map[string]string{"protocol": "openai_compatible", "name": "  ", "base_url": "http://127.0.0.1:9"}, http.StatusBadRequest, "名称不能为空"},
 		{map[string]string{"protocol": "openai_compatible", "name": " openai ", "base_url": "http://127.0.0.1:9"}, http.StatusConflict, "名称已被其他服务商使用"},
 		{map[string]string{"protocol": "openai_compatible", "name": "中转", "base_url": "ftp://x"}, http.StatusBadRequest, "base_url"},

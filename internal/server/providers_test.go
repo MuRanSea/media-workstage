@@ -279,8 +279,9 @@ func TestUpdateConfig_KeepsPresetsUntilModelsSent(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	spec, _ := findProvider(nil, "kling")
 	assert.Equal(t, spec.Presets, resolveProvider(spec, srv.storedConfig()).Models)
-	_, ok := srv.registry.Get("kling")
-	assert.False(t, ok, "kling only stores configuration for now")
+	live, ok := srv.registry.Get("kling")
+	require.True(t, ok, "a saved key brings the kling adapter up")
+	assert.IsType(t, &adapter.KlingAdapter{}, live)
 }
 
 // main.go hands the same adapter map to both the poller and the server; a key saved
@@ -654,6 +655,5 @@ func TestProviderAdapters_MockOnlyWhereTheProviderRunsMocked(t *testing.T) {
 	assert.Equal(t, "openai", adapters["openai"].ProviderName())
 	assert.IsType(t, &adapter.MiniMaxAdapter{}, adapters["minimax"])
 	assert.Equal(t, "g1", adapters["minimax"].(adapter.ConfigurableAdapter).GetConfig().Extra["group_id"])
-	_, hasKling := adapters["kling"]
-	assert.False(t, hasKling, "kling only stores configuration for now")
+	assert.IsType(t, &adapter.KlingAdapter{}, adapters["kling"])
 }

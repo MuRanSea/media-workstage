@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildProviderGroups, findModelOption, isModelReady } from './channelModels.ts';
 import type { ProviderConfigItem } from '../services/api.ts';
-import { resolveVideoModelDef } from '../types/canvas.ts';
+import { maxReferenceVideos, resolveVideoModelDef, takesVideoReferType } from '../types/canvas.ts';
 import { protocolOf, providerName, rememberProviders } from './providers.ts';
 
 // Preset providers, as GET /api/config lists them.
@@ -160,5 +160,43 @@ describe('Heighliner readiness', () => {
     expect(text.map((g) => [g.provider, g.name, g.ready])).toEqual([['custom-hl', 'Heighliner', true]]);
     expect(text[0].options.map((o) => o.id)).toEqual(['deepseek-flash']);
     expect(isModelReady('text', 'custom-hl', 'deepseek-flash')).toBe(true);
+  });
+});
+
+describe('Kling native readiness', () => {
+  it('runs every Kling model on the kling channel, with limits that follow the family', () => {
+    const groups = buildProviderGroups(
+      [
+        channel({
+          id: 'kling',
+          is_configured: true,
+          models: [
+            { id: 'kling-3.0-omni', type: 'video' },
+            { id: 'kling-3.0-turbo', type: 'video' },
+            { id: 'kling-v3', type: 'image' },
+          ],
+        }),
+      ],
+      'video'
+    );
+    expect(groups[0].ready).toBe(true);
+    expect(groups[0].options.map((o) => [o.id, o.ready])).toEqual([
+      ['kling-3.0-omni', true],
+      ['kling-3.0-turbo', true],
+    ]);
+    expect(resolveVideoModelDef('kling', 'kling-3.0-omni')).toMatchObject({ protocol: 'kling', maxRefs: 7 });
+    expect(resolveVideoModelDef('kling', 'kling-3.0-turbo')).toMatchObject({ protocol: 'kling', supportsAudio: false });
+    // The APIMart entry of the same model keeps its own definition.
+    expect(resolveVideoModelDef('apimart', 'kling-3.0-turbo').protocol).toBe('apimart');
+    // Unlisted models take after their family.
+    expect(resolveVideoModelDef('kling', 'kling-3.1-omni')).toMatchObject({ id: 'kling-3.1-omni', maxRefs: 7 });
+    expect(resolveVideoModelDef('kling', 'kling-2.5-turbo')).toMatchObject({ id: 'kling-2.5-turbo', supportsAudio: false });
+  });
+
+  it('asks what the reference video is for on Omni, on both the kling and APIMart channels', () => {
+    expect(takesVideoReferType('kling', 'kling-3.0-omni')).toBe(true);
+    expect(takesVideoReferType('kling', 'kling-3.0')).toBe(false);
+    expect(maxReferenceVideos('kling', 'kling-3.0-omni')).toBe(1);
+    expect(maxReferenceVideos('kling', 'kling-2.6')).toBe(0);
   });
 });

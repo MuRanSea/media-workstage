@@ -112,6 +112,8 @@ func NewProviderAdapter(protocol model.Protocol, providerID, baseURL, apiKey str
 		return NewMidjourneyAdapter(cfg), true
 	case model.ProtocolHeighliner:
 		return NewHeighlinerAdapter(cfg), true
+	case model.ProtocolKling:
+		return NewKlingAdapter(cfg), true
 	}
 	return nil, false
 }

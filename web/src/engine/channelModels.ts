@@ -6,8 +6,8 @@ export type MediaKind = 'image' | 'video' | 'text' | '3d';
 
 /** Protocols whose backend adapter can run every model of each kind (text = LLM chat). */
 export const READY_PROTOCOLS: Record<MediaKind, ReadonlySet<Protocol>> = {
-  image: new Set<Protocol>(['ark', 'openai_compatible', 'gemini', 'apimart', 'midjourney', 'heighliner']),
-  video: new Set<Protocol>(['ark', 'minimax', 'heighliner']),
+  image: new Set<Protocol>(['ark', 'openai_compatible', 'gemini', 'apimart', 'midjourney', 'heighliner', 'kling']),
+  video: new Set<Protocol>(['ark', 'minimax', 'heighliner', 'kling']),
   text: new Set<Protocol>(['ark', 'minimax', 'openai_compatible', 'anthropic', 'gemini', 'apimart', 'heighliner']),
   '3d': new Set<Protocol>(['heighliner']),
 };
