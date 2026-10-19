@@ -657,3 +657,15 @@ func TestProviderAdapters_MockOnlyWhereTheProviderRunsMocked(t *testing.T) {
 	assert.Equal(t, "g1", adapters["minimax"].(adapter.ConfigurableAdapter).GetConfig().Extra["group_id"])
 	assert.IsType(t, &adapter.KlingAdapter{}, adapters["kling"])
 }
+
+func TestBoundModelsEmptySavedListKeepsPresets(t *testing.T) {
+	spec := providerSpec{ID: "kling", Presets: []boundModel{{ID: "kling-3.0"}}}
+	got := boundModels(spec, map[string]string{"kling_models": "[]"})
+	if len(got) != 1 || got[0].ID != "kling-3.0" {
+		t.Fatalf("empty saved list should fall back to presets, got %+v", got)
+	}
+	got = boundModels(spec, map[string]string{"kling_models": `[{"id":"x"}]`})
+	if len(got) != 1 || got[0].ID != "x" {
+		t.Fatalf("non-empty saved list should win, got %+v", got)
+	}
+}
