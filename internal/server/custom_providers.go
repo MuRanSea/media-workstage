@@ -17,7 +17,7 @@ import (
 )
 
 // creatableProtocols are the protocols users can add Custom Providers for: every one
-// with an adapter (ADR 0004). Kling only stores configuration so far.
+// with an adapter (ADR 0004).
 var creatableProtocols = map[model.Protocol]bool{
 	model.ProtocolOpenAICompatible: true,
 	model.ProtocolAnthropic:        true,
@@ -27,6 +27,7 @@ var creatableProtocols = map[model.Protocol]bool{
 	model.ProtocolMiniMax:          true,
 	model.ProtocolMidjourney:       true,
 	model.ProtocolHeighliner:       true,
+	model.ProtocolKling:            true,
 }
 
 // upsertConfigs writes config entries in one transaction.

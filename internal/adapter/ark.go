@@ -311,21 +311,43 @@ func validateAssetID(url string) error {
 	return nil
 }
 
+// isSeedreamProOrFlash reports whether the model is Seedream 5.0 pro or flash, which share one parameter contract.
+func isSeedreamProOrFlash(modelID string) bool {
+	for _, k := range []string{"5-0-pro", "5.0-pro", "5.0_pro", "5-0-flash", "5.0-flash", "5.0_flash"} {
+		if strings.Contains(modelID, k) {
+			return true
+		}
+	}
+	return false
+}
+
 // validateImageTask validates image generation parameters and size mutual exclusivity.
 func (a *ArkAdapter) validateImageTask(task *model.MediaTask, params *ParsedParams) error {
 	if strings.TrimSpace(task.Prompt) == "" {
 		return errors.New("prompt is required for image generation")
 	}
 
-	isPro := strings.Contains(task.Model, "5-0-pro") || strings.Contains(task.Model, "5.0-pro") || strings.Contains(task.Model, "5.0_pro")
+	// Seedream 5.0 flash follows the pro rules (size range, 10 references, layer decomposition).
+	isPro := isSeedreamProOrFlash(task.Model)
 	isLite := strings.Contains(task.Model, "5-0-lite") || strings.Contains(task.Model, "5.0-lite") || strings.Contains(task.Model, "5.0_lite")
 
 	// Feature exclusivity
 	if params.LayerDecomposition && !isPro {
-		return errors.New("layer_decomposition is only supported on Seedream 5.0 Pro")
+		return errors.New("layer_decomposition is only supported on Seedream 5.0 Pro/Flash")
 	}
-	if params.SequentialImageGeneration == "auto" && isPro {
-		return errors.New("sequential_image_generation is not supported on Seedream 5.0 Pro")
+	if params.LayerDecomposition && len(params.ReferenceAssets) != 1 {
+		return fmt.Errorf("layer_decomposition requires exactly 1 input image, got %d", len(params.ReferenceAssets))
+	}
+	if params.Background == "transparent" && isPro && !params.LayerDecomposition {
+		if len(params.ReferenceAssets) != 1 {
+			return fmt.Errorf("transparent background requires exactly 1 input image with an alpha channel, got %d", len(params.ReferenceAssets))
+		}
+		if params.OutputFormat == "jpeg" {
+			return errors.New("transparent background cannot output jpeg; use png")
+		}
+	}
+	if params.SequentialImageGeneration == "auto" && isSeedreamProOrFlash(task.Model) {
+		return errors.New("sequential_image_generation is not supported on Seedream 5.0 Pro/Flash")
 	}
 
 	// Validate reference image count
@@ -714,6 +736,16 @@ func (a *ArkAdapter) submitImageTask(ctx context.Context, task *model.MediaTask,
 	size := params.Size
 	if size == "" && params.Width > 0 && params.Height > 0 {
 		size = fmt.Sprintf("%dx%d", params.Width, params.Height)
+	}
+
+	// Seedream 5.0 pro/flash reject the sequential fields entirely, even "disabled";
+	// background and layer_decomposition exist only on pro/flash.
+	if isSeedreamProOrFlash(task.Model) {
+		params.SequentialImageGeneration = ""
+		params.SequentialImageGenerationOptions = nil
+	} else {
+		params.Background = ""
+		params.LayerDecomposition = false
 	}
 
 	reqBody := arkImageRequest{

@@ -312,10 +312,42 @@ func TestArkAdapter_SeedreamValidation(t *testing.T) {
 			Model:      "doubao-seedream-5-0-pro-260628",
 			TaskType:   "image_generation",
 			Prompt:     "A character portrait",
-			ParamsJSON: `{"layer_decomposition": true}`,
+			ParamsJSON: `{"layer_decomposition": true, "reference_assets": [{"role": "reference_image", "url": "https://example.com/src.png"}]}`,
 		}
 		if _, err := adapter.ValidateTask(proLayerTask); err != nil {
 			t.Fatalf("expected layer_decomposition to be valid on Pro, got: %v", err)
+		}
+
+		// Layer decomposition without its input image: rejected
+		proLayerTask.ParamsJSON = `{"layer_decomposition": true}`
+		if _, err := adapter.ValidateTask(proLayerTask); err == nil || !strings.Contains(err.Error(), "exactly 1 input image") {
+			t.Fatalf("expected layer_decomposition to require one input image, got: %v", err)
+		}
+
+		// Seedream 5.0 Flash follows the Pro rules
+		flashTask := &model.MediaTask{
+			Model:      "doubao-seedream-5-0-flash-260915",
+			TaskType:   "image_generation",
+			Prompt:     "A character portrait",
+			ParamsJSON: `{"sequential_image_generation": "auto"}`,
+		}
+		if _, err := adapter.ValidateTask(flashTask); err == nil {
+			t.Fatal("expected sequential_image_generation error on Flash")
+		}
+
+		// Transparent background needs one input image and png output
+		transparentTask := &model.MediaTask{
+			Model:      "doubao-seedream-5-0-pro-260628",
+			TaskType:   "image_generation",
+			Prompt:     "A sticker",
+			ParamsJSON: `{"background": "transparent", "output_format": "jpeg", "reference_assets": [{"role": "reference_image", "url": "https://example.com/src.png"}]}`,
+		}
+		if _, err := adapter.ValidateTask(transparentTask); err == nil || !strings.Contains(err.Error(), "cannot output jpeg") {
+			t.Fatalf("expected transparent jpeg error, got: %v", err)
+		}
+		transparentTask.ParamsJSON = `{"background": "transparent", "output_format": "png"}`
+		if _, err := adapter.ValidateTask(transparentTask); err == nil || !strings.Contains(err.Error(), "exactly 1 input image") {
+			t.Fatalf("expected transparent background to require one input image, got: %v", err)
 		}
 
 		// Layer decomposition on Lite: rejected
@@ -626,7 +658,7 @@ func TestArkAdapter_ImageTaskFlow(t *testing.T) {
 		Model:      "doubao-seedream-5-0-pro-260628",
 		TaskType:   "image_generation",
 		Prompt:     "A character in a futuristic city",
-		ParamsJSON: `{"size": "2K", "layer_decomposition": true}`,
+		ParamsJSON: `{"size": "2K", "layer_decomposition": true, "reference_assets": [{"role": "reference_image", "url": "https://example.com/src.png"}]}`,
 	}
 
 	taskID, err := adapter.SubmitTask(ctx, task)

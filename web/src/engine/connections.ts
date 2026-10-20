@@ -5,7 +5,7 @@ import { mentionsTag, refTag, withoutRefTag } from './refTags.ts';
 import { MJ_MAX_REFERENCES, isMidjourney } from './midjourney.ts';
 import { capReferenceLimit, capVideoModes, cardCapability, isHeighliner, slotLimit } from './capability.ts';
 import { nextView, viewLabel } from './model3d.ts';
-import { SEEDREAM_MAX_REFERENCES } from './cardParams.ts';
+import { seedreamMaxReferences } from './cardParams.ts';
 
 export type ConnectResult =
   | { ok: true; patch: Partial<SpatialCard> }
@@ -136,14 +136,14 @@ function attachImageToMidjourney(image: SpatialCard, card: SpatialCard): Connect
   return { ok: true, patch: { references: [...refs, newRef] } };
 }
 
-/** A Seedream card takes up to 14 reference images (one in layer decomposition); the prompt names them with @图N. */
+/** A Seedream card takes up to 10 (5.0 pro / flash) or 14 reference images (one in layer decomposition); the prompt names them with @图N. */
 function attachImageToSeedream(image: SpatialCard, card: SpatialCard): ConnectResult {
   const refs = card.references ?? [];
   if (refs.some((r) => r.cardId === image.id)) return { ok: false, reason: '已经连接过了' };
   if (card.imageMode === 'layer_decomp') {
     if (refs.length >= 1) return { ok: false, reason: '拆分图层只能连入一张图片' };
-  } else if (refs.length >= SEEDREAM_MAX_REFERENCES) {
-    return { ok: false, reason: `Seedream 最多 ${SEEDREAM_MAX_REFERENCES} 张参考图` };
+  } else if (refs.length >= seedreamMaxReferences(card.model)) {
+    return { ok: false, reason: `当前模型最多 ${seedreamMaxReferences(card.model)} 张参考图` };
   }
   const ref = taggedRef(image, 'reference_image');
   if ('ok' in ref) return ref;

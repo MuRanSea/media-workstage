@@ -17,6 +17,8 @@ const card = (p: Partial<SpatialCard> & Pick<SpatialCard, 'id' | 'type'>): Spati
   ...p,
 });
 
+const LITE = 'doubao-seedream-5-0-lite-260128';
+
 const seedream = (patch: Partial<SpatialCard> = {}) =>
   card({ id: 'g1', type: 'image', provider: 'ark', model: 'doubao-seedream-5-0-pro-260628', prompt: '换成夜景', ...patch });
 
@@ -41,11 +43,13 @@ describe('Seedream image-to-image', () => {
     expect(res.ok && res.patch.prompt).toBe('换成夜景 @图2');
   });
 
-  it('refuses duplicates and a fifteenth reference', () => {
+  it('refuses duplicates and a reference past the model limit (10 on 5.0 pro, 14 on lite)', () => {
     const r1 = imageResult(1);
     expect(connectCards(r1, seedream({ references: [ref(r1)] }))).toEqual({ ok: false, reason: '已经连接过了' });
-    const full = seedream({ references: Array.from({ length: 14 }, (_, i) => ref(imageResult(i + 10))) });
-    expect(connectCards(imageResult(30), full)).toMatchObject({ ok: false, reason: expect.stringContaining('最多 14 张') });
+    const refs = (n: number) => Array.from({ length: n }, (_, i) => ref(imageResult(i + 10)));
+    expect(connectCards(imageResult(30), seedream({ references: refs(10) }))).toMatchObject({ ok: false, reason: expect.stringContaining('最多 10 张') });
+    expect(connectCards(imageResult(30), seedream({ model: LITE, references: refs(10) }))).toMatchObject({ ok: true });
+    expect(connectCards(imageResult(30), seedream({ model: LITE, references: refs(14) }))).toMatchObject({ ok: false, reason: expect.stringContaining('最多 14 张') });
   });
 
   it('sends the saved files and renumbers the prompt in send order', () => {
@@ -62,9 +66,10 @@ describe('Seedream image-to-image', () => {
     expect(compileCardImagePayload(seedream()).reference_assets).toBeUndefined();
   });
 
-  it('refuses more than 14 references and an unfinished reference', () => {
+  it('refuses references past the model limit and an unfinished reference', () => {
     const many = Array.from({ length: 15 }, (_, i) => imageResult(i + 1));
-    expect(() => compileCardImagePayload(seedream({ references: many.map(ref) }), many)).toThrow('最多 14 张');
+    expect(() => compileCardImagePayload(seedream({ references: many.slice(0, 11).map(ref) }), many)).toThrow('最多 10 张');
+    expect(() => compileCardImagePayload(seedream({ model: LITE, references: many.map(ref) }), many)).toThrow('最多 14 张');
     const pending = imageResult(1, { resultUrl: undefined, status: 'running' });
     expect(() => compileCardImagePayload(seedream({ references: [ref(pending)] }), [pending])).toThrow('还没有图片');
   });
@@ -82,7 +87,8 @@ describe('Seedream image-to-image', () => {
   it('limits references to one in layer decomposition and trims them when switching to it', () => {
     const [a, b] = [imageResult(1), imageResult(2)];
     const card2 = seedream({ prompt: '拆 @图1 @图2', references: [ref(a), ref(b)] });
-    expect(imageReferenceLimit(card2)).toBe(14);
+    expect(imageReferenceLimit(card2)).toBe(10);
+    expect(imageReferenceLimit({ ...card2, model: LITE })).toBe(14);
     expect(imageReferenceLimit({ ...card2, imageMode: 'layer_decomp' })).toBe(1);
     expect(connectCards(imageResult(3), { ...card2, imageMode: 'layer_decomp', references: [ref(a)] })).toMatchObject({
       ok: false,

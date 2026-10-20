@@ -297,7 +297,7 @@ func TestNewProviderAdapter_BuildsByProtocolAndNamesInstance(t *testing.T) {
 	assert.IsType(t, &MidjourneyAdapter{}, mj)
 	assert.Equal(t, "mj-relay", mj.ProviderName())
 
-	for _, p := range []model.Protocol{model.ProtocolKling, "unknown"} {
+	for _, p := range []model.Protocol{"unknown"} {
 		_, ok := NewProviderAdapter(p, "x", "", "k", nil)
 		assert.False(t, ok, p)
 	}

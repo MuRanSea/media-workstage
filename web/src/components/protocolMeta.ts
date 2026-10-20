@@ -67,8 +67,8 @@ export const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
     baseUrlPlaceholder: 'https://api-beijing.klingai.com',
     keyLabel: 'API Key',
     keyPlaceholder: '请输入可灵控制台创建的 API Key',
-    hint: '默认中国区域名；国际区账号请改用国际站文档给出的域名。',
-    adapterReady: false,
+    hint: '默认中国区域名；国际区账号请改用国际站文档给出的域名。Base URL 填域名即可，不要带路径。',
+    adapterReady: true,
   },
   midjourney: {
     label: 'MJ Proxy',
@@ -156,6 +156,7 @@ export const CREATABLE_PROTOCOLS: Protocol[] = [
   'gemini',
   'apimart',
   'heighliner',
+  'kling',
   'ark',
   'minimax',
   'midjourney',

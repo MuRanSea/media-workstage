@@ -487,7 +487,6 @@ func (s *Server) clearProvider(c *gin.Context, spec providerSpec) {
 
 // hotReloadAdapter keeps the live adapter in step with saved credentials: a new key
 // replaces a missing or mock adapter, otherwise the existing adapter is updated in place.
-// Protocols without generation support (kling) only persist configuration.
 func (s *Server) hotReloadAdapter(spec providerSpec, payload UpdateConfigPayload) {
 	provAdapter, ok := s.registry.Get(spec.ID)
 	_, isFake := provAdapter.(*adapter.FakeProviderAdapter)

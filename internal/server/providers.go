@@ -445,7 +445,9 @@ func boundModels(spec providerSpec, stored map[string]string) []boundModel {
 	models := spec.Presets
 	if raw, ok := stored[spec.ID+"_models"]; ok {
 		var saved []boundModel
-		if err := json.Unmarshal([]byte(raw), &saved); err == nil {
+		// An empty saved list is what a provider that could not run yet persisted; it
+		// must not hide the preset models once the provider can.
+		if err := json.Unmarshal([]byte(raw), &saved); err == nil && (len(saved) > 0 || len(spec.Presets) == 0) {
 			models = saved
 		}
 	}

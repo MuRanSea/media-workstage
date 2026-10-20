@@ -42,9 +42,32 @@ describe('Seedream Image Payload Compiler', () => {
         prompt: 'test',
         sizeMode: 'tier',
         imageTier: '3K',
-        imageRatioPreset: '3:2', // 3K only maps 1:1, 16:9, 9:16, 4:3, 3:4
+        imageRatioPreset: '5:4', // no tier maps 5:4
       })
     ).toThrowError(/Unsupported tier\/ratio combination/);
+  });
+
+  it('maps every inspector ratio on the 3K and 4K tiers', () => {
+    for (const [tier, ratio, size] of [['3K', '3:2', '3744x2496'], ['3K', '21:9', '4704x2016'], ['4K', '2:3', '3328x4992'], ['4K', '21:9', '6240x2656']]) {
+      const payload = compileImageTaskPayload({ model: 'doubao-seedream-5-0-lite-260128', prompt: 't', imageTier: tier, imageRatioPreset: ratio });
+      expect(payload.params?.size).toBe(size);
+    }
+  });
+
+  it('sends background only to 5.0 pro / flash and checks transparent output', () => {
+    const lite = compileImageTaskPayload({ model: 'doubao-seedream-5-0-lite-260128', prompt: 't', background: 'transparent' });
+    expect(lite.params).not.toHaveProperty('background');
+    expect(lite.params).not.toHaveProperty('layer_decomposition');
+
+    const pro = 'doubao-seedream-5-0-pro-260628';
+    const ref = { cardId: 'a', tagIndex: 1, role: 'reference_image', label: 'a' } as const;
+    const image = { id: 'a', type: 'image', resultUrl: '/assets/images/a/base.png' } as unknown as SpatialCard;
+    expect(() => compileImageTaskPayload({ model: pro, prompt: 't', background: 'transparent', imageFormat: 'png' })).toThrow('带透明通道');
+    expect(() =>
+      compileImageTaskPayload({ model: pro, prompt: 't', background: 'transparent', references: [ref], allCards: [image] })
+    ).toThrow('PNG');
+    const ok = compileImageTaskPayload({ model: pro, prompt: 't', background: 'transparent', imageFormat: 'png', references: [ref], allCards: [image] });
+    expect(ok.params?.background).toBe('transparent');
   });
 
   it('compiles and validates explicit custom pixel dimensions', () => {
@@ -76,7 +99,7 @@ describe('Seedream Image Payload Compiler', () => {
     expect(layerPayload.task_mode).toBe('layer_decomp');
     expect(layerPayload.params?.size).toBe('auto');
     expect(layerPayload.params?.layer_decomposition).toBe(true);
-    expect(layerPayload.params?.sequential_image_generation).toBe('disabled');
+    expect(layerPayload.params).not.toHaveProperty('sequential_image_generation');
   });
 
   it('compiles sequential storyboard mode with sequential_image_generation: auto', () => {
@@ -91,7 +114,7 @@ describe('Seedream Image Payload Compiler', () => {
     expect(seqPayload.task_mode).toBe('sequential');
     expect(seqPayload.params?.size).toBe('2048x2048');
     expect(seqPayload.params?.sequential_image_generation).toBe('auto');
-    expect(seqPayload.params?.layer_decomposition).toBe(false);
+    expect(seqPayload.params).not.toHaveProperty('layer_decomposition');
   });
 
   it('compiles directly from a SpatialCard object identically', () => {
