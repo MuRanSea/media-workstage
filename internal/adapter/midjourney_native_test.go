@@ -46,6 +46,12 @@ func newNativeMJServer(t *testing.T) *nativeMJServer {
 	s := &nativeMJServer{}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer mj-key", r.Header.Get("Authorization"))
+		if r.URL.Path == "/midjourney/v1/proxy-1" {
+			// The legacy query, which alone carries the proxy's fail_reason.
+			assert.Empty(t, r.Header.Get("X-Heighliner-MJ-Response-Version"))
+			_, _ = io.WriteString(w, `{"data":{"task_id":"proxy-1","status":"failed","fail_reason":"Forbidden flag, Your plan doesn't include Relax mode."}}`)
+			return
+		}
 		assert.Equal(t, "2026-10-16", r.Header.Get("X-Heighliner-MJ-Response-Version"))
 		s.requests = append(s.requests, r)
 		var body map[string]any
@@ -123,6 +129,19 @@ func TestMidjourneyNative_PromptFlagsWinOverCardFields(t *testing.T) {
 		"no size beside the prompt's --ar, and the speed field matches the prompt's flag")
 }
 
+func TestMidjourneyNative_DefaultSpeedIsFast(t *testing.T) {
+	srv := newNativeMJServer(t)
+	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL + "/midjourney", APIKey: "mj-key"})
+	_, err := a.SubmitTask(context.Background(), imageTask("midjourney", "MID_JOURNEY", `{}`))
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"prompt": "a red fox", "speed": "fast"}, srv.bodies[0],
+		"the gateway's relax default fails on plans without Relax, so an unset speed is sent as fast")
+
+	_, err = a.SubmitTask(context.Background(), actionTask("task_parent", "upscale:1"))
+	require.NoError(t, err)
+	assert.Equal(t, "fast", srv.bodies[1]["speed"], "a follow-up whose source named no speed runs fast too")
+}
+
 func TestMidjourneyNative_UpscaleAndVariation(t *testing.T) {
 	srv := newNativeMJServer(t)
 	a := NewMidjourneyAdapter(ChannelConfig{BaseURL: srv.URL + "/midjourney", APIKey: "mj-key"})
@@ -169,12 +188,18 @@ func TestMidjourneyNative_FailedTaskAndRequestError(t *testing.T) {
 	task := imageTask("midjourney", "MID_JOURNEY", `{}`)
 	task.ProviderTaskID = "task_parent"
 
-	srv.query = `{"platform_task_id":"task_parent","status":"failed","error":{"code":"provider_rejected","message":"套餐不含 Relax 模式"}}`
+	srv.query = `{"task_id":"proxy-1","platform_task_id":"task_parent","status":"failed","error":{"code":"provider_rejected","message":"Midjourney generation was rejected or failed","stage":"generation"}}`
 	res, err := a.PollTask(context.Background(), task)
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusFailed, res.Status)
 	assert.Equal(t, "provider_rejected", res.ErrorCode)
-	assert.Equal(t, "套餐不含 Relax 模式", res.ErrorMessage)
+	assert.Equal(t, "Midjourney generation was rejected or failed：Forbidden flag, Your plan doesn't include Relax mode.", res.ErrorMessage,
+		"the proxy's own reason is appended to the generic error")
+
+	srv.query = `{"task_id":null,"platform_task_id":"task_parent","status":"failed","error":{"code":"provider_rejected","message":"Midjourney generation was rejected or failed"}}`
+	res, err = a.PollTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, "Midjourney generation was rejected or failed", res.ErrorMessage, "no proxy ID, no extra lookup")
 
 	task.ProviderTaskID = "task_missing"
 	_, err = a.PollTask(context.Background(), task)
