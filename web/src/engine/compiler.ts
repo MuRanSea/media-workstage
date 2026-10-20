@@ -2,7 +2,7 @@ import { SEEDREAM_PIXEL_MAP, type CapOptions, type CapValues, type MjOperation, 
 import type { CreateTaskPayload, ProviderId } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
 import { MJ_MAX_REFERENCES, MJ_MIN_BLEND_IMAGES, midjourneyReferences } from './midjourney.ts';
-import { SEEDREAM_MAX_REFERENCES } from './cardParams.ts';
+import { isSeedreamProOrFlash, seedreamMaxReferences } from './cardParams.ts';
 import { compileHeighlinerImagePayload } from './heighlinerCompiler.ts';
 
 export interface ImageCompilationInput {
@@ -78,8 +78,15 @@ export function compileImageTaskPayload(input: ImageCompilationInput): CreateTas
     : 'single';
 
   const references = input.references ?? [];
-  if (references.length > SEEDREAM_MAX_REFERENCES) {
-    throw new Error(`Seedream 最多 ${SEEDREAM_MAX_REFERENCES} 张参考图，当前 ${references.length} 张`);
+  const maxRefs = seedreamMaxReferences(input.model);
+  if (references.length > maxRefs) {
+    throw new Error(`当前模型最多 ${maxRefs} 张参考图，当前 ${references.length} 张`);
+  }
+  const proOrFlash = isSeedreamProOrFlash(input.model);
+  const transparent = proOrFlash && input.background === 'transparent';
+  if (transparent && !isLayerDecomp) {
+    if (references.length !== 1) throw new Error('透明背景需要连入一张带透明通道的图片');
+    if ((input.imageFormat ?? 'jpeg') !== 'png') throw new Error('透明背景只能输出 PNG，请把文件格式改为 PNG');
   }
   const assets = references.length ? midjourneyReferences(references, input.allCards ?? []) : undefined;
 
@@ -95,9 +102,14 @@ export function compileImageTaskPayload(input: ImageCompilationInput): CreateTas
       response_format: 'url',
       output_format: input.imageFormat ?? 'jpeg',
       watermark: input.watermark ?? false,
-      background: input.background ?? 'opaque',
-      layer_decomposition: isLayerDecomp,
-      sequential_image_generation: isSequential ? 'auto' : 'disabled',
+      // background and layer_decomposition exist only on 5.0 pro / flash; sequential_image_generation
+      // only on lite / 4.5 / 4.0 (pro / flash reject it outright, even 'disabled').
+      ...(proOrFlash
+        ? {
+            background: transparent && !isLayerDecomp ? 'transparent' : 'opaque',
+            layer_decomposition: isLayerDecomp,
+          }
+        : { sequential_image_generation: isSequential ? 'auto' : 'disabled' }),
     },
   };
 }

@@ -60,7 +60,9 @@ export function imageModelPatch(card: SpatialCard, option: ModelOption): Partial
       customPixels: def?.defaultCustomPixel ?? '2048x1024',
       imageMode: 'single',
       ...midjourneyOnlyReset(option),
-      ...fitReferences(card, SEEDREAM_MAX_REFERENCES),
+      ...fitReferences(card, seedreamMaxReferences(option.id)),
+      // Only 5.0 pro / flash take a transparent background.
+      ...(isSeedreamProOrFlash(option.id) ? {} : { background: 'opaque' as const }),
     };
   }
   return {
@@ -81,8 +83,18 @@ function fitReferences(card: SpatialCard, limit: number): Partial<SpatialCard> {
   return { prompt, references: refs.slice(0, limit).map((r) => ({ ...r, role: 'reference_image' })) };
 }
 
-/** Seedream takes up to 14 reference images; layer decomposition takes exactly one. */
+/** Seedream 5.0 lite / 4.5 / 4.0 take up to 14 reference images; layer decomposition takes exactly one. */
 export const SEEDREAM_MAX_REFERENCES = 14;
+
+/** Seedream 5.0 pro and flash: single image or layer decomposition, transparent background, no 组图/stream/tools. */
+export function isSeedreamProOrFlash(model: string): boolean {
+  return /5[-._]0[-._](pro|flash)/i.test(model);
+}
+
+/** Reference images a Seedream model takes: 10 on 5.0 pro / flash, 14 on the others. */
+export function seedreamMaxReferences(model: string): number {
+  return isSeedreamProOrFlash(model) ? 10 : SEEDREAM_MAX_REFERENCES;
+}
 
 /** Switching an ark image card's mode; layer decomposition keeps one reference and drops the others' tags. */
 export function imageModePatch(card: SpatialCard, mode: NonNullable<SpatialCard['imageMode']>): Partial<SpatialCard> {
@@ -90,10 +102,10 @@ export function imageModePatch(card: SpatialCard, mode: NonNullable<SpatialCard[
   return { imageMode: mode };
 }
 
-/** How many images an image card takes as references: Seedream's 14 (1 to decompose), Midjourney's 5, a Heighliner model's `reference` limit, else none. */
+/** How many images an image card takes as references: Seedream's 10 or 14 (1 to decompose), Midjourney's 5, a Heighliner model's `reference` limit, else none. */
 export function imageReferenceLimit(card: SpatialCard): number {
   const protocol = protocolOf(card.provider ?? 'ark');
-  if (protocol === 'ark') return card.imageMode === 'layer_decomp' ? 1 : SEEDREAM_MAX_REFERENCES;
+  if (protocol === 'ark') return card.imageMode === 'layer_decomp' ? 1 : seedreamMaxReferences(card.model);
   if (protocol === 'midjourney') return MJ_MAX_REFERENCES;
   if (protocol === 'heighliner') return slotLimit(cardCapability(card), 'reference', 'image');
   return 0;

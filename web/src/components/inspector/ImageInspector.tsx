@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import { IMAGE_MODELS, MJ_SPEED_LABELS, SEEDREAM_PIXEL_MAP, type MjSpeed, type SpatialCard } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
-import { imageModePatch, imageModelPatch, imageReferenceLimit, removeReferencePatch } from '../../engine/cardParams.ts';
+import { imageModePatch, imageModelPatch, imageReferenceLimit, isSeedreamProOrFlash, removeReferencePatch } from '../../engine/cardParams.ts';
 import { MJ_MAX_REFERENCES, MJ_MIN_BLEND_IMAGES } from '../../engine/midjourney.ts';
 import { refTag } from '../../engine/refTags.ts';
 import { compileCardImagePayload } from '../../engine/compiler.ts';
@@ -201,7 +201,14 @@ export const ImageInspector: React.FC<Props> = ({ card, cards, update, linkedPro
               ]}
             />
           </Field>
-          <Toggle label="透明背景" hint="仅 PNG 有效" checked={card.background === 'transparent'} onChange={(v) => update({ background: v ? 'transparent' : 'opaque' })} />
+          {isSeedreamProOrFlash(card.model) && mode !== 'layer_decomp' && (
+            <Toggle
+              label="透明背景"
+              hint="需连入一张带透明通道的图片，文件格式选 PNG"
+              checked={card.background === 'transparent'}
+              onChange={(v) => update(v ? { background: 'transparent', imageFormat: 'png' } : { background: 'opaque' })}
+            />
+          )}
           <Toggle label="添加水印" checked={!!card.watermark} onChange={(v) => update({ watermark: v })} />
         </Section>
       )}
