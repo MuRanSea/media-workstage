@@ -1,6 +1,6 @@
 [package]
 name = "media-workstage-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Media Workstage desktop shell: runs the Go backend as a sidecar (ADR 0007)"
 edition = "2021"
 publish = false
