@@ -51,6 +51,20 @@ func TestCreateTask_SourceTaskInjectsProviderTaskID(t *testing.T) {
 	assert.Equal(t, "MJ::JOB::upsample::1::h", params["action_id"])
 }
 
+func TestCreateTask_ActionInheritsTheSourceSpeed(t *testing.T) {
+	srv, r := newProviderTestServer(t)
+	seedSourceTask(t, srv, func(task *model.MediaTask) { task.ParamsJSON = `{"speed":"FAST"}` })
+
+	w := postJSON(r, "/api/tasks", actionTaskBody("midjourney", "src-1", "MJ::JOB::upsample::1::h"))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	var created model.MediaTask
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	var params map[string]any
+	require.NoError(t, json.Unmarshal([]byte(created.ParamsJSON), &params))
+	assert.Equal(t, "FAST", params["speed"], "a follow-up runs at the speed its source ran at")
+}
+
 func TestCreateTask_SourceTaskRejections(t *testing.T) {
 	cases := []struct {
 		name     string

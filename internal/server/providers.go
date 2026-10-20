@@ -45,6 +45,10 @@ type protocolSpec struct {
 
 	// listModels fetches the provider's live model catalog; nil means presets only.
 	listModels func(ctx context.Context, client *http.Client, baseURL, apiKey string) ([]boundModel, error)
+	// dummyTaskProbe reports that, for this base URL, the probe looks up a dummy task and
+	// so passes on any response that is not an auth, server or 404 error, overriding
+	// probeNeeds2xx.
+	dummyTaskProbe func(baseURL string) bool
 	// notFoundHint replaces the generic "wrong path" message when the probe gets a 404;
 	// %s is the probed path.
 	notFoundHint string
@@ -84,6 +88,16 @@ var protocolSpecs = map[model.Protocol]protocolSpec{
 	},
 	model.ProtocolMidjourney: {
 		newProbe: func(ctx context.Context, baseURL, apiKey string, _ map[string]string) (*http.Request, error) {
+			if base, ok := adapter.MidjourneyNativeBase(baseURL); ok {
+				// The gateway authenticates before validating; an unknown id_type is then
+				// a 400 invalid_request, which never creates or bills anything.
+				req, err := newBearerRequest(ctx, http.MethodGet, base+"/v1/media-workstage-ping?id_type=probe", apiKey)
+				if err != nil {
+					return nil, err
+				}
+				req.Header.Set("X-Heighliner-MJ-Response-Version", "2026-10-16")
+				return req, nil
+			}
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/mj/task/list-by-condition",
 				strings.NewReader(`{"ids":["media-workstage-ping"]}`))
 			if err != nil {
@@ -96,6 +110,10 @@ var protocolSpecs = map[model.Protocol]protocolSpec{
 			return req, nil
 		},
 		probeNeeds2xx: true,
+		dummyTaskProbe: func(baseURL string) bool {
+			_, native := adapter.MidjourneyNativeBase(baseURL)
+			return native
+		},
 	},
 	model.ProtocolGemini: {
 		// Invalid Gemini keys come back as HTTP 400, so only a 2xx counts as success.

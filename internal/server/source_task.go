@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,7 +15,7 @@ import (
 // action). A task in mode "action", or whose params carry "action_id", must name via
 // "source_task_id" a succeeded task of the same Provider and project that offered that
 // action; its provider task ID is then added to params as "source_provider_task_id" for
-// the adapter. It returns the HTTP status to answer with when the link is rejected.
+// the adapter, and the source's speed mode when the follow-up names none. It returns the HTTP status to answer with when the link is rejected.
 func resolveSourceTask(db *gorm.DB, payload CreateTaskPayload, params map[string]interface{}) (int, error) {
 	actionID, _ := params["action_id"].(string)
 	if actionID == "" {
@@ -48,6 +49,12 @@ func resolveSourceTask(db *gorm.DB, payload CreateTaskPayload, params map[string
 	for _, a := range source.ResultActions {
 		if a.ID == actionID {
 			params["source_provider_task_id"] = source.ProviderTaskID
+			if _, set := params["speed"]; !set {
+				var sourceParams map[string]interface{}
+				if json.Unmarshal([]byte(source.ParamsJSON), &sourceParams) == nil && sourceParams["speed"] != nil {
+					params["speed"] = sourceParams["speed"]
+				}
+			}
 			return 0, nil
 		}
 	}
