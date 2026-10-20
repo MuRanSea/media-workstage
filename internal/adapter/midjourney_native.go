@@ -46,6 +46,7 @@ type midjourneyNativeActionRequest struct {
 
 // midjourneyNativeTask is the data object of a versioned submit or query response.
 type midjourneyNativeTask struct {
+	TaskID           string   `json:"task_id"` // the proxy's ID, which the legacy query takes
 	PlatformTaskID   string   `json:"platform_task_id"`
 	Status           string   `json:"status"` // queued | running | succeeded | failed | reconciling
 	Progress         string   `json:"progress"`
@@ -77,7 +78,7 @@ func (a *MidjourneyAdapter) submitNative(ctx context.Context, base string, task 
 		return "", fmt.Errorf("%s 新版 Midjourney 接口不支持参考图，请断开参考图后再生成", a.name)
 	}
 	if strings.EqualFold(strings.TrimSpace(task.Model), "NIJI_JOURNEY") {
-		return "", fmt.Errorf("%s 新版 Midjourney 接口不支持 Niji 机器人，请改用 MID_JOURNEY 模型", a.name)
+		return "", fmt.Errorf("%s 新版 Midjourney 接口不支持 Niji 机器人，请改用 mj_imagine 模型", a.name)
 	}
 	params := parseGenericImageParams(task.ParamsJSON)
 	prompt := strings.TrimSpace(task.Prompt)
@@ -176,11 +177,39 @@ func (a *MidjourneyAdapter) pollNative(ctx context.Context, base string, task *m
 				msg = data.Error.Message
 			}
 		}
+		// The versioned error is generic ("rejected or failed"); the proxy's own reason
+		// (a plan without Relax, a banned prompt) only comes back from the legacy query.
+		if reason := a.nativeFailReason(ctx, base, data.TaskID); reason != "" {
+			msg += "：" + reason
+		}
 		return &PollResult{Status: model.TaskStatusFailed, ErrorCode: code, ErrorMessage: msg}, nil
 	default:
 		// queued, running and reconciling (submission outcome being verified) keep polling.
 		return &PollResult{Status: model.TaskStatusRunning, Progress: max(parseMidjourneyProgress(data.Progress), 10)}, nil
 	}
+}
+
+// nativeFailReason reads a failed task's fail_reason from the legacy query (no version
+// header, keyed by the proxy task ID); it is best-effort and empty when unavailable.
+func (a *MidjourneyAdapter) nativeFailReason(ctx context.Context, base, proxyTaskID string) string {
+	if proxyTaskID == "" {
+		return ""
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/"+url.PathEscape(proxyTaskID), nil)
+	if err != nil {
+		return ""
+	}
+	_, apiKey := a.credentials()
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	var resp struct {
+		Data struct {
+			FailReason string `json:"fail_reason"`
+		} `json:"data"`
+	}
+	if a.doJSON(req, &resp) != nil {
+		return ""
+	}
+	return strings.TrimSpace(resp.Data.FailReason)
 }
 
 func (a *MidjourneyAdapter) setNativeHeaders(req *http.Request) {
@@ -222,7 +251,9 @@ func parseMidjourneyNativeAction(id string) (operation string, index int, ok boo
 }
 
 // midjourneyNativeSpeed is the speed field: a speed flag in the prompt wins (the field
-// must not contradict it), else the card's mode; empty leaves the gateway default.
+// must not contradict it), else the card's mode, else fast. The gateway's own default is
+// relax, which upstream accounts on a Basic plan reject outright ("Your plan doesn't
+// include Relax mode"), while MJ Proxy services default to the account's mode.
 func midjourneyNativeSpeed(cardSpeed, prompt string) string {
 	if m := midjourneySpeedFlag.FindStringSubmatch(prompt); m != nil {
 		return strings.ToLower(m[3])
@@ -231,5 +262,5 @@ func midjourneyNativeSpeed(cardSpeed, prompt string) string {
 	case "FAST", "RELAX", "TURBO":
 		return strings.ToLower(cardSpeed)
 	}
-	return ""
+	return "fast"
 }

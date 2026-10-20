@@ -128,8 +128,8 @@ func TestCreateProvider_EveryProtocolWithAnAdapter(t *testing.T) {
 		require.True(t, ok, protocol)
 		assert.IsType(t, want, a, protocol)
 		if protocol == model.ProtocolMidjourney {
-			assert.Equal(t, []boundModel{img("MID_JOURNEY"), img("NIJI_JOURNEY")}, resp.Config.Models,
-				"a second MJ proxy binds the bot types like the preset one")
+			assert.Equal(t, []boundModel{img("mj_imagine")}, resp.Config.Models,
+				"a second MJ provider binds the documented imagine model like the preset one")
 		}
 	}
 	assert.Len(t, getProviders(t, r), len(presetProviders)+len(cases))
