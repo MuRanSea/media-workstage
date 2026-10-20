@@ -242,15 +242,17 @@ var presetProviders = []providerSpec{
 	{
 		// Midjourney has no official API; this targets the midjourney-proxy protocol
 		// (/mj/...), which self-hosted proxies and new-api style relays both speak.
-		// There is no official host, so DefaultBaseURL stays empty.
+		// There is no official host, so DefaultBaseURL stays empty. The preset is the
+		// gateway's documented imagine model; U/V bill as mj_upscale / mj_variation but
+		// run as result actions, not card models. Proxy bot types (MID_JOURNEY,
+		// NIJI_JOURNEY) can still be added by hand.
 		ID:         "midjourney",
 		Name:       "Midjourney",
 		Protocol:   model.ProtocolMidjourney,
 		APIKeyEnv:  "MIDJOURNEY_API_KEY",
 		BaseURLEnv: "MIDJOURNEY_BASE_URL",
 		Presets: []boundModel{
-			img("MID_JOURNEY"),
-			img("NIJI_JOURNEY"),
+			img("mj_imagine"),
 		},
 	},
 	{

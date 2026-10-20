@@ -78,7 +78,7 @@ func (a *MidjourneyAdapter) submitNative(ctx context.Context, base string, task 
 		return "", fmt.Errorf("%s 新版 Midjourney 接口不支持参考图，请断开参考图后再生成", a.name)
 	}
 	if strings.EqualFold(strings.TrimSpace(task.Model), "NIJI_JOURNEY") {
-		return "", fmt.Errorf("%s 新版 Midjourney 接口不支持 Niji 机器人，请改用 MID_JOURNEY 模型", a.name)
+		return "", fmt.Errorf("%s 新版 Midjourney 接口不支持 Niji 机器人，请改用 mj_imagine 模型", a.name)
 	}
 	params := parseGenericImageParams(task.ParamsJSON)
 	prompt := strings.TrimSpace(task.Prompt)
