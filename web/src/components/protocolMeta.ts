@@ -79,7 +79,7 @@ export const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
     baseUrlPlaceholder: 'https://your-mj-proxy.example.com',
     keyLabel: 'API Secret',
     keyPlaceholder: '请输入 mj-api-secret 或中转令牌',
-    hint: 'Midjourney 无官方 API，请填写兼容 /mj 接口的代理或中转地址（不含 /mj），支持内网与本机地址。',
+    hint: 'Midjourney 无官方 API，请填写兼容 /mj 接口的代理或中转地址（不含 /mj），支持内网与本机地址。填写网关的 /midjourney 入口（如 http://网关地址/midjourney）则走网关新版接口：只支持文生图与 U/V，不支持参考图、Blend 与反推。',
     adapterReady: true,
   },
   gemini: {

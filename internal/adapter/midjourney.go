@@ -19,6 +19,8 @@ import (
 // self-hosted proxies and new-api style relays both speak: POST /mj/submit/imagine
 // returns a task ID, then GET /mj/task/{id}/fetch is polled. The bound model is the
 // bot type (MID_JOURNEY / NIJI_JOURNEY); the result is Midjourney's 2x2 grid as one image.
+// A base URL ending in /midjourney is a Heighliner gateway's native entry instead, served
+// by the versioned imagine + U/V workflow (midjourney_native.go).
 type MidjourneyAdapter struct {
 	channelImageBase
 }
@@ -118,8 +120,12 @@ func (a *MidjourneyAdapter) SubmitTask(ctx context.Context, task *model.MediaTas
 	if err := requireImageTask(a.name, task); err != nil {
 		return "", err
 	}
-	if baseURL, _ := a.credentials(); baseURL == "" {
+	baseURL, _ := a.credentials()
+	if baseURL == "" {
 		return "", fmt.Errorf("%s 未填写 Base URL：Midjourney 没有官方地址，请在设置中填写代理或中转地址", a.name)
+	}
+	if base, ok := MidjourneyNativeBase(baseURL); ok {
+		return a.submitNative(ctx, base, task)
 	}
 	switch task.TaskMode {
 	case midjourneyModeAction:
@@ -307,6 +313,11 @@ func (a *MidjourneyAdapter) fetch(ctx context.Context, id string) (*midjourneyFe
 }
 
 func (a *MidjourneyAdapter) PollTask(ctx context.Context, task *model.MediaTask) (*PollResult, error) {
+	if baseURL, _ := a.credentials(); baseURL != "" {
+		if base, ok := MidjourneyNativeBase(baseURL); ok {
+			return a.pollNative(ctx, base, task)
+		}
+	}
 	resp, err := a.fetch(ctx, task.ProviderTaskID)
 	if err != nil {
 		return nil, err

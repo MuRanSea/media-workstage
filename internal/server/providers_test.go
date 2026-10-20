@@ -62,6 +62,18 @@ func TestProtocolProbes_MidjourneySendsQueryBody(t *testing.T) {
 	assert.Equal(t, "application/json", req.Header.Get("Content-Type"))
 }
 
+func TestProtocolProbes_MidjourneyNativeEntry(t *testing.T) {
+	spec, _ := findProvider(nil, "midjourney")
+	req, err := spec.protocol().newProbe(context.Background(), "https://gw/midjourney/v1", "k", nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.MethodGet, req.Method)
+	assert.Equal(t, "https://gw/midjourney/v1/media-workstage-ping?id_type=probe", req.URL.String())
+	assert.Equal(t, "Bearer k", req.Header.Get("Authorization"))
+	assert.Equal(t, "2026-10-16", req.Header.Get("X-Heighliner-MJ-Response-Version"))
+	assert.True(t, spec.protocol().dummyTaskProbe("https://gw/midjourney"), "its 400 answer passes once authenticated")
+	assert.False(t, spec.protocol().dummyTaskProbe("https://mj-proxy"))
+}
+
 func TestResolveProvider_StoredOverridesEnvOverridesDefault(t *testing.T) {
 	spec, _ := findProvider(nil, "openai")
 

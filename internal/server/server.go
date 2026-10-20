@@ -657,7 +657,11 @@ func (s *Server) handleTestConfig(c *gin.Context) {
 		return
 	}
 
-	if spec.protocol().probeNeeds2xx && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+	needs2xx := spec.protocol().probeNeeds2xx
+	if dummy := spec.protocol().dummyTaskProbe; dummy != nil && dummy(payload.BaseURL) {
+		needs2xx = false
+	}
+	if needs2xx && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
 		c.JSON(http.StatusOK, gin.H{
 			"ok":    false,
 			"error": fmt.Sprintf("服务商返回 HTTP %d，请检查 Base URL 与 API Key", resp.StatusCode),
