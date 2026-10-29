@@ -1,4 +1,4 @@
-import { maxReferenceVideos, resolveVideoModelDef, takesVideoReferType, type SpatialCard, type ReferenceItem, type VideoTaskMode } from '../types/canvas.ts';
+import { maxReferenceVideos, resolveVideoModelDef, supportsVideoMode, takesVideoReferType, type SpatialCard, type ReferenceItem, type VideoTaskMode } from '../types/canvas.ts';
 import type { CreateTaskPayload } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
 import { refNoun, refTag } from './refTags.ts';
@@ -119,7 +119,7 @@ export function compileVideoTaskPayload(
 
   const mode: VideoTaskMode = card.mode ?? 'all_modal';
   const modelDef = resolveVideoModelDef(protocol, card.model);
-  if (modelDef.modes && !modelDef.modes.includes(mode)) {
+  if (!supportsVideoMode(modelDef, mode)) {
     throw new Error(`Model ${card.model} does not support ${mode} mode`);
   }
   const { ratio, references } = sentVideoSettings(card);

@@ -72,7 +72,7 @@ export function checkImageRules(cap: CapabilityDescriptor, params: CapValues, re
 export const KLING_OMNI_IMAGES_WITH_VIDEO = 4;
 
 export interface VideoRuleInput {
-  mode: 'all_modal' | 'first_last_frame' | 'text_to_video';
+  mode: 'all_modal' | 'first_last_frame' | 'text_to_video' | 'video_edit';
   imageRefs: number;
   videoRefs: number;
   parameters: CapValues;
@@ -83,6 +83,7 @@ export interface VideoRuleInput {
  * Fits a video request to its model's rules, in place:
  * - Kling: `multi_shot` is true exactly when Omni has a reference video (the card does not
  *   offer it); Omni with a reference video takes at most four images and no generated audio.
+ *   Editing a video (operation=edit) never sends multi_shot.
  * - MiniMax H3: text-to-video cannot use `adaptive`, so the ratio is left to the model.
  */
 export function applyVideoRules(cap: CapabilityDescriptor, input: VideoRuleInput): void {
@@ -90,7 +91,8 @@ export function applyVideoRules(cap: CapabilityDescriptor, input: VideoRuleInput
   if (isKling(cap)) {
     const kling = { ...options.kling };
     delete kling.multi_shot;
-    if (isKlingOmni(cap) && input.videoRefs > 0) {
+    // An edit is never multi-shot, and its sound is kling.audio (the descriptor view drops generate_audio).
+    if (isKlingOmni(cap) && input.videoRefs > 0 && input.mode !== 'video_edit') {
       if (input.imageRefs > KLING_OMNI_IMAGES_WITH_VIDEO) {
         throw new Error(`${cap.id} 带参考视频时最多 ${KLING_OMNI_IMAGES_WITH_VIDEO} 张参考图，当前 ${input.imageRefs} 张`);
       }

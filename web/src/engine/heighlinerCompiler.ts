@@ -3,10 +3,13 @@ import type { CapabilityDescriptor, CreateTaskPayload, ProviderId } from '../ser
 import type { ImageCompilationInput } from './compiler.ts';
 import {
   ASSET_SLOT,
+  EDIT_OPERATION,
+  EDIT_SOURCE_ROLE,
   FINAL_RESOLUTION,
   capVideoModes,
   effectiveOptions,
   effectiveParams,
+  modeCapability,
   referenceSlot,
   requireCapability,
   sentOptions,
@@ -30,11 +33,13 @@ const MODE_LABELS: Record<VideoTaskMode, string> = {
   all_modal: '多图参考',
   first_last_frame: '首尾帧',
   text_to_video: '纯文字',
+  video_edit: '视频编辑',
 };
 
 const SLOT_LABELS: Record<string, string> = {
   'reference|image': '参考图',
   'reference|video': '参考视频',
+  'source|video': '要编辑的视频',
   'voice|audio': '参考音频',
   'first_frame|image': '首帧',
   'last_frame|image': '尾帧',
@@ -153,16 +158,21 @@ export function compileHeighlinerImagePayload(provider: ProviderId, input: Image
 }
 
 export function compileHeighlinerVideoPayload(card: SpatialCard, allCards: SpatialCard[] = []): CreateTaskPayload {
-  const cap = requireCapability(card);
+  const modelCap = requireCapability(card);
   const { mode, references: refs } = sentVideoSettings(card);
-  if (!capVideoModes(cap).includes(mode)) throw new Error(`${card.model} 不支持「${MODE_LABELS[mode]}」模式`);
+  if (!capVideoModes(modelCap).includes(mode)) throw new Error(`${card.model} 不支持「${MODE_LABELS[mode]}」模式`);
+  // Editing a video follows the edit operation's declarations (its roles, sound option).
+  const cap = modeCapability(modelCap, mode)!;
 
   const counters = { image: 0, video: 0, audio: 0 };
   const references = refs.map((ref) => {
     const type: RefMedia = ref.role === 'reference_video' ? 'video' : 'image';
-    const role = mode === 'first_last_frame' ? ref.role : 'reference';
+    const role = mode === 'first_last_frame' ? ref.role : mode === 'video_edit' && type === 'video' ? EDIT_SOURCE_ROLE : 'reference';
     return connectedRef(cap, card.model, ref, role, type, ++counters[type], allCards);
   });
+  if (mode === 'video_edit' && references.filter((r) => r.role === EDIT_SOURCE_ROLE).length !== 1) {
+    throw new Error('视频编辑需要连入 1 段要编辑的视频');
+  }
 
   // Asset-library items (multi-reference mode) go by asset ID, numbered after the connected cards of their kind.
   for (const asset of mode === 'all_modal' ? card.assetRefs ?? [] : []) {
@@ -181,12 +191,17 @@ export function compileHeighlinerVideoPayload(card: SpatialCard, allCards: Spati
   }
   checkCounts(cap, card.model, references);
 
-  const imageTag = isKlingOmni(cap) && mode === 'all_modal' ? klingImageTag : undefined;
+  const imageTag = isKlingOmni(modelCap) && (mode === 'all_modal' || mode === 'video_edit') ? klingImageTag : undefined;
   const prompt =
     mode === 'text_to_video' ? card.prompt.replace(/@?(图|视频)\d+\s*/g, '').trim() : renumberPrompt(card.prompt, refs, imageTag);
   if (!prompt && references.length === 0) throw new Error('请先填写提示词');
+  // An edit is told what to change; mentions of its media alone say nothing.
+  if (mode === 'video_edit' && !prompt.replace(/<<<image_\d+>>>|图\d+|视频\d+/g, '').trim()) {
+    throw new Error('视频编辑需要提示词，说明要怎么改');
+  }
 
   const parameters = sentParams(cap, card);
+  if (mode === 'video_edit') parameters.operation = EDIT_OPERATION;
   // First/last frame: the frame sets the shape; send "adaptive" where the model has it, else no ratio.
   if (mode === 'first_last_frame') {
     if (cap.parameters?.aspect_ratio?.enum?.includes('adaptive')) parameters.aspect_ratio = 'adaptive';

@@ -6,7 +6,7 @@ import { firstFreeSlotBelow, firstFreeSlotRight } from './layout.ts';
 import { previewAspect } from './cardParams.ts';
 import { assetStoredPath } from './assetPaths.ts';
 import { sentVideoSettings } from './videoCompiler.ts';
-import { FINAL_RESOLUTION, cardCapability, isHeighliner, isSampleRun, sentOptions, sentParams } from './capability.ts';
+import { FINAL_RESOLUTION, activeCapability, isHeighliner, isSampleRun, sentOptions, sentParams } from './capability.ts';
 import { coverPath } from './model3d.ts';
 
 /** Image settings a result card records and reuses to shape its preview. */
@@ -116,7 +116,7 @@ export function snapshotOf(submitted: SpatialCard): ResultSnapshot {
   const isVideo = submitted.type === 'video';
   const is3D = submitted.type === '3d';
   const params: ResultSnapshot['params'] = {};
-  const cap = isHeighliner(submitted.provider) ? cardCapability(submitted) : undefined;
+  const cap = isHeighliner(submitted.provider) ? activeCapability(submitted) : undefined;
   // Heighliner settings live in the descriptor's own parameters; the built-in fields do not apply.
   for (const key of cap || is3D ? [] : isVideo ? VIDEO_PARAMS : IMAGE_PARAMS) {
     const value = submitted[key];

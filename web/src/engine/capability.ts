@@ -1,5 +1,6 @@
-import type { CapabilityDescriptor, CapabilityParam, ProviderId } from '../services/api.ts';
+import type { CapabilityDescriptor, CapabilityOperation, CapabilityParam, ProviderId } from '../services/api.ts';
 import type { AssetKind, CapOptions, CapValue, CapValues, SpatialCard, VideoModelDef, VideoTaskMode } from '../types/canvas.ts';
+import { isKlingOmni } from './heighlinerRules.ts';
 import { capabilityOf, protocolOf } from './providers.ts';
 
 /**
@@ -243,11 +244,78 @@ export function capAssetKinds(cap: CapabilityDescriptor | undefined): AssetKind[
   });
 }
 
-/** Video modes the model's reference roles open: 全能参考 needs `reference`, 首尾帧 `first_frame`. */
+// --- Video editing (operation=edit) ---------------------------------------------------
+
+/** The `operation` a video edit is requested with, and the role its source video goes as. */
+export const EDIT_OPERATION = 'edit';
+export const EDIT_SOURCE_ROLE = 'source';
+
+/** Kling Omni's edit as the docs give it, for descriptors that do not list `operations` yet. */
+const KLING_OMNI_EDIT: CapabilityOperation = {
+  references: [
+    { role: EDIT_SOURCE_ROLE, types: ['video'], max_count: 1, max_bytes: 200 * 1024 * 1024 },
+    { role: 'reference', types: ['image'], max_count: 4, max_bytes: 10 * 1024 * 1024 },
+  ],
+  provider_options_schema: {
+    type: 'object',
+    properties: {
+      kling: {
+        type: 'object',
+        properties: {
+          // original keeps the source video's own sound; both cost the same.
+          audio: { type: 'string', enum: ['off', 'original'], default: 'off' },
+        },
+      },
+    },
+  },
+};
+
+/** The model's edit operation: as its descriptor declares it, else Kling Omni's documented one. */
+export function editOperation(cap: CapabilityDescriptor | undefined): CapabilityOperation | undefined {
+  if (!cap || cap.type !== 'video') return undefined;
+  if (cap.operations?.[EDIT_OPERATION]) return cap.operations[EDIT_OPERATION];
+  return cap.operations === undefined && isKlingOmni(cap) ? KLING_OMNI_EDIT : undefined;
+}
+
+function mergeOptionSchemas(base: CapabilityParam | undefined, extra: CapabilityParam | undefined): CapabilityParam | undefined {
+  if (!extra) return base;
+  if (!base) return extra;
+  const properties: Record<string, CapabilityParam> = { ...base.properties };
+  for (const [ns, schema] of Object.entries(extra.properties ?? {})) {
+    const own = properties[ns];
+    properties[ns] = own ? { ...own, ...schema, properties: { ...own.properties, ...schema.properties } } : schema;
+  }
+  return { ...base, properties };
+}
+
+/**
+ * The descriptor as it applies to `mode`. Editing a video follows the edit operation's
+ * declarations over the model's own (its sound is `kling.audio`, never `generate_audio`);
+ * every other mode is the descriptor itself.
+ */
+export function modeCapability(cap: CapabilityDescriptor | undefined, mode: VideoTaskMode | undefined): CapabilityDescriptor | undefined {
+  const edit = mode === 'video_edit' ? editOperation(cap) : undefined;
+  if (!cap || !edit) return cap;
+  const { generate_audio: _audio, ...parameters } = { ...cap.parameters, ...edit.parameters };
+  return {
+    ...cap,
+    parameters,
+    references: edit.references ?? cap.references,
+    provider_options_schema: mergeOptionSchemas(cap.provider_options_schema, edit.provider_options_schema),
+  };
+}
+
+/** A card's descriptor for the mode it is set to: what its 规格 shows and what it sends. */
+export function activeCapability(card: Pick<SpatialCard, 'provider' | 'model' | 'mode'>): CapabilityDescriptor | undefined {
+  return modeCapability(cardCapability(card), card.mode);
+}
+
+/** Video modes the model's reference roles open: 全能参考 needs `reference`, 首尾帧 `first_frame`, 视频编辑 an edit operation. */
 export function capVideoModes(cap: CapabilityDescriptor | undefined): VideoTaskMode[] {
   const modes: VideoTaskMode[] = [];
   if (slotLimit(cap, 'reference', 'image') + slotLimit(cap, 'reference', 'video') > 0) modes.push('all_modal');
   if (slotLimit(cap, 'first_frame', 'image') > 0) modes.push('first_last_frame');
+  if (slotLimit(modeCapability(cap, 'video_edit'), EDIT_SOURCE_ROLE, 'video') > 0) modes.push('video_edit');
   modes.push('text_to_video');
   return modes;
 }
@@ -255,6 +323,10 @@ export function capVideoModes(cap: CapabilityDescriptor | undefined): VideoTaskM
 /** How many references of `kind` a video card takes in `mode`, connected cards and assets together. */
 export function capReferenceLimit(cap: CapabilityDescriptor | undefined, mode: VideoTaskMode, kind: AssetKind): number {
   if (mode === 'text_to_video') return 0;
+  if (mode === 'video_edit') {
+    const edit = modeCapability(cap, mode);
+    return kind === 'video' ? slotLimit(edit, EDIT_SOURCE_ROLE, 'video') : kind === 'image' ? slotLimit(edit, 'reference', 'image') : 0;
+  }
   if (mode === 'first_last_frame') {
     return kind === 'image' ? slotLimit(cap, 'first_frame', 'image') + Math.min(1, slotLimit(cap, 'last_frame', 'image')) : 0;
   }

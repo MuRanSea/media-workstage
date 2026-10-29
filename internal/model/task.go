@@ -47,7 +47,7 @@ type MediaTask struct {
 	ProviderTaskID     string         `gorm:"type:varchar(128);index" json:"provider_task_id"`
 	Model              string         `gorm:"type:varchar(64);not null" json:"model"`
 	TaskType           string         `gorm:"type:varchar(32);not null" json:"task_type"` // "video_generation" | "image_generation" | "3d_generation"
-	TaskMode           string         `gorm:"type:varchar(32);not null" json:"task_mode"` // "all_modal" | "first_last_frame" | "text_to_video" | "single" | "layer_decomp" | "sequential"
+	TaskMode           string         `gorm:"type:varchar(32);not null" json:"task_mode"` // "all_modal" | "first_last_frame" | "text_to_video" | "video_edit" | "single" | "layer_decomp" | "sequential"
 	Prompt             string         `gorm:"type:text;not null" json:"prompt"`
 	ParamsJSON         string         `gorm:"type:text" json:"params_json"`
 	Status             string         `gorm:"type:varchar(32);index;not null" json:"status"`

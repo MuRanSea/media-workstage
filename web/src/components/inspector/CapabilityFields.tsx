@@ -3,7 +3,7 @@ import type { CapabilityParam } from '../../services/api.ts';
 import type { CapValue, CapValues, SpatialCard } from '../../types/canvas.ts';
 import {
   SPEC_LABELS,
-  cardCapability,
+  activeCapability,
   clampNumber,
   effectiveOptions,
   effectiveParams,
@@ -20,6 +20,7 @@ import { ACCENT, Field, Section, Segmented, Toggle, inputClass, type Accent } fr
 const OPTION_LABELS: Record<string, string> = {
   watermark: '水印',
   multi_shot: '多镜头',
+  audio: '声音',
   return_last_frame: '返回尾帧',
   enable_pbr: 'PBR 材质',
   enable_geometry: '只生成白模',
@@ -41,6 +42,8 @@ const DEFAULT = '__default__';
 function valueLabel(name: string, v: string | number): string {
   if (v === 'adaptive') return '自适应';
   if (name === 'duration' && typeof v === 'number') return v === -1 ? '自适应' : `${v}s`;
+  // Kling's edit sound: keep the source video's own audio, or none.
+  if (name === 'audio') return v === 'original' ? '保留原声' : v === 'off' ? '无声' : String(v);
   return String(v);
 }
 
@@ -192,7 +195,7 @@ export const CapabilitySections: React.FC<{
   /** Common parameters fixed by a mode of the card (a sample is always 480p): shown, not editable. */
   locked?: Record<string, string>;
 }> = ({ card, update, accent, ratioNote, locked }) => {
-  const cap = cardCapability(card);
+  const cap = activeCapability(card);
   if (!cap) {
     return (
       <Section title="规格">

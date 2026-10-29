@@ -223,7 +223,8 @@ function attachImageToCapImage(image: SpatialCard, card: SpatialCard): ConnectRe
 function imagesUsed(video: SpatialCard, mode: NonNullable<SpatialCard['mode']>): number {
   const refs = video.references ?? [];
   if (mode === 'first_last_frame') return refs.length;
-  return refs.filter((r) => r.role !== 'reference_video').length + (video.assetRefs ?? []).filter((a) => a.kind === 'image').length;
+  const assets = mode === 'all_modal' ? (video.assetRefs ?? []).filter((a) => a.kind === 'image').length : 0;
+  return refs.filter((r) => r.role !== 'reference_video').length + assets;
 }
 
 function attachImageToCapVideo(image: SpatialCard, video: SpatialCard): ConnectResult {
@@ -251,6 +252,13 @@ function attachImageToCapVideo(image: SpatialCard, video: SpatialCard): ConnectR
 function attachVideoToCapVideo(clip: SpatialCard, video: SpatialCard): ConnectResult {
   const refs = video.references ?? [];
   const cap = cardCapability(video);
+  // Editing a video: the clip is the one to edit, and the card stays in its mode.
+  if (video.mode === 'video_edit' && capVideoModes(cap).includes('video_edit')) {
+    if (refs.some((r) => r.role === 'reference_video')) return { ok: false, reason: '视频编辑只能连入 1 段要编辑的视频，请先移除已连入的视频' };
+    const ref = taggedRef(clip, 'reference_video');
+    if ('ok' in ref) return ref;
+    return { ok: true, patch: { prompt: withTag(video.prompt, ref), references: [...refs, ref] } };
+  }
   const limit = capReferenceLimit(cap, 'all_modal', 'video');
   if (limit === 0 || !capVideoModes(cap).includes('all_modal')) return { ok: false, reason: `${video.model} 不支持参考视频` };
   if ((video.mode ?? 'all_modal') === 'first_last_frame') {

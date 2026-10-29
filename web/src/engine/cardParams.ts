@@ -18,12 +18,14 @@ import { withoutRefTag } from './refTags.ts';
 import { inferVideoProvider } from './videoCompiler.ts';
 import { MJ_MAX_REFERENCES } from './midjourney.ts';
 import {
+  activeCapability,
   capAssetKinds,
   capReferenceLimit,
   capValuesPatch,
   capVideoDef,
   capVideoModes,
   cardCapability,
+  effectiveOptions,
   effectiveParams,
   isSampleRun,
   sentParams,
@@ -201,7 +203,10 @@ export function referenceCapacity(card: SpatialCard, mode: VideoTaskMode = card.
 /** Whether a video card asks for sound: its generate_audio value on Heighliner, its toggle elsewhere. */
 export function generatesAudio(card: SpatialCard): boolean {
   if (protocolOf(card.provider) === 'heighliner') {
-    return effectiveParams(cardCapability(card), card.capParams).generate_audio === true;
+    const cap = activeCapability(card);
+    // An edit keeps the source video's own sound when asked (kling.audio=original).
+    if (card.mode === 'video_edit') return effectiveOptions(cap, card.capOptions).kling?.audio === 'original';
+    return effectiveParams(cap, card.capParams).generate_audio === true;
   }
   return !!card.generateAudio && videoModelDef(card).supportsAudio;
 }
@@ -221,7 +226,8 @@ function capModePatch(card: SpatialCard, cap: CapabilityDescriptor | undefined, 
       .slice(0, capReferenceLimit(cap, mode, 'image'))
       .map((r, i) => ({ ...r, role: i === 0 ? 'first_frame' : 'last_frame' }));
   } else {
-    const assets = card.assetRefs ?? [];
+    // Asset-library items only go in multi-reference mode.
+    const assets = mode === 'all_modal' ? card.assetRefs ?? [] : [];
     const room = (kind: AssetKind) => Math.max(0, capReferenceLimit(cap, mode, kind) - assets.filter((a) => a.kind === kind).length);
     const images = refs.filter((r) => r.role !== 'reference_video').slice(0, room('image'));
     const videos = refs.filter((r) => r.role === 'reference_video').slice(0, room('video'));
@@ -334,7 +340,7 @@ export function removeReferencePatch(card: SpatialCard, refCardId: string): Part
 /** e.g. "720p · 5s · 16:9"; "自适应" for adaptive duration. */
 export function videoSpecSummary(card: SpatialCard): string {
   if (protocolOf(card.provider) === 'heighliner') {
-    const v = sentParams(cardCapability(card), card);
+    const v = sentParams(activeCapability(card), card);
     const duration = v.duration === undefined ? '' : v.duration === -1 ? '自适应时长' : `${v.duration}s`;
     const ratio = card.mode === 'first_last_frame' ? '随首帧' : v.aspect_ratio === 'adaptive' ? '自适应' : v.aspect_ratio;
     return [isSampleRun(card) ? '样片' : '', v.resolution, duration, ratio].filter(Boolean).join(' · ') || '模型默认';
@@ -348,6 +354,7 @@ export const VIDEO_MODE_LABELS: Record<VideoTaskMode, { label: string; hint: str
   all_modal: { label: '多图参考', hint: '引用多张图片，在提示词里用 @图N 说明各自用途' },
   first_last_frame: { label: '首尾帧', hint: '第 1 张作为首帧，第 2 张（可选）作为尾帧，比例跟随首帧' },
   text_to_video: { label: '纯文字', hint: '只根据提示词生成，不使用参考图' },
+  video_edit: { label: '视频编辑', hint: '连入 1 段要编辑的视频，按提示词修改画面（最多再带 4 张参考图），时长和比例以原视频为准' },
 };
 
 export const VIDEO_REFER_TYPE_LABELS: Record<VideoReferType, { label: string; hint: string }> = {

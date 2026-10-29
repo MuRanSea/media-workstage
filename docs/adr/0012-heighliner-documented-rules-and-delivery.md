@@ -33,6 +33,11 @@ ADR 0010 规定，参数之间的组合规则不在本地重复校验，一律�
   - 成功但仍有产物不可读时，任务保持运行，继续查询。
   - 15 分钟宽限期过后，交付已经可读的产物；如果一个都没有，任务失败，错误信息里带上网关任务 ID，并提示不要重新生成。
   - 下载失败时，轮询器通过可选接口 `DeliveryRetrier` 让适配器在 10/20/30 秒后重新查询任务、拿新链接，最多 3 轮。
+- **可灵 Omni 的视频编辑是视频卡的一种模式**（`video_edit`，`operation=edit`）：
+  - 模式由能力描述的 `operations.edit` 开启；没有 `operations` 字段的旧描述，按文档给可灵 Omni 补上编辑（1 段源视频、至多 4 张参考图、`kling.audio` 取 `off` / `original`）。列了 `operations` 却没有 `edit` 的模型不开放。
+  - 编辑时以该操作的声明为准（`modeCapability`）：源视频用 `source` 角色，图片仍是 `reference`；声音由 `kling.audio` 决定，不再发送 `generate_audio`；`multi_shot` 一律不发送。
+  - 提交前检查必须连入且只能连入 1 段视频、提示词不能只剩素材引用。时长、比例按通用参数发送，输出不保证与源视频等长。
+  - Go 适配器不用改：`operation` 作为 `parameters` 的一项原样放进请求体。
 - 提交按文档的重放语义重试。文件过期后重新上传、再次提交时，使用新 key `<task>-reupload`。
 - 轮询间隔按文档建议设置（图片 3 秒、视频 5 秒、3D 8 秒），由适配器通过 `PollIntervalHinter` 告诉轮询器。
 - 文本模型目录只取 `native_endpoint_types` 为数组的条目。

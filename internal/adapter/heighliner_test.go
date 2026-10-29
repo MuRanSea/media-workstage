@@ -152,6 +152,35 @@ func TestHeighliner_SubmitPathsAndEmptyPrompt(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestHeighliner_VideoEditSendsOperationAndSourceVideo(t *testing.T) {
+	g := newFakeGateway(t)
+	a := g.adapter()
+	vid := filepath.Join(t.TempDir(), "origin.mp4")
+	require.NoError(t, os.WriteFile(vid, []byte("mp4"), 0644))
+
+	_, err := a.SubmitTask(context.Background(), &model.MediaTask{
+		ID: "edit-1", Model: "kling-3.0-omni", TaskType: "video_generation", TaskMode: "video_edit", Prompt: "给人物加一束花",
+		ParamsJSON: paramsJSON(t, map[string]any{
+			"parameters":       map[string]any{"operation": "edit", "duration": 5, "aspect_ratio": "16:9"},
+			"provider_options": map[string]any{"kling": map[string]any{"audio": "original"}},
+			"reference_assets": []model.ReferenceItem{
+				{Role: "source", Type: "video", LocalPath: vid, Label: "视频1"},
+				{Role: "reference", Type: "image", URL: "https://files.example.com/flower.png", Label: "图1"},
+			},
+		})})
+	require.NoError(t, err)
+
+	assert.Equal(t, "/media/v1/videos/generations", g.submitPaths[0])
+	body := g.submits[0]
+	assert.Equal(t, "edit", body["operation"])
+	assert.Equal(t, map[string]any{"kling": map[string]any{"audio": "original"}}, body["provider_options"])
+	assert.Equal(t, []any{
+		map[string]any{"role": "source", "type": "video", "file_id": "file_1"},
+		map[string]any{"role": "reference", "type": "image", "url": "https://files.example.com/flower.png"},
+	}, body["references"])
+	assert.NotContains(t, body, "generate_audio")
+}
+
 func TestHeighliner_ReferencesUploadOnceAndUseAssetIDs(t *testing.T) {
 	g := newFakeGateway(t)
 	a := g.adapter()

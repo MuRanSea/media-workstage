@@ -104,6 +104,16 @@ export interface CapabilityReference {
   requires_asset?: boolean;
 }
 
+/**
+ * What one `operation` (edit, motion_control…) of a model declares. The operation's
+ * own declarations apply when it is requested; the model's top-level fields stay.
+ */
+export interface CapabilityOperation {
+  parameters?: Record<string, CapabilityParam>;
+  references?: CapabilityReference[];
+  provider_options_schema?: CapabilityParam;
+}
+
 /** A Heighliner media model's entry in `GET /media/v1/models` (ADR 0010). */
 export interface CapabilityDescriptor {
   id: string;
@@ -116,6 +126,8 @@ export interface CapabilityDescriptor {
   references?: CapabilityReference[];
   /** JSON Schema object whose properties are vendor namespaces (`kling`, `tencent`…). */
   provider_options_schema?: CapabilityParam;
+  /** Operations other than the default `generate`, by name; Kling Omni lists `edit`. */
+  operations?: Record<string, CapabilityOperation>;
 }
 
 export interface ProviderConfigItem {

@@ -7,7 +7,8 @@ export type UploadKind = 'image' | 'video';
 export type AssetStatus = 'Processing' | 'Active' | 'Failed';
 export type TextPreset = 'image_prompt' | 'video_prompt' | 'free';
 
-export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video';
+/** `video_edit` (Heighliner, Kling Omni): rewrite one source video from the prompt, with up to four reference images. */
+export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video' | 'video_edit';
 export type ImageTaskMode = 'single' | 'layer_decomp' | 'sequential';
 export type CanvasTool = 'select' | 'hand';
 export type MjSpeed = 'FAST' | 'RELAX' | 'TURBO';
@@ -226,8 +227,13 @@ export interface VideoModelDef {
   maxRefs: number;
   /** Reference audios the model takes in multi-reference mode (Ark asset library); none when omitted. */
   maxAudioRefs?: number;
-  /** Task modes the model accepts; all three when omitted. */
+  /** Task modes the model accepts; the first three (not video_edit) when omitted. */
   modes?: VideoTaskMode[];
+}
+
+/** Whether a model definition takes `mode`; video editing is only ever a declared mode. */
+export function supportsVideoMode(def: Pick<VideoModelDef, 'modes'>, mode: VideoTaskMode): boolean {
+  return def.modes ? def.modes.includes(mode) : mode !== 'video_edit';
 }
 
 export interface ImageModelDef {

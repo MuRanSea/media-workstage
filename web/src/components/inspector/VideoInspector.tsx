@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { X } from 'lucide-react';
-import { takesVideoReferType, type SpatialCard, type VideoReferType, type VideoTaskMode } from '../../types/canvas.ts';
+import { supportsVideoMode, takesVideoReferType, type SpatialCard, type VideoReferType, type VideoTaskMode } from '../../types/canvas.ts';
 import { buildProviderGroups, findModelOption, isProviderMissing } from '../../engine/channelModels.ts';
 import { protocolOf } from '../../engine/providers.ts';
 import {
@@ -50,7 +50,7 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
   const refs = card.references ?? [];
   const isHeighliner = protocolOf(provider) === 'heighliner';
   const maxRefs = referenceCapacity(card, mode);
-  const supports = (m: VideoTaskMode) => !def.modes || def.modes.includes(m);
+  const supports = (m: VideoTaskMode) => supportsVideoMode(def, m);
   // Kling Omni asks what its reference video is for; an edit keeps the video's length and shape. Neither has sound.
   const referType: VideoReferType | undefined =
     takesVideoReferType(protocolOf(provider), card.model) && mode === 'all_modal' && refs.some((r) => r.role === 'reference_video')
@@ -76,7 +76,10 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
           <Segmented
             value={mode}
             onChange={(m) => update(videoModePatch(card, m, def.maxRefs))}
-            options={(Object.keys(VIDEO_MODE_LABELS) as VideoTaskMode[]).map((m) => ({
+            options={(Object.keys(VIDEO_MODE_LABELS) as VideoTaskMode[])
+              // Video editing is offered only by the models that declare it.
+              .filter((m) => m !== 'video_edit' || supports(m))
+              .map((m) => ({
               value: m,
               label: VIDEO_MODE_LABELS[m].label,
               disabled: !supports(m),
@@ -164,7 +167,7 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
                     <span className={`font-mono ${src?.type === 'upload' ? 'text-amber-300' : 'text-pink-300'}`}>{refTag(ref)}</span>
                     <span className="flex-1 min-w-0 truncate text-slate-300">{src?.title ?? ref.label}</span>
                     <span className="text-[11px] text-slate-500">
-                      {ROLE_LABELS[ref.role] ?? ref.role}
+                      {mode === 'video_edit' && ref.role === 'reference_video' ? '待编辑视频' : ROLE_LABELS[ref.role] ?? ref.role}
                       {src?.type === 'upload' && (() => {
                         const sent = uploadRefKind(src, protocolOf(provider) ?? 'ark');
                         return sent ? ` · 发送${UPLOAD_REF_LABELS[sent]}` : ' · 未就绪';
