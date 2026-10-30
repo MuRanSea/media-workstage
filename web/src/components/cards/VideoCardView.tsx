@@ -29,6 +29,7 @@ import { Button } from '../ui/Button.tsx';
 import { Menu } from '../ui/Menu.tsx';
 import { InputSlot, LinkedPromptBox, OutputPort } from './CardPorts.tsx';
 import { UploadPanel } from './UploadPanel.tsx';
+import { VideoMetaLine } from './VideoMetaLine.tsx';
 import {
   AutoTextarea,
   CardShell,
@@ -342,6 +343,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
       >
         {player}
         {summary}
+        <VideoMetaLine url={videoUrl} />
         {card.status === 'succeeded' && !!card.resultActions?.length && onRunAction && (
           <div className="flex flex-wrap gap-1">
             {card.resultActions.map((action) => {

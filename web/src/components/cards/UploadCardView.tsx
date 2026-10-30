@@ -6,6 +6,7 @@ import { cardTag } from '../../engine/refTags.ts';
 import { OutputPort } from './CardPorts.tsx';
 import { CardShell, ErrorBox, MediaFrame } from './CardShell.tsx';
 import { UploadPanel } from './UploadPanel.tsx';
+import { VideoMetaLine } from './VideoMetaLine.tsx';
 import type { CardViewProps } from './cardProps.ts';
 
 const ACCEPT = { image: 'image/png,image/jpeg,image/webp', video: 'video/mp4,video/quicktime,.mp4,.mov' } as const;
@@ -179,6 +180,8 @@ export const UploadCardView: React.FC<UploadCardViewProps> = ({
               <RefreshCw className="w-3 h-3" /> 更换
             </button>
           </div>
+
+          {kind === 'video' && <VideoMetaLine url={previewUrl} />}
 
           <UploadPanel card={card} onUpdateCard={onUpdateCard} />
         </>
