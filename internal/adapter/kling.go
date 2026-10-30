@@ -250,8 +250,12 @@ func (k *KlingAdapter) submitVideo(ctx context.Context, task *model.MediaTask) (
 		return "", errors.New("可灵不支持仅尾帧，请同时提供首帧图")
 	}
 
-	// A reference video that is edited (base_video) keeps its own length and shape.
+	// A reference video that is edited (base_video) keeps its own length and shape,
+	// takes no first/last frame, no multi-shot and no generated sound.
 	editsVideo := traits.omni && len(videos) > 0 && params.VideoReferType != "feature"
+	if editsVideo && (hasFirst || hasLast) {
+		return "", errors.New("编辑视频不能同时带首帧或尾帧，请改用参考图，或把参考视频的用途改为「参考特征」")
+	}
 
 	settings := map[string]any{"resolution": klingResolution(params.Resolution, traits)}
 	if params.Duration > 0 && !editsVideo {
@@ -267,13 +271,15 @@ func (k *KlingAdapter) submitVideo(ctx context.Context, task *model.MediaTask) (
 	}
 	if traits.audio {
 		audio := "off"
-		if params.GenerateAudio != nil && *params.GenerateAudio {
+		// An edited video (base_video) accepts only off or original, and the card's
+		// sound switch (on by default) must not turn it into native generated sound.
+		if params.GenerateAudio != nil && *params.GenerateAudio && !editsVideo {
 			audio = "native"
 		}
 		settings["audio"] = audio
 	}
 	if traits.multiShot {
-		settings["multi_shot"] = klingShotSyntax.MatchString(task.Prompt)
+		settings["multi_shot"] = !editsVideo && klingShotSyntax.MatchString(task.Prompt)
 	}
 
 	var path string

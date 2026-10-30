@@ -224,11 +224,33 @@ func TestKlingOmniReferenceVideo(t *testing.T) {
 	assert.NotContains(t, s, "duration", "an edited video keeps its own length")
 	assert.NotContains(t, s, "aspect_ratio")
 
+	// The card's sound switch is on by default; an edit still goes out as audio=off,
+	// multi_shot=false (Kling answers 400 to native sound or multi-shot on base_video),
+	// even when the prompt uses the multi-shot syntax.
+	editWithSound := newKlingTask("video_generation", "kling-3.0-omni", map[string]any{
+		"generate_audio":   true,
+		"reference_assets": []map[string]any{{"role": "reference_video", "url": "https://x/v.mp4"}},
+	})
+	editWithSound.Prompt = "镜头 1, 3, 海边; 镜头 2, 3, 日落;"
+	_, err := a.SubmitTask(context.Background(), editWithSound)
+	require.NoError(t, err)
+	s = settingsOf(t, f.body)
+	assert.Equal(t, "off", s["audio"])
+	assert.Equal(t, false, s["multi_shot"])
+
+	_, err = a.SubmitTask(context.Background(), newKlingTask("video_generation", "kling-3.0-omni", map[string]any{
+		"reference_assets": []map[string]any{
+			{"role": "reference_video", "url": "https://x/v.mp4"},
+			{"role": "first_frame", "url": "https://x/a.png"},
+		},
+	}))
+	assert.ErrorContains(t, err, "不能同时带首帧或尾帧")
+
 	run("feature")
 	assert.Equal(t, "feature_video", f.body["contents"].([]any)[1].(map[string]any)["type"])
 	assert.EqualValues(t, 5, settingsOf(t, f.body)["duration"])
 
-	_, err := a.SubmitTask(context.Background(), newKlingTask("video_generation", "kling-3.0-omni", map[string]any{
+	_, err = a.SubmitTask(context.Background(), newKlingTask("video_generation", "kling-3.0-omni", map[string]any{
 		"reference_assets": []map[string]any{{"role": "reference_video", "local_path": "x.mp4"}},
 	}))
 	assert.ErrorContains(t, err, "公网链接")
