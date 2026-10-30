@@ -201,13 +201,30 @@ export function compileHeighlinerVideoPayload(card: SpatialCard, allCards: Spati
   }
 
   const parameters = sentParams(cap, card);
-  if (mode === 'video_edit') parameters.operation = EDIT_OPERATION;
+  if (mode === 'video_edit') {
+    // The docs' edit request names the operation, prompt, references and resolution; the
+    // output shape and length otherwise follow the gateway's edit defaults. Only what the
+    // card set on purpose goes beyond that, so a default is never what the gateway rejects.
+    for (const name of Object.keys(parameters)) {
+      if (name !== 'resolution' && card.capParams?.[name] === undefined) delete parameters[name];
+    }
+    parameters.operation = EDIT_OPERATION;
+  }
   // First/last frame: the frame sets the shape; send "adaptive" where the model has it, else no ratio.
   if (mode === 'first_last_frame') {
     if (cap.parameters?.aspect_ratio?.enum?.includes('adaptive')) parameters.aspect_ratio = 'adaptive';
     else delete parameters.aspect_ratio;
   }
   const options = sentOptions(cap, card);
+  if (mode === 'video_edit') {
+    // Likewise vendor options: only the ones chosen (kling.audio omitted is off).
+    for (const [ns, values] of Object.entries(options)) {
+      for (const name of Object.keys(values)) {
+        if (card.capOptions?.[ns]?.[name] === undefined) delete values[name];
+      }
+      if (Object.keys(values).length === 0) delete options[ns];
+    }
+  }
   applyVideoRules(cap, {
     mode,
     imageRefs: references.filter((r) => r.role === 'reference' && r.type === 'image').length,

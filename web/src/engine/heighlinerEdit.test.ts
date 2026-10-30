@@ -110,16 +110,21 @@ describe('video edit mode', () => {
       ['source', 'video'],
       ['reference', 'image'],
     ]);
-    expect(paramsOf(payload)).toMatchObject({ operation: 'edit', duration: 5, aspect_ratio: '16:9' });
+    // Like the docs' example: the operation and resolution, no defaults for length or shape.
+    expect(paramsOf(payload)).toEqual({ operation: 'edit', resolution: '720p' });
     expect(optionsOf(payload)).toEqual({ kling: { audio: 'original', watermark: true } });
+
+    // Length and shape go when the card sets them on purpose.
+    const timed = compileCardVideoPayload({ ...v, capParams: { duration: 8, aspect_ratio: '9:16' } }, [clip(), img]);
+    expect(paramsOf(timed)).toEqual({ operation: 'edit', resolution: '720p', duration: 8, aspect_ratio: '9:16' });
   });
 
   it('never sends multi_shot or generate_audio, even ones the card saved in another mode', () => {
     const v = connect(edit({ capParams: { generate_audio: true }, capOptions: { kling: { multi_shot: true } } }), clip());
     const payload = compileCardVideoPayload(v, [clip()]);
     expect(paramsOf(payload)).not.toHaveProperty('generate_audio');
-    // The sound option's default (off) is sent explicitly; nothing else is.
-    expect(optionsOf(payload)).toEqual({ kling: { audio: 'off' } });
+    // Omitted sound is off; defaults are not sent.
+    expect(optionsOf(payload)).toBeUndefined();
   });
 
   it('needs exactly one source video, a prompt, and at most four images', () => {
