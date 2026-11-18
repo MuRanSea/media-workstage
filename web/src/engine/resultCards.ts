@@ -1,12 +1,13 @@
-import type { ResultActionDto, ResultOrigin, ResultSnapshot, SpatialCard, TaskAssetDto } from '../types/canvas.ts';
+import type { CapOptions, CapValues, ResultActionDto, ResultOrigin, ResultSnapshot, SpatialCard, TaskAssetDto } from '../types/canvas.ts';
 import type { BackendTaskResponse } from '../services/api.ts';
 import { applyTaskToCard, isTerminalStatus } from './taskSync.ts';
 import { newCardId, nextTagIndex } from './cardFactory.ts';
 import { firstFreeSlotBelow, firstFreeSlotRight } from './layout.ts';
 import { previewAspect } from './cardParams.ts';
+import { mergeBilling } from './mediaBilling.ts';
 import { assetStoredPath } from './assetPaths.ts';
 import { sentVideoSettings } from './videoCompiler.ts';
-import { FINAL_RESOLUTION, activeCapability, isHeighliner, isSampleRun, sentOptions, sentParams } from './capability.ts';
+import { activeCapability, isHeighliner, isSampleRun, sentOptions, sentParams } from './capability.ts';
 import { coverPath } from './model3d.ts';
 
 /** Image settings a result card records and reuses to shape its preview. */
@@ -149,10 +150,33 @@ export function snapshotOf(submitted: SpatialCard): ResultSnapshot {
     params.ratio = sent.ratio;
     if (cap) delete params.ratio;
     if (sent.references.length) {
-      snapshot.references = sent.references.map(({ cardId, tagIndex, role, label }) => ({ cardId, tagIndex, role, label }));
+      snapshot.references = sent.references.map(({ cardId, tagIndex, role, label, view }) => ({ cardId, tagIndex, role, label, ...(view ? { view } : {}) }));
     }
   }
   return snapshot;
+}
+
+/** Record compiled values rather than contextual defaults removed by the compiler. */
+function recordMediaSubmission(card: SpatialCard, task: BackendTaskResponse): SpatialCard {
+  if (!card.snapshot || !isHeighliner(card.provider) || !task.params_json) return card;
+  try {
+    const wire = JSON.parse(task.params_json) as { parameters?: CapValues; provider_options?: Record<string, Record<string, unknown>> };
+    if (!wire.parameters || typeof wire.parameters !== 'object') return card;
+    const scalar = (value: unknown): value is CapValues[string] => ['string', 'number', 'boolean'].includes(typeof value);
+    const options: CapOptions = {};
+    for (const [ns, vals] of Object.entries(wire.provider_options ?? {})) {
+      const fields: CapValues = {};
+      for (const [key, value] of Object.entries(vals)) {
+        if (scalar(value)) fields[key] = value;
+        else if (value && typeof value === 'object' && !Array.isArray(value)) {
+          for (const [sub, setting] of Object.entries(value)) if (scalar(setting)) fields[`${key}.${sub}`] = setting;
+        }
+      }
+      if (Object.keys(fields).length) options[ns] = fields;
+    }
+    const capParams = Object.fromEntries(Object.entries(wire.parameters).filter(([, value]) => scalar(value)));
+    return { ...card, capParams, snapshot: { ...card.snapshot, capParams, capOptions: options } };
+  } catch { return card; }
 }
 
 /**
@@ -175,7 +199,7 @@ export function addPendingResult(
     tagIndex: submitted.type === 'text' || submitted.type === '3d' ? undefined : nextTagIndex(cards),
   };
 
-  return settleResult([...cards, placeResult(cards, submitted, draft, heightOf)], draft.id, task, heightOf);
+  return settleResult([...cards, placeResult(cards, submitted, recordMediaSubmission(draft, task), heightOf)], draft.id, task, heightOf);
 }
 
 /**
@@ -292,7 +316,7 @@ export function addOriginResult(
     prompt: runner.type === 'text' ? '' : source.prompt,
     references: undefined,
     // 生成正式视频 from a sample: a full-size run, no longer a sample.
-    ...(runner.type === 'video' ? { sampleMode: false, capParams: { ...source.capParams, resolution: FINAL_RESOLUTION } } : {}),
+    ...(runner.type === 'video' ? { origin, sampleMode: false } : {}),
   };
   const draft: SpatialCard = {
     ...resultDraft(submitted, resultIdFor(task.id), `${source.title} · ${origin.label}`),
@@ -343,8 +367,21 @@ export function applyTaskToCards(
   heightOf: HeightOf = () => undefined
 ): SpatialCard[] {
   const placeholder = cards.find((c) => c.role === 'result' && c.taskId === task.id && !isExtraResultIdFor(task.id, c.id));
-  if (!placeholder || isTerminalStatus(placeholder.status)) return cards;
+  if (!placeholder || isTerminalStatus(placeholder.status)) return updateTaskBilling(cards, task);
   return settleResult(cards, placeholder.id, task, heightOf);
+}
+
+export function updateTaskBilling(cards: SpatialCard[], task: Pick<BackendTaskResponse, 'id' | 'billing_details_json'>): SpatialCard[] {
+  if (!task.billing_details_json) return cards;
+  let changed = false;
+  const next = cards.map((card) => {
+    if (card.taskId !== task.id) return card;
+    const billing = mergeBilling(card.billingDetailsJson, task.billing_details_json);
+    if (billing === card.billingDetailsJson) return card;
+    changed = true;
+    return { ...card, billingDetailsJson: billing };
+  });
+  return changed ? next : cards;
 }
 
 /** Where each asset kind sorts among a task's outputs, and what its extra cards are called. */
@@ -371,6 +408,9 @@ export function orderedAssets(assets: TaskAssetDto[]): TaskAssetDto[] {
  * card, laid out in a grid from the placeholder.
  */
 function settleResult(cards: SpatialCard[], placeholderId: string, task: BackendTaskResponse, heightOf: HeightOf): SpatialCard[] {
+  if (task.status === 'succeeded' && task.result_version === 1 && task.contents?.some((c) => c.parts.length)) {
+    return settleOrderedContent(cards, placeholderId, task, heightOf);
+  }
   const assets = task.status === 'succeeded' ? orderedAssets(task.assets ?? []) : [];
   let first = applyTaskToCard(cards.find((c) => c.id === placeholderId)!, task);
   // A 3D run is one model: every file stays on its one card, the cover as its face.
@@ -378,6 +418,7 @@ function settleResult(cards: SpatialCard[], placeholderId: string, task: Backend
     if (assets.length) first = { ...first, outputAssets: assets, resultUrl: coverPath(assets) };
     return cards.map((c) => (c.id === placeholderId ? first : c));
   }
+  if (first.type === 'video' && task.delivery_status) return cards.map((c) => (c.id === placeholderId ? first : c));
   if (assets.length) first = { ...first, outputAssets: [assets[0]], resultUrl: assetStoredPath(assets[0]) };
   let next = cards.map((c) => (c.id === placeholderId ? first : c));
   // A video task's extra assets (a returned last frame) belong to the video.
@@ -397,9 +438,44 @@ function settleResult(cards: SpatialCard[], placeholderId: string, task: Backend
   return next;
 }
 
+/** Candidate/part order is authoritative even when a file has expired. */
+function settleOrderedContent(cards: SpatialCard[], placeholderId: string, task: BackendTaskResponse, heightOf: HeightOf): SpatialCard[] {
+  const placeholder = cards.find((c) => c.id === placeholderId)!;
+  const settled = applyTaskToCard(placeholder, task);
+  const byIndex = new Map((task.assets ?? []).map((a) => [a.asset_index, a]));
+  const parts = task.contents!.flatMap((c) => c.parts.map((part, partIndex) => ({ part, partIndex, candidateIndex: c.candidate_index }))).filter(({ part }) => part.type === 'text' || part.type === 'image');
+  let next = cards;
+  let first = settled;
+  for (const [index, { part, candidateIndex, partIndex }] of parts.entries()) {
+    const candidate = part.type === 'image' ? byIndex.get(part.artifact_index) : undefined;
+    const asset = candidate?.local_path ? candidate : undefined;
+    const type = part.type === 'text' ? 'text' : 'image';
+    const card: SpatialCard = {
+      ...settled,
+      id: index === 0 ? placeholderId : `${resultIdFor(task.id)}-part-${index}`,
+      type,
+      mediaPart: { version: 1, candidateIndex, partIndex },
+      title: `${placeholder.title} · 候选 ${candidateIndex + 1} · ${partIndex + 1} ${type === 'text' ? '文字' : '图片'}`,
+      tagIndex: type === 'image' ? (index === 0 ? placeholder.tagIndex : nextTagIndex(next)) : undefined,
+      resultUrl: assetStoredPath(asset),
+      outputAssets: asset ? [asset] : [],
+      textOutput: part.type === 'text' ? part.text : undefined,
+      errorMessage: !asset && type === 'image' ? (settled.errorMessage ?? '此位置的图片未交付') : settled.errorMessage,
+    };
+    if (index === 0) {
+      first = card;
+      next = next.map((c) => c.id === placeholderId ? first : c);
+    } else {
+      next = [...next, placeInAssetGrid(card, first, index, parts.length, next, heightOf)];
+    }
+  }
+  return next;
+}
+
 /** What the card for `ordered[index]` (not the first) is called after the first card's title: "图层 2", "分镜 3". */
 export function extraAssetLabel(ordered: TaskAssetDto[], index: number): string {
   const asset = ordered[index];
+  if (asset.kind === 'image_layer' && asset.name) return asset.name;
   const kindLabel = ASSET_KINDS[asset.kind].label;
   return kindLabel ? `${kindLabel} ${ordered.filter((a) => a.kind === asset.kind).indexOf(asset) + 1}` : `${index + 1}`;
 }

@@ -1,8 +1,8 @@
 import { maxReferenceVideos, resolveVideoModelDef, supportsVideoMode, takesVideoReferType, type SpatialCard, type ReferenceItem, type VideoTaskMode } from '../types/canvas.ts';
 import type { CreateTaskPayload } from '../services/api.ts';
 import { protocolOf } from './providers.ts';
-import { refNoun, refTag } from './refTags.ts';
-import { sendsUploadedCopy, uploadReference } from './uploadRefs.ts';
+import { refTag } from './refTags.ts';
+import { mediaKindOf, sendsUploadedCopy, uploadReference } from './uploadRefs.ts';
 import type { Protocol } from '../services/api.ts';
 import { compileHeighlinerVideoPayload } from './heighlinerCompiler.ts';
 
@@ -93,14 +93,14 @@ export function sentVideoSettings(card: SpatialCard): { mode: VideoTaskMode; rat
       mode,
       ratio: 'adaptive',
       references: references
-        .filter((ref) => ref.role !== 'reference_video')
+        .filter((ref) => ref.role !== 'reference_video' && ref.role !== 'reference_audio')
         .map((ref, idx) => ({ ...ref, role: idx === 0 ? 'first_frame' : 'last_frame' })),
     };
   }
   return {
     mode,
     ratio: card.ratio ?? '16:9',
-    references: references.map((ref) => ({ ...ref, role: ref.role === 'reference_video' ? ref.role : 'reference_image' })),
+    references: references.map((ref) => ({ ...ref, role: ref.role === 'reference_video' || ref.role === 'reference_audio' ? ref.role : 'reference_image' })),
   };
 }
 
@@ -164,7 +164,10 @@ export function compileVideoTaskPayload(
   const counters = { 图: 0, 视频: 0 };
   const cloudIndexOf = { 图: new Map<number, number>(), 视频: new Map<number, number>() };
   references.forEach((ref) => {
-    const noun = refNoun(ref.role);
+    if (ref.role === 'reference_audio') throw new Error('当前协议不支持本地音频引用');
+    const source = allCards.find(c => c.id === ref.cardId);
+    if (source && mediaKindOf(source) !== (ref.role === 'reference_video' ? 'video' : 'image')) throw new Error('参考素材类型与所选角色不匹配，请重新连接');
+    const noun = ref.role === 'reference_video' ? '视频' : '图';
     const cloudIndex = ++counters[noun];
     const resolved = resolveReferenceAsset(ref, allCards, protocol);
 

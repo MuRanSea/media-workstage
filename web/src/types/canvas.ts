@@ -2,13 +2,13 @@ import type { Protocol, ProviderId } from '../services/api.ts';
 
 export type CardType = 'image' | 'video' | 'text' | 'upload' | '3d';
 /** What an upload card holds. */
-export type UploadKind = 'image' | 'video';
+export type UploadKind = 'image' | 'video' | 'audio';
 /** Review state of an asset uploaded to a provider's asset library. */
 export type AssetStatus = 'Processing' | 'Active' | 'Failed';
 export type TextPreset = 'image_prompt' | 'video_prompt' | 'free';
 
 /** `video_edit` (Heighliner, Kling Omni): rewrite one source video from the prompt, with up to four reference images. */
-export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video' | 'video_edit';
+export type VideoTaskMode = 'all_modal' | 'first_last_frame' | 'text_to_video' | 'video_edit' | 'motion_control';
 export type ImageTaskMode = 'single' | 'layer_decomp' | 'sequential';
 export type CanvasTool = 'select' | 'hand';
 export type MjSpeed = 'FAST' | 'RELAX' | 'TURBO';
@@ -32,6 +32,10 @@ export interface TaskAssetDto {
   description?: string;
   z_index: number;
   bounding_box_json?: string;
+  provider_metadata_json?: string;
+  provider_output_id?: string;
+  variant?: string;
+  duration_seconds?: string;
   remote_url?: string;
   local_path: string;
   file_size_bytes?: number;
@@ -68,7 +72,7 @@ export interface AssetRef {
 export interface ReferenceItem {
   cardId: string;
   tagIndex: number;
-  role: 'reference_image' | 'reference_video' | 'first_frame' | 'last_frame';
+  role: 'reference_image' | 'reference_video' | 'reference_audio' | 'first_frame' | 'last_frame';
   label: string;
   /** 3D cards: the view this image shows, as the gateway role (`reference` = 主图, `multi_view_left` …). */
   view?: string;
@@ -121,6 +125,8 @@ export interface SpatialCard {
   /** Result cards: the settings the run was submitted with. */
   snapshot?: ResultSnapshot;
   taskId?: string;
+  providerTaskId?: string;
+  deliveryStatus?: string;
   type: CardType;
   title: string;
   /** @图N / @视频N; carried by image and video result cards (uploads included). */
@@ -147,6 +153,9 @@ export interface SpatialCard {
   // fields are what the Upload Platform returned for it. Older projects may still carry
   // an unused uploadProvider: uploads no longer go through a provider (ADR 0008).
   mediaKind?: UploadKind;
+  gatewayFile?: { provider: string; id: string; assetId?: string; expiresAt?: number };
+  billingDetailsJson?: string;
+  mediaPart?: { version: number; candidateIndex: number; partIndex: number };
   uploadName?: string;
   /** Asset library id (referenced as asset://<id> once status is Active). */
   assetId?: string;
@@ -187,6 +196,7 @@ export interface SpatialCard {
    */
   capParams?: CapValues;
   capOptions?: CapOptions;
+  capInputVersion?: 1; // absent on older cards which materialized descriptor defaults
   /**
    * Heighliner Seedance 2.5 video cards: render a 480p sample (样片) instead of the video.
    * Its result card offers 生成正式视频, which renders the full video from the sample. A result
@@ -233,7 +243,7 @@ export interface VideoModelDef {
 
 /** Whether a model definition takes `mode`; video editing is only ever a declared mode. */
 export function supportsVideoMode(def: Pick<VideoModelDef, 'modes'>, mode: VideoTaskMode): boolean {
-  return def.modes ? def.modes.includes(mode) : mode !== 'video_edit';
+  return def.modes ? def.modes.includes(mode) : mode !== 'video_edit' && mode !== 'motion_control';
 }
 
 export interface ImageModelDef {

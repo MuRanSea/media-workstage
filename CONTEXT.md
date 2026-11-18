@@ -74,10 +74,10 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   _Avoid_: model spec, 模型定义 (the hand-written limits other Protocols use)
 
 - **Delivery (交付)**:
-  When a Heighliner run's outputs become readable: an artifact counts only once the gateway marks it `available` with an http(s) link. A run the gateway reports succeeded with outputs not yet readable is still being delivered, so the card keeps waiting and never offers to generate again, since that would be billed twice. After 15 minutes it settles with what is readable, or fails naming the gateway task. A download that fails asks the gateway again for fresh links (ADR 0012).
+  Storing the outputs of a successful Heighliner generation locally. An artifact counts only after its file is saved and recorded. While delivery is pending, query the same gateway task and reuse saved files. At the end the delivery is complete, partial or unavailable; none of those makes a succeeded generation fail. An expired artifact cannot be renewed (ADR 0012).
 
 - **Sample (样片)**:
-  A Seedance 2.5 video run on a Heighliner Provider that renders only a 480p preview (the card's 样片模式). Its Result Card offers 生成正式视频, a Result Action that renders the full 1080p video from that sample as a separate task and Result Card; the prompt, references, duration, ratio and audio are inherited from the sample, and the gateway honors the sample for 7 days (ADR 0011).
+  A 480p preview made with the main Seedance 2.5 model on a Heighliner Provider, not Flash. Its Result Card offers 1080p and 4K Result Actions, each a separate task inheriting the source inputs. The gateway honors the reference for 7 or 14 days, depending on the vendor creation date (ADR 0011).
 
 - **ProviderAdapter (服务商适配器)**:
   The architectural boundary seam that isolates one `Protocol`'s third-party API contract. Translates generic `MediaTaskRequest` into protocol-specific payloads and normalizes polling responses; each Provider gets its own adapter instance.

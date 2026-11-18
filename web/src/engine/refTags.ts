@@ -2,8 +2,8 @@ import type { ReferenceItem, SpatialCard } from '../types/canvas.ts';
 import { mediaKindOf } from './uploadRefs.ts';
 
 /** Word the prompt uses for a reference: 图 for images, 视频 for videos. */
-export function refNoun(role: ReferenceItem['role']): '图' | '视频' {
-  return role === 'reference_video' ? '视频' : '图';
+export function refNoun(role: ReferenceItem['role']): '图' | '视频' | '音频' {
+  return role === 'reference_video' ? '视频' : role === 'reference_audio' ? '音频' : '图';
 }
 
 /** The @ tag a prompt uses to point at a reference, e.g. "@图2" or "@视频1". */
@@ -25,6 +25,6 @@ export function mentionsTag(prompt: string, tag: string): boolean {
 
 /** The tag for a source card, by what it holds. */
 export function cardTag(card: SpatialCard): string {
-  return mediaKindOf(card) === 'video' ? `@视频${card.tagIndex}` : `@图${card.tagIndex}`;
+  return `@${{ image: '图', video: '视频', audio: '音频' }[mediaKindOf(card)]}${card.tagIndex}`;
 }
 

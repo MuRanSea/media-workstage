@@ -1,6 +1,6 @@
 import type { CapabilityDescriptor, CapabilityOperation, CapabilityParam, ProviderId } from '../services/api.ts';
 import type { AssetKind, CapOptions, CapValue, CapValues, SpatialCard, VideoModelDef, VideoTaskMode } from '../types/canvas.ts';
-import { isKlingOmni } from './heighlinerRules.ts';
+import { isKling4, isKlingOmni, supportsKlingMultiShot } from './heighlinerRules.ts';
 import { capabilityOf, protocolOf } from './providers.ts';
 
 /**
@@ -28,7 +28,7 @@ export function requireCapability(card: Pick<SpatialCard, 'provider' | 'model'>)
 
 // --- Parameters ------------------------------------------------------------------
 
-/** Common parameters the 规格 page shows, in display order. `size` and `prompt` are never shown. */
+/** Common parameters the 规格 page shows, in display order. `prompt` has its own input. */
 export const SPEC_PARAMS = [
   'aspect_ratio',
   'resolution',
@@ -38,6 +38,7 @@ export const SPEC_PARAMS = [
   'seed',
   'negative_prompt',
   'output_format',
+  'size',
 ] as const;
 
 export const SPEC_LABELS: Record<string, string> = {
@@ -49,6 +50,7 @@ export const SPEC_LABELS: Record<string, string> = {
   seed: '随机种子',
   negative_prompt: '反向提示词',
   output_format: '文件格式',
+  size: '尺寸（选填，覆盖比例和清晰度）',
 };
 
 export interface CapField {
@@ -61,44 +63,66 @@ const SCALAR_TYPES: ReadonlySet<string> = new Set(['string', 'integer', 'number'
 /** The common parameters this model declares, in display order. */
 export function specFields(cap: CapabilityDescriptor | undefined): CapField[] {
   const params = cap?.parameters ?? {};
-  return SPEC_PARAMS.filter((name) => params[name] && SCALAR_TYPES.has(params[name].type)).map((name) => ({
+  return SPEC_PARAMS.filter((name) => params[name] && SCALAR_TYPES.has(params[name].type) && (name !== 'size' || cap?.type === 'image')).map((name) => ({
     name,
-    param: params[name],
+    param: name === 'size' || (isKling4(cap) && (name === 'duration' || name === 'aspect_ratio')) ? { ...params[name], default: undefined } : params[name],
   }));
 }
 
 /**
  * Vendor options a card sets through a control of its own, never as a generic field: the
- * Seedance 2.5 sample switch and the sample a final video is made from, and Kling's
- * multi_shot, which must be true exactly when Omni has a reference video.
+ * Seedance 2.5 sample switch and the sample a final video is made from.
  */
-const MANAGED_OPTIONS: ReadonlySet<string> = new Set(['volcengine.draft', 'volcengine.draft_task_id', 'kling.multi_shot']);
+const MANAGED_OPTIONS: ReadonlySet<string> = new Set(['volcengine.draft', 'volcengine.draft_task_id']);
 
 /** Vendor options by namespace (`provider_options.<ns>`), scalar fields only. */
 export function optionGroups(cap: CapabilityDescriptor | undefined): { ns: string; fields: CapField[] }[] {
-  const namespaces = cap?.provider_options_schema?.properties ?? {};
+  if (!cap) return [];
+  const namespaces = { ...cap.provider_options_schema?.properties };
   return Object.entries(namespaces)
     .map(([ns, schema]) => ({
       ns,
-      fields: Object.entries(schema.properties ?? {})
+      fields: [...Object.entries(schema.properties ?? {}), ...nestedImageOptions(cap, ns, schema)]
         .filter(([name, param]) => SCALAR_TYPES.has(param.type) && !MANAGED_OPTIONS.has(`${ns}.${name}`))
-        .map(([name, param]) => ({ name, param })),
+        .filter(([name, param]) => ns !== 'kling' || name !== 'multi_shot' || (param.type === 'boolean' && supportsKlingMultiShot(cap)))
+        // Omission is significant for Omni with a reference clip, even if the catalog says default=false.
+        .map(([name, param]) => ({ name, param: ns === 'kling' && name === 'multi_shot' ? { ...param, default: undefined } : param })),
     }))
     .filter((g) => g.fields.length > 0);
 }
 
+function nestedImageOptions(cap: CapabilityDescriptor, ns: string, schema: CapabilityParam): [string, CapabilityParam][] {
+  if (cap.type !== 'image' || ns !== 'volcengine') return [];
+  const fields: [string, CapabilityParam][] = [];
+  const nested = (key: string, name: string, param: CapabilityParam) => {
+    if (schema.properties?.[key]?.type === 'object') fields.push([`${key}.${name}`, param]);
+  };
+  if (cap.id === 'doubao-seedream-5-5-261028') {
+    nested('layer_decomposition_options', 'max_images', { type: 'integer', minimum: 2, maximum: 100 });
+    nested('layer_decomposition_options', 'text_recognition', { type: 'boolean' });
+  }
+  if (['doubao-seedream-5-5-261028', 'doubao-seedream-5-0-flash-260915'].includes(cap.id)) {
+    nested('optimize_prompt_options', 'mode', { type: 'string', enum: ['standard'] });
+  }
+  return fields;
+}
+
 // --- Seedance 2.5 samples (样片) --------------------------------------------------
 
-/** A sample is 480p, and the full video made from it is 1080p; the gateway wants both explicit. */
 export const SAMPLE_RESOLUTION = '480p';
-export const FINAL_RESOLUTION = '1080p';
+
+export function finalResolution(actionId: string | undefined): '1080p' | '4k' | undefined {
+  if (actionId === 'finalize') return '1080p';
+  if (actionId === 'finalize_4k') return '4k';
+  return undefined;
+}
 
 /**
  * Whether a Heighliner video card can render a sample: only Seedance 2.5 can. The gateway's
  * catalog does not list `draft` among the vendor options, so the model decides.
  */
 export function supportsSample(card: Pick<SpatialCard, 'provider' | 'model' | 'type'>): boolean {
-  return card.type === 'video' && isHeighliner(card.provider) && /seedance-2[-.]5/.test(card.model);
+  return card.type === 'video' && isHeighliner(card.provider) && card.model === 'doubao-seedance-2-5-260628';
 }
 
 /** Whether the card is set to render a sample (and could). */
@@ -107,9 +131,12 @@ export function isSampleRun(card: Pick<SpatialCard, 'provider' | 'model' | 'type
 }
 
 /** The common parameters a card sends: its own, fitted to the model, with a sample's resolution fixed. */
-export function sentParams(cap: CapabilityDescriptor | undefined, card: Pick<SpatialCard, 'provider' | 'model' | 'type' | 'sampleMode' | 'capParams'>): CapValues {
+export function sentParams(cap: CapabilityDescriptor | undefined, card: Pick<SpatialCard, 'provider' | 'model' | 'type' | 'sampleMode' | 'capParams' | 'role' | 'origin'>): CapValues {
   const params = effectiveParams(cap, card.capParams);
-  return isSampleRun(card) && cap?.parameters?.resolution ? { ...params, resolution: SAMPLE_RESOLUTION } : params;
+  // Sample actions have their own documented resolutions, independent of the ordinary model catalog.
+  const resolution = card.role === 'result' && supportsSample(card) ? finalResolution(card.origin?.actionId) : undefined;
+  if (resolution) return { ...params, resolution };
+  return isSampleRun(card) ? { ...params, resolution: SAMPLE_RESOLUTION } : params;
 }
 
 /** The vendor options a card sends: its own, fitted to the model, plus the sample switch. */
@@ -147,12 +174,12 @@ export function fitsParam(param: CapabilityParam, value: unknown): value is CapV
 }
 
 /** Each field's value when it fits, else its default when that fits, else nothing. Undeclared names go. */
-function fitFields(fields: CapField[], values: CapValues | undefined): CapValues {
+function fitFields(fields: CapField[], values: CapValues | undefined, defaults = true): CapValues {
   const out: CapValues = {};
   for (const { name, param } of fields) {
     const value = values?.[name];
     if (fitsParam(param, value)) out[name] = value;
-    else if (fitsParam(param, param.default)) out[name] = param.default;
+    else if (defaults && fitsParam(param, param.default)) out[name] = param.default;
   }
   return out;
 }
@@ -180,7 +207,25 @@ export function capValuesPatch(
   cap: CapabilityDescriptor | undefined,
   card: Pick<SpatialCard, 'capParams' | 'capOptions'>
 ): Pick<SpatialCard, 'capParams' | 'capOptions'> {
-  return { capParams: effectiveParams(cap, card.capParams), capOptions: effectiveOptions(cap, card.capOptions) };
+  const capOptions: CapOptions = {};
+  for (const { ns, fields } of optionGroups(cap)) {
+    const explicit = fitFields(fields, card.capOptions?.[ns], false);
+    if (Object.keys(explicit).length) capOptions[ns] = explicit;
+  }
+  return { capParams: fitFields(specFields(cap), card.capParams, false), capOptions };
+}
+
+/** Before v0.3 a model switch persisted defaults as if the user typed them. Keep the old
+ * request intact until switching models or editing controls. Only non-default legacy values
+ * are known overrides; new cards preserve even explicitly selected default values. */
+export function explicitVideoParams(card: SpatialCard): CapValues {
+  const values = { ...card.capParams };
+  if (card.type === 'video' && card.capInputVersion !== 1) {
+    for (const {name, param} of specFields(activeCapability(card))) {
+      if (values[name] === param.default) delete values[name];
+    }
+  }
+  return values;
 }
 
 /** Sets (or, with undefined, clears) one value; a cleared field falls back to its default when sent. */
@@ -249,6 +294,36 @@ export function capAssetKinds(cap: CapabilityDescriptor | undefined): AssetKind[
 /** The `operation` a video edit is requested with, and the role its source video goes as. */
 export const EDIT_OPERATION = 'edit';
 export const EDIT_SOURCE_ROLE = 'source';
+export const MOTION_OPERATION = 'motion_control';
+
+const KLING_MOTION: CapabilityOperation = {
+  references: [{ role: 'character', types: ['image'], max_count: 1 }, { role: 'motion', types: ['video'], max_count: 1 }],
+  parameters: {
+    prompt: { type: 'string', required: true, maxLength: 2500 },
+    resolution: { type: 'string', enum: ['720p', '1080p'], default: '720p' },
+  },
+  provider_options_schema: { type: 'object', properties: {
+    kling: { type: 'object', properties: {
+      character_orientation: { type: 'string', enum: ['image', 'video'] },
+      audio: { type: 'string', enum: ['original', 'off'] },
+    } },
+  } },
+};
+
+function motionOperation(cap?: CapabilityDescriptor): CapabilityOperation | undefined {
+  if (cap?.id !== 'kling-3.0') return undefined;
+  return cap.operations?.[MOTION_OPERATION] ?? (cap.operations === undefined ? KLING_MOTION : undefined);
+}
+
+function kling4References(cap: CapabilityDescriptor, edit: boolean): CapabilityDescriptor['references'] {
+  return [
+    { role: 'first_frame', types: ['image'], max_count: 1 },
+    ...(cap.id === 'kling-4.0' ? [{ role: 'middle_frame', types: ['image'], max_count: 10 }, { role: 'last_frame', types: ['image'], max_count: 1 }] : []),
+    { role: 'reference', types: ['image'], max_count: 10 },
+    { role: 'reference', types: ['video'], max_count: 5 },
+    ...(edit ? [{ role: 'source', types: ['video'], max_count: 1 }] : []),
+  ];
+}
 
 /** Kling Omni's edit as the docs give it, for descriptors that do not list `operations` yet. */
 const KLING_OMNI_EDIT: CapabilityOperation = {
@@ -274,6 +349,7 @@ const KLING_OMNI_EDIT: CapabilityOperation = {
 export function editOperation(cap: CapabilityDescriptor | undefined): CapabilityOperation | undefined {
   if (!cap || cap.type !== 'video') return undefined;
   if (cap.operations?.[EDIT_OPERATION]) return cap.operations[EDIT_OPERATION];
+  if (isKling4(cap) && cap.operations === undefined) return { references: kling4References(cap, true) };
   return cap.operations === undefined && isKlingOmni(cap) ? KLING_OMNI_EDIT : undefined;
 }
 
@@ -291,17 +367,57 @@ function mergeOptionSchemas(base: CapabilityParam | undefined, extra: Capability
 /**
  * The descriptor as it applies to `mode`. Editing a video follows the edit operation's
  * declarations over the model's own (its sound is `kling.audio`, never `generate_audio`);
- * every other mode is the descriptor itself.
+ * ordinary Kling generation can also declare its options under `operations.generate`.
  */
 export function modeCapability(cap: CapabilityDescriptor | undefined, mode: VideoTaskMode | undefined): CapabilityDescriptor | undefined {
   const edit = mode === 'video_edit' ? editOperation(cap) : undefined;
-  if (!cap || !edit) return cap;
+  if (!cap) return undefined;
+  if (mode === 'motion_control') {
+    const motion = motionOperation(cap);
+    if (!motion) return undefined;
+    const schema = mergeOptionSchemas(cap.provider_options_schema, motion.provider_options_schema);
+    const kling = schema?.properties?.kling;
+    const { multi_shot: _multi, ...properties } = kling?.properties ?? {};
+    const { aspect_ratio: _ratio, duration: _duration, generate_audio: _audio, ...parameters } = { ...motion.parameters, ...KLING_MOTION.parameters };
+    return { ...cap, parameters, references: motion.references ?? KLING_MOTION.references,
+      provider_options_schema: { type: 'object', properties: { kling: { type: 'object', properties } } } };
+  }
+  if (isKling4(cap)) {
+    const generate = cap.operations?.generate;
+    const op = edit ?? generate;
+    const { generate_audio: _audio, ...parameters } = { ...cap.parameters, ...op?.parameters };
+    let schema = mergeOptionSchemas(cap.provider_options_schema, op?.provider_options_schema);
+    const kling = schema?.properties?.kling;
+    const { audio: _oldAudio, multi_shot: _multiShot, ...remainingKling } = kling?.properties ?? {};
+    const usesOmniAudio = mode === 'all_modal' || mode === 'video_edit';
+    schema = { ...schema, type: 'object', properties: { ...schema?.properties, kling: {
+      ...kling, type: 'object', properties: { ...remainingKling, ...(usesOmniAudio ? { audio: { type: 'string', enum: ['native', 'original'] } } : {}) },
+    } } };
+    const flash = cap.id === 'kling-4.0-flash';
+    parameters.resolution = { type: 'string', enum: flash ? ['720p'] : ['720p', '1080p'], default: flash ? '720p' : '1080p' };
+    parameters.duration = { type: 'integer', minimum: 3, maximum: flash ? 20 : 30 };
+    if (mode === 'text_to_video') parameters.aspect_ratio = { type: 'string', enum: ['21:9', '16:9', '9:16', '1:1', '4:3', '3:4'] };
+    if (mode === 'all_modal' || mode === 'video_edit') parameters.aspect_ratio = { type: 'string', enum: ['adaptive', '21:9', '16:9', '9:16', '1:1', '4:3', '3:4'] };
+    return { ...cap, parameters, references: op?.references ?? (edit ? kling4References(cap, true) : cap.references ?? kling4References(cap, false)), provider_options_schema: schema };
+  }
+  if (!edit) {
+    const generate = cap.operations?.generate?.provider_options_schema;
+    return generate && mode !== 'video_edit' && supportsKlingMultiShot(cap)
+      ? { ...cap, provider_options_schema: mergeOptionSchemas(cap.provider_options_schema, generate) }
+      : cap;
+  }
+  let scheme = mergeOptionSchemas(cap.provider_options_schema, edit.provider_options_schema);
+  const kling = scheme?.properties?.kling;
+  if (kling && scheme?.properties) {
+    const { multi_shot: _multiShot, ...properties } = kling.properties ?? {};
+    scheme = { ...scheme, properties: { ...scheme.properties, kling: { ...kling, properties } } };
+  }
   const { generate_audio: _audio, ...parameters } = { ...cap.parameters, ...edit.parameters };
   return {
     ...cap,
     parameters,
     references: edit.references ?? cap.references,
-    provider_options_schema: mergeOptionSchemas(cap.provider_options_schema, edit.provider_options_schema),
+    provider_options_schema: scheme,
   };
 }
 
@@ -313,8 +429,10 @@ export function activeCapability(card: Pick<SpatialCard, 'provider' | 'model' | 
 /** Video modes the model's reference roles open: 全能参考 needs `reference`, 首尾帧 `first_frame`, 视频编辑 an edit operation. */
 export function capVideoModes(cap: CapabilityDescriptor | undefined): VideoTaskMode[] {
   const modes: VideoTaskMode[] = [];
-  if (slotLimit(cap, 'reference', 'image') + slotLimit(cap, 'reference', 'video') > 0) modes.push('all_modal');
-  if (slotLimit(cap, 'first_frame', 'image') > 0) modes.push('first_last_frame');
+  const generate = modeCapability(cap, 'all_modal');
+  if (slotLimit(generate, 'reference', 'image') + slotLimit(generate, 'reference', 'video') + slotLimit(generate, 'voice', 'audio') > 0) modes.push('all_modal');
+  if (slotLimit(generate, 'first_frame', 'image') > 0) modes.push('first_last_frame');
+  if (motionOperation(cap)) modes.push('motion_control');
   if (slotLimit(modeCapability(cap, 'video_edit'), EDIT_SOURCE_ROLE, 'video') > 0) modes.push('video_edit');
   modes.push('text_to_video');
   return modes;
@@ -323,6 +441,12 @@ export function capVideoModes(cap: CapabilityDescriptor | undefined): VideoTaskM
 /** How many references of `kind` a video card takes in `mode`, connected cards and assets together. */
 export function capReferenceLimit(cap: CapabilityDescriptor | undefined, mode: VideoTaskMode, kind: AssetKind): number {
   if (mode === 'text_to_video') return 0;
+  if (mode === 'motion_control') return kind === 'audio' ? 0 : slotLimit(modeCapability(cap, mode), kind === 'image' ? 'character' : 'motion', kind);
+  if (isKling4(cap)) {
+    const view = modeCapability(cap, mode);
+    if (mode === 'first_last_frame') return kind === 'image' ? Math.min(10, ['first_frame', 'middle_frame', 'last_frame'].reduce((n, role) => n + slotLimit(view, role, 'image'), 0)) : 0;
+    return kind === 'image' ? 10 : kind === 'video' ? 5 : 0;
+  }
   if (mode === 'video_edit') {
     const edit = modeCapability(cap, mode);
     return kind === 'video' ? slotLimit(edit, EDIT_SOURCE_ROLE, 'video') : kind === 'image' ? slotLimit(edit, 'reference', 'image') : 0;

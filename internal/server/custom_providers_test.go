@@ -386,3 +386,11 @@ func TestDeleteProvider_FailsPendingTasks(t *testing.T) {
 	assert.Equal(t, model.TaskStatusSucceeded, status("done").Status)
 	assert.Equal(t, model.TaskStatusQueued, status("other").Status)
 }
+
+func TestCreateHeighlinerRejectsInvalidCallbackBeforePersisting(t *testing.T) {
+	_, r := newProviderTestServer(t)
+	before := getProviders(t, r)
+	w := postJSON(r, "/api/providers", map[string]any{"protocol": "heighliner", "name": "Callback fixture", "base_url": "https://example.invalid", "extra": map[string]string{"callback_url": "http://invalid.test"}})
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	require.Len(t, getProviders(t, r), len(before))
+}

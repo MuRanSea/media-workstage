@@ -28,6 +28,7 @@ import { refreshChannels, useChannels } from '../services/channels.ts';
 import { runsMockedWithoutKey } from '../engine/channelModels.ts';
 import { isNameTaken } from '../engine/providers.ts';
 import { AddProviderPane } from './AddProviderPane.tsx';
+import { HeighlinerMediaPane } from './HeighlinerMediaPane.tsx';
 import { DesktopSettingsPane } from './DesktopSettingsPane.tsx';
 import { UploadPlatformPane } from './UploadPlatformPane.tsx';
 import { apiGetDesktop, type DesktopInfo } from '../services/desktop.ts';
@@ -442,6 +443,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               )}
 
+              {channel.protocol === 'heighliner' && current.is_configured && <HeighlinerMediaPane provider={channel.id} />}
               <section className="space-y-3">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">连接</h3>
                 <label className="block space-y-1.5">

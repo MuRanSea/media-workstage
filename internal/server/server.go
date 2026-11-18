@@ -93,7 +93,7 @@ func NewServer(
 			AssetDir: assetDir,
 		}
 		if projects != nil {
-			cfg.AssetRoot = func(task *model.MediaTask) string { return projects.AssetRoot(task.ProjectID) }
+			cfg.AssetRoot = projects.LookupAssetRoot
 		}
 		p = poller.NewTaskPoller(cfg)
 	}
@@ -209,7 +209,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  "ok",
-			"version": "0.1.0",
+			"version": "0.3.0",
 			"time":    time.Now().UTC(),
 		})
 	})
@@ -234,6 +234,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		api.GET("/tasks/events", s.handleSSEEvents)
 		s.registerProjectRoutes(api)
 		s.registerUploadRoutes(api)
+		s.registerMediaRoutes(api)
 		s.registerDesktopRoutes(api)
 	}
 
@@ -416,6 +417,13 @@ func (s *Server) handleUpdateConfig(c *gin.Context) {
 	if strings.TrimSpace(payload.BaseURL) != "" {
 		if err := validateBaseURL(payload.BaseURL); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid base_url: " + err.Error()})
+			return
+		}
+	}
+
+	if val, ok := payload.Extra["callback_url"]; ok && spec.Protocol == model.ProtocolHeighliner {
+		if err := adapter.ValidateMediaCallbackURL(strings.TrimSpace(val)); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 	}
@@ -750,7 +758,7 @@ func (s *Server) textRunImages(projectID string, refs []model.ReferenceItem) ([]
 		if err != nil {
 			return nil, errors.New("Unknown project: " + projectID)
 		}
-		if err := resolveProjectReferences(projectDir, refs); err != nil {
+		if err := s.resolveProjectReferences(projectID, projectDir, refs); err != nil {
 			return nil, err
 		}
 	}
@@ -775,11 +783,11 @@ func (s *Server) textRunImages(projectID string, refs []model.ReferenceItem) ([]
 }
 
 type CreateTaskPayload struct {
-	ProjectID       string                 `json:"project_id"`
-	Provider        string                 `json:"provider" binding:"required"`
-	Model           string                 `json:"model" binding:"required"`
-	TaskType        string                 `json:"task_type" binding:"required"`
-	TaskMode        string                 `json:"task_mode"`
+	ProjectID string `json:"project_id"`
+	Provider  string `json:"provider" binding:"required"`
+	Model     string `json:"model" binding:"required"`
+	TaskType  string `json:"task_type" binding:"required"`
+	TaskMode  string `json:"task_mode"`
 	// Prompt is required except on Heighliner, where 3D from images and Seedance from
 	// references alone run without one (the gateway validates the combination).
 	Prompt          string                 `json:"prompt"`
@@ -811,7 +819,7 @@ func (s *Server) handleCreateTask(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown project: " + payload.ProjectID})
 			return
 		}
-		if err := resolveProjectReferences(projectDir, payload.ReferenceAssets); err != nil {
+		if err := s.resolveProjectReferences(payload.ProjectID, projectDir, payload.ReferenceAssets); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}

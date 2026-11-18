@@ -55,7 +55,7 @@ export function createCard(type: CardType, at: Point, cards: SpatialCard[], medi
   };
   if (type === 'upload') {
     const tagIndex = nextTagIndex(cards);
-    const title = `${mediaKind === 'video' ? '上传视频' : '上传图片'} ${tagIndex}`;
+    const title = `${{ video: '上传视频', image: '上传图片', audio: '上传音频' }[mediaKind]} ${tagIndex}`;
     return { ...common, role: 'result', tagIndex, title, model: '', mediaKind };
   }
   if (type === 'image') {

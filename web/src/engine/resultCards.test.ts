@@ -557,6 +557,25 @@ describe('multi-output tasks', () => {
     expect(results(cards)[0].outputAssets?.map((a) => a.kind)).toEqual(['video']);
   });
 
+  it('keeps a partial delivery warning without treating a returned last frame as the video', () => {
+    const g: SpatialCard = { ...createCard('video', { x: 0, y: 0 }, []), id: 'v1' };
+    const pending = addPendingResult([g], g, task({ task_type: 'video_generation' }));
+    const frame = asset('task-1', 0, 'image_frame');
+    const [partial] = results(applyTaskToCards(pending, task({
+      status: 'succeeded', delivery_status: 'partial', delivery_message: '平台已生成，但只保存了尾帧', assets: [frame],
+    })));
+    expect(partial).toMatchObject({ status: 'succeeded', errorMessage: '平台已生成，但只保存了尾帧', outputAssets: [frame] });
+    expect(partial.resultUrl).toBeUndefined();
+
+    const video = { ...asset('task-1', 1, 'video'), local_path: 'videos/task-1/output.mp4' };
+    const [complete] = results(applyTaskToCards(pending, task({
+      status: 'succeeded', delivery_status: 'complete', assets: [frame, video],
+    })));
+    expect(complete.resultUrl).toBe('/assets/videos/task-1/output.mp4');
+    expect(complete.outputAssets).toHaveLength(2);
+    expect(complete.errorMessage).toBeUndefined();
+  });
+
   it('gives every extra card the task, source, snapshot and a consecutive tag', () => {
     const pending = pendingLayered();
     const cards = applyTaskToCards(pending, task({ status: 'succeeded', assets: layered('task-1', 3) }));
@@ -625,4 +644,65 @@ describe('multi-output tasks', () => {
     expect(new Set(heights).size).toBe(4);
     expect(heights[1]).toBeLessThan(heights[0]);
   });
+});
+
+describe('versioned Heighliner result receipts', () => {
+  it('renders Nano parts in document order, preserving index zero, empty text and missing files', () => {
+    const g = gen();
+    const output = addPendingResult([g], g, task({
+      status: 'succeeded', delivery_status: 'partial', result_version: 1,
+      contents: [{ candidate_index: 0, parts: [
+        { type: 'text', text: '' }, { type: 'image', artifact_index: 0 },
+        { type: 'text', text: '参考说明' }, { type: 'image', artifact_index: 8 }, { type: 'image', artifact_index: 2 },
+      ] }],
+      assets: [{ ...base('task-1', 'images/two.png'), asset_index: 2 }, base('task-1', 'images/zero.png')],
+    }));
+    const cards = results(output);
+    expect(cards.map((c) => c.type)).toEqual(['text', 'image', 'text', 'image', 'image']);
+    expect(cards[0].textOutput).toBe('');
+    expect(cards[1].resultUrl).toContain('zero.png');
+    expect(cards[2].textOutput).toBe('参考说明');
+    expect(cards[3].resultUrl).toBeUndefined();
+    expect(cards[3].errorMessage).toBeTruthy();
+    expect(cards[4].resultUrl).toContain('two.png');
+    const latest = applyTaskToCards(output, task({ status: 'failed', billing_details_json: '{"status":"settled","amount":"0.000000"}' }));
+    expect(results(latest).every((c) => c.status === 'succeeded' && c.billingDetailsJson?.includes('0.000000'))).toBe(true);
+    expect(results(latest)[1].resultUrl).toBe(cards[1].resultUrl);
+  });
+
+  it('keeps cover, tail frame and both video variants; always prefers the local original', () => {
+    const g = gen({ type: 'video' });
+    const media = results(addPendingResult([g], g, task({
+      status: 'succeeded', delivery_status: 'complete', assets: [
+        { ...base('task-1', 'videos/watermarked.mp4'), asset_index: 0, kind: 'video', variant: 'watermarked' },
+        { ...base('task-1', 'videos/cover.png'), asset_index: 1, kind: 'cover' },
+        { ...base('task-1', 'videos/original.mp4'), asset_index: 2, kind: 'video', variant: 'original', duration_seconds: '8.333' },
+        { ...base('task-1', 'videos/last.png'), asset_index: 3, kind: 'image_frame' },
+      ],
+    })));
+    expect(media).toHaveLength(1);
+    expect(media[0].resultUrl).toContain('original.mp4');
+    expect(media[0].outputAssets).toHaveLength(4);
+    expect(media[0].outputAssets?.[2].duration_seconds).toBe('8.333');
+  });
+});
+
+it('retains Nano candidate boundaries and does not persist unrelated recovery snapshots on every card', () => {
+  const g = gen();
+  const finished = task({ status:'succeeded', result_version:1, contents:[0,1].map(i=>({candidate_index:i,parts:[{type:'text',text:`candidate ${i}`}]})), billing_details_json: JSON.stringify({poll_result:{url:'base64:fixture'}}) });
+  const cards = results(addPendingResult([g],g,finished));
+  expect(cards.map(c=>c.mediaPart)).toEqual([0,1].map(candidateIndex=>({version:1,candidateIndex,partIndex:0})));
+  expect(cards.every(c=>c.billingDetailsJson===undefined)).toBe(true);
+  const settled = applyTaskToCards(cards, {...finished, billing_details_json:'{"status":"settled","amount":"1","poll_result":"not billing"}'});
+  const late = applyTaskToCards(settled, {...finished, billing_details_json:'{"status":"reserved"}'});
+  expect(late.every(c=>c.billingDetailsJson==='{"status":"settled","amount":"1"}')).toBe(true);
+});
+
+it('updates billing on surviving Nano parts without restoring the removed first card', () => {
+  const g = gen();
+  const done = task({ status:'succeeded', result_version:1, contents:[{candidate_index:0,parts:[{type:'text',text:'a'},{type:'text',text:'b'}]}],billing_details_json:'{"status":"reserved"}' });
+  const remaining = results(addPendingResult([g],g,done)).slice(1);
+  const next = applyTaskToCards(remaining, {...done,billing_details_json:'{"status":"settled"}'});
+  expect(next).toHaveLength(1);
+  expect(next[0]).toMatchObject({id:remaining[0].id,billingDetailsJson:'{"status":"settled"}'});
 });

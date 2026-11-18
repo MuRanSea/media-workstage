@@ -1,3 +1,4 @@
+import { isKling4 } from './heighlinerRules.ts';
 import {
   IMAGE_MODELS,
   MJ_SPEED_LABELS,
@@ -22,6 +23,8 @@ import {
   capAssetKinds,
   capReferenceLimit,
   capValuesPatch,
+  explicitVideoParams,
+  modeCapability,
   capVideoDef,
   capVideoModes,
   cardCapability,
@@ -222,18 +225,20 @@ function capModePatch(card: SpatialCard, cap: CapabilityDescriptor | undefined, 
     kept = [];
   } else if (mode === 'first_last_frame') {
     kept = refs
-      .filter((r) => r.role !== 'reference_video')
+      .filter((r) => r.role !== 'reference_video' && r.role !== 'reference_audio')
       .slice(0, capReferenceLimit(cap, mode, 'image'))
-      .map((r, i) => ({ ...r, role: i === 0 ? 'first_frame' : 'last_frame' }));
+      .map((r, i, frames) => ({ ...r, role: i === 0 ? 'first_frame' : 'last_frame',
+        view: card.mode === mode && r.view ? r.view : isKling4(cap) ? (i === 0 ? 'first_frame' : i === frames.length - 1 ? 'last_frame' : 'middle_frame') : undefined }));
   } else {
     // Asset-library items only go in multi-reference mode.
     const assets = mode === 'all_modal' ? card.assetRefs ?? [] : [];
     const room = (kind: AssetKind) => Math.max(0, capReferenceLimit(cap, mode, kind) - assets.filter((a) => a.kind === kind).length);
-    const images = refs.filter((r) => r.role !== 'reference_video').slice(0, room('image'));
+    const images = refs.filter((r) => r.role !== 'reference_video' && r.role !== 'reference_audio').slice(0, room('image'));
+    const audio = refs.filter((r) => r.role === 'reference_audio').slice(0, room('audio'));
     const videos = refs.filter((r) => r.role === 'reference_video').slice(0, room('video'));
     kept = refs
-      .filter((r) => images.includes(r) || videos.includes(r))
-      .map((r) => ({ ...r, role: r.role === 'reference_video' ? r.role : 'reference_image' }));
+      .filter((r) => images.includes(r) || videos.includes(r) || audio.includes(r))
+      .map((r) => ({ ...r, view: card.mode === mode && isKling4(cap) ? r.view : undefined, role: r.role === 'reference_video' || r.role === 'reference_audio' ? r.role : 'reference_image' }));
   }
   let prompt = card.prompt;
   if (mode !== 'text_to_video') {
@@ -250,7 +255,7 @@ export function videoModePatch(
   ratio = card.ratio
 ): Partial<SpatialCard> {
   if (protocolOf(card.provider) === 'heighliner') return capModePatch(card, cardCapability(card), mode);
-  let references = (card.references ?? []).slice(0, maxRefs);
+  let references = (card.references ?? []).filter((r) => r.role !== 'reference_audio').slice(0, maxRefs);
   let nextRatio = ratio;
   if (mode === 'text_to_video') {
     references = [];
@@ -266,20 +271,6 @@ export function videoModePatch(
   return { mode, ratio: nextRatio, references };
 }
 
-/** A model that cannot take reference videos loses the ones already attached (with their prompt tags). */
-function dropUnsupportedVideoRefs(card: SpatialCard, option: ModelOption): Partial<SpatialCard> {
-  const limit = maxReferenceVideos(option.protocol, option.id);
-  const videos = (card.references ?? []).filter((r) => r.role === 'reference_video');
-  if (videos.length <= limit) return {};
-  const kept = videos.slice(0, limit);
-  let prompt = card.prompt;
-  for (const dropped of videos.slice(limit)) {
-    prompt = withoutRefTag(prompt, dropped);
-  }
-  const base = videoModePatch(card, card.mode ?? 'all_modal', Infinity).references ?? [];
-  return { prompt, references: base.filter((r) => r.role !== 'reference_video' || kept.some((k) => k.cardId === r.cardId)) };
-}
-
 /**
  * Switching a video card's model resets resolution and duration to what the model
  * supports, and moves to a mode it accepts (keeping attached images as frames when possible).
@@ -293,13 +284,17 @@ export function videoModelPatch(card: SpatialCard, option: ModelOption): Partial
     const preferred: VideoTaskMode = (card.references?.length ?? 0) > 0 ? 'first_last_frame' : 'text_to_video';
     mode = def.modes.includes(preferred) ? preferred : def.modes[0];
   }
+  const videoLimit = maxReferenceVideos(option.protocol, option.id);
+  let videos = 0;
+  const references = (card.references ?? []).filter(r => r.role !== 'reference_audio' && (r.role !== 'reference_video' || ++videos <= videoLimit));
+  const prompt = (card.references ?? []).filter(r => !references.includes(r)).reduce((p,r) => withoutRefTag(p,r),card.prompt);
   const patch: Partial<SpatialCard> = {
     provider: option.provider,
     model: option.id,
+    prompt,
     resolution: def.resolutions[0],
     duration: def.durations.includes(5) ? 5 : def.durations[0],
-    ...videoModePatch(card, mode, def.maxRefs, def.ratios[0]),
-    ...dropUnsupportedVideoRefs(card, option),
+    ...videoModePatch({ ...card, provider: option.provider, model:option.id, prompt, references }, mode, def.maxRefs, def.ratios[0]),
   };
   // Asset-library items are Seedance's; keep what still fits the new model.
   patch.assetRefs = option.protocol === 'ark' ? fitAssetRefs({ ...card, ...patch }, def) : undefined;
@@ -323,7 +318,8 @@ function capVideoModelPatch(card: SpatialCard, option: ModelOption): Partial<Spa
     provider: option.provider,
     model: option.id,
     videoReferType: undefined,
-    ...capValuesPatch(cap, card),
+    capInputVersion: 1,
+    ...capValuesPatch(modeCapability(cap,mode), { ...card, capParams: explicitVideoParams(card) }),
     ...capModePatch(next, cap, mode),
   };
   patch.assetRefs = mode === 'all_modal' ? fitAssetRefs({ ...next, ...patch }, capVideoDef(cap, option.id)) : assetRefs;
@@ -354,6 +350,7 @@ export const VIDEO_MODE_LABELS: Record<VideoTaskMode, { label: string; hint: str
   all_modal: { label: '多图参考', hint: '引用多张图片，在提示词里用 @图N 说明各自用途' },
   first_last_frame: { label: '首尾帧', hint: '第 1 张作为首帧，第 2 张（可选）作为尾帧，比例跟随首帧' },
   text_to_video: { label: '纯文字', hint: '只根据提示词生成，不使用参考图' },
+  motion_control: { label: '动作控制', hint: '连入一张人物图与一段动作视频，在高级设置里选择人物朝向' },
   video_edit: { label: '视频编辑', hint: '连入 1 段要编辑的视频，按提示词修改画面（最多再带 4 张参考图），时长和比例以原视频为准' },
 };
 
@@ -399,7 +396,8 @@ export function kindLimit(card: SpatialCard, kind: AssetKind, def = videoModelDe
 function connectedCounts(card: SpatialCard): Record<AssetKind, number> {
   const refs = card.references ?? [];
   const videos = refs.filter((r) => r.role === 'reference_video').length;
-  return { image: refs.length - videos, video: videos, audio: 0 };
+  const audio = refs.filter((r) => r.role === 'reference_audio').length;
+  return { image: refs.length - videos - audio, video: videos, audio };
 }
 
 /** References of `kind` the card sends: connected cards plus asset-library items. */

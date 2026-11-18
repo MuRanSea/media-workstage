@@ -5,6 +5,7 @@ import { mentionsTag, refTag, withoutRefTag } from './refTags.ts';
 import { MJ_MAX_REFERENCES, isMidjourney } from './midjourney.ts';
 import { capReferenceLimit, capVideoModes, cardCapability, isHeighliner, slotLimit } from './capability.ts';
 import { nextView, viewLabel } from './model3d.ts';
+import { isKling4 } from './heighlinerRules.ts';
 import { seedreamMaxReferences } from './cardParams.ts';
 
 export type ConnectResult =
@@ -49,6 +50,19 @@ export function connectCards(source: SpatialCard, target: SpatialCard): ConnectR
     return { ok: true, patch: { promptSourceId: source.id } };
   }
 
+  if (source.gatewayFile && target.provider !== source.gatewayFile.provider) return { ok: false, reason: '平台文件只能连接到同一网关服务商下的模型' };
+  if (source.type === 'upload' && source.mediaKind === 'audio') {
+    if (target.type !== 'video' || !isHeighliner(target.provider)) return { ok: false, reason: '音频只能连接到支持音频引用的 Heighliner 视频卡片' };
+    const refs = target.references ?? [];
+    if (refs.some((r) => r.cardId === source.id)) return { ok: false, reason: '已经连接过了' };
+    if (target.mode && target.mode !== 'all_modal' && target.mode !== 'text_to_video') return { ok: false, reason: '参考音频请先切换到「多图参考」' };
+    const limit = capReferenceLimit(cardCapability(target), 'all_modal', 'audio');
+    const used = refs.filter((ref) => ref.role === 'reference_audio').length + (target.assetRefs ?? []).filter((ref) => ref.kind === 'audio').length;
+    if (!limit || used >= limit) return { ok: false, reason: limit ? `最多 ${limit} 段参考音频` : '当前模型不支持参考音频' };
+    const ref = taggedRef(source, 'reference_audio');
+    if ('ok' in ref) return ref;
+    return { ok: true, patch: { mode: 'all_modal', references: [...refs, ref] } };
+  }
   const isImage = source.type === 'image' || (source.type === 'upload' && source.mediaKind !== 'video');
   if (target.type === 'text') {
     if (!isImage) return { ok: false, reason: '文本卡片只接收图片，不接收视频' };
@@ -224,7 +238,7 @@ function imagesUsed(video: SpatialCard, mode: NonNullable<SpatialCard['mode']>):
   const refs = video.references ?? [];
   if (mode === 'first_last_frame') return refs.length;
   const assets = mode === 'all_modal' ? (video.assetRefs ?? []).filter((a) => a.kind === 'image').length : 0;
-  return refs.filter((r) => r.role !== 'reference_video').length + assets;
+  return refs.filter((r) => r.role !== 'reference_video' && r.role !== 'reference_audio').length + assets;
 }
 
 function attachImageToCapVideo(image: SpatialCard, video: SpatialCard): ConnectResult {
@@ -246,15 +260,22 @@ function attachImageToCapVideo(image: SpatialCard, video: SpatialCard): ConnectR
     mode === 'first_last_frame' ? (refs.length === 0 ? 'first_frame' : 'last_frame') : 'reference_image';
   const ref = taggedRef(image, role);
   if ('ok' in ref) return ref;
-  return { ok: true, patch: { mode, prompt: withTag(video.prompt, ref), references: [...refs, ref] } };
+  const nextRefs = [...refs, ref];
+  if (isKling4(cap) && mode === 'first_last_frame') {
+    ref.view = refs.length === 0 ? 'first_frame' : refs.length === 1 ? 'last_frame' : 'middle_frame';
+    const tail = nextRefs.findIndex((r) => r.view === 'last_frame' || (r !== ref && r.role === 'last_frame' && !r.view));
+    if (ref.view === 'middle_frame' && tail >= 0) nextRefs.splice(tail, 0, nextRefs.pop()!);
+  }
+  return { ok: true, patch: { mode, prompt: withTag(video.prompt, ref), references: nextRefs } };
 }
 
 function attachVideoToCapVideo(clip: SpatialCard, video: SpatialCard): ConnectResult {
   const refs = video.references ?? [];
   const cap = cardCapability(video);
   // Editing a video: the clip is the one to edit, and the card stays in its mode.
-  if (video.mode === 'video_edit' && capVideoModes(cap).includes('video_edit')) {
-    if (refs.some((r) => r.role === 'reference_video')) return { ok: false, reason: '视频编辑只能连入 1 段要编辑的视频，请先移除已连入的视频' };
+  if (video.mode && ['video_edit', 'motion_control'].includes(video.mode) && capVideoModes(cap).includes(video.mode)) {
+    const used = refs.filter((r) => r.role === 'reference_video').length;
+    if (used >= capReferenceLimit(cap, video.mode, 'video')) return { ok: false, reason: video.mode === 'video_edit' && !isKling4(cap) ? '视频编辑只能连入 1 段待编辑视频' : '已达到当前模式的参考视频上限' };
     const ref = taggedRef(clip, 'reference_video');
     if ('ok' in ref) return ref;
     return { ok: true, patch: { prompt: withTag(video.prompt, ref), references: [...refs, ref] } };

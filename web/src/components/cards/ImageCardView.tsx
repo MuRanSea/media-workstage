@@ -224,6 +224,7 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
         <StatusChip status={card.status} />
         {isGenerating && <GeneratingOverlay progress={card.progress} />}
       </MediaFrame>
+      {card.outputAssets?.[0]?.provider_metadata_json && <LayerInfo asset={card.outputAssets[0]} />}
 
       <SummaryRow model={modelLabel} spec={imageSizeSummary(card)} />
 
@@ -237,3 +238,15 @@ export const ImageCardView: React.FC<ImageCardViewProps> = ({
     </CardShell>
   );
 };
+
+function LayerInfo({ asset }: { asset: NonNullable<import('../../types/canvas.ts').SpatialCard['outputAssets']>[number] }) {
+  let meta: { z_index?: number; text_recognition?: unknown } | undefined;
+  try { meta = JSON.parse(asset.provider_metadata_json ?? '{}')?.volcengine; } catch { return null; }
+  if (!meta || meta.z_index === undefined) return null;
+  return <details className="text-[11px] text-slate-400">
+    <summary className="cursor-pointer">{meta.z_index === 0 ? '底图' : `图层 ${meta.z_index}`} {asset.name}</summary>
+    {asset.description && <div className="break-words">{asset.description}</div>}
+    {asset.bounding_box_json && <div className="break-words">边界框：{asset.bounding_box_json}</div>}
+    {meta.text_recognition != null && <pre className="max-h-32 overflow-auto whitespace-pre-wrap select-text">OCR：{JSON.stringify(meta.text_recognition, null, 2)}</pre>}
+  </details>;
+}

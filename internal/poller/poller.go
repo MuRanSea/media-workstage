@@ -26,7 +26,7 @@ type TaskPollerConfig struct {
 	AssetDir string
 	// AssetRoot, when set, picks the download root per task (a project's assets
 	// folder). An empty result falls back to AssetDir.
-	AssetRoot         func(task *model.MediaTask) string
+	AssetRoot         func(projectID string) (string, error)
 	Limiter           *IPMLimiter
 	Broadcaster       EventBroadcaster
 	ImagePollInterval time.Duration
@@ -40,12 +40,18 @@ type TaskPollerConfig struct {
 	ConcurrencyWorkers int
 }
 
+type taskWorker struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
 // TaskPoller manages background task execution, polling, rate limiting, and asset persistence.
 type TaskPoller struct {
+	wakeups           sync.Map // task ID -> buffered wake signal for an active worker
 	db                *gorm.DB
 	registry          *adapter.AdapterRegistry
 	assetDir          string
-	assetRoot         func(task *model.MediaTask) string
+	assetRoot         func(projectID string) (string, error)
 	limiter           *IPMLimiter
 	broadcaster       EventBroadcaster
 	imagePollInterval time.Duration
@@ -58,7 +64,7 @@ type TaskPoller struct {
 	// holds its slot for minutes). Polling holds none, since a video may poll for days.
 	submitSlots     chan struct{}
 	taskQueue       chan string
-	activeTasks     sync.Map // map[string]context.CancelFunc
+	activeTasks     sync.Map // map[string]*taskWorker
 	cancelWorkerCtx context.CancelFunc
 	workerWg        sync.WaitGroup
 }
@@ -170,6 +176,9 @@ func (p *TaskPoller) Start(ctx context.Context) {
 	p.workerWg.Add(1)
 	go p.dispatchLoop(workerCtx)
 
+	p.workerWg.Add(1)
+	go p.runBillingChecks(workerCtx)
+
 	// Startup Recovery: resume uncompleted tasks from SQLite
 	p.StartRecovery(workerCtx)
 }
@@ -180,6 +189,18 @@ func (p *TaskPoller) Stop() {
 		p.cancelWorkerCtx()
 	}
 	p.workerWg.Wait()
+}
+
+// WakeTask requests a query of the original task, not another submission.
+func (p *TaskPoller) WakeTask(id string) bool {
+	if raw, ok := p.wakeups.Load(id); ok {
+		select {
+		case raw.(chan struct{}) <- struct{}{}:
+		default:
+		}
+		return true
+	}
+	return false
 }
 
 // StartRecovery scans SQLite for tasks in 'queued' or 'running' state and re-enqueues them.
@@ -228,17 +249,22 @@ func (p *TaskPoller) dispatchLoop(ctx context.Context) {
 func (p *TaskPoller) ProcessTask(ctx context.Context, taskID string) {
 	// Guard against duplicate processing of the same task concurrently
 	taskCtx, cancel := context.WithCancel(ctx)
-	if _, loaded := p.activeTasks.LoadOrStore(taskID, cancel); loaded {
+	worker := &taskWorker{cancel: cancel, done: make(chan struct{})}
+	if _, loaded := p.activeTasks.LoadOrStore(taskID, worker); loaded {
 		cancel()
 		return
 	}
 	defer func() {
-		p.activeTasks.Delete(taskID)
 		cancel()
+		p.activeTasks.CompareAndDelete(taskID, worker)
+		close(worker.done)
 	}()
 
+	wake := make(chan struct{}, 1)
+	p.wakeups.Store(taskID, wake)
+	defer p.wakeups.Delete(taskID)
 	var task model.MediaTask
-	if err := p.db.First(&task, "id = ?", taskID).Error; err != nil {
+	if err := p.db.Preload("Assets").First(&task, "id = ?", taskID).Error; err != nil {
 		log.Printf("[TaskPoller] Task %s not found in DB: %v", taskID, err)
 		return
 	}
@@ -251,7 +277,13 @@ func (p *TaskPoller) ProcessTask(ctx context.Context, taskID string) {
 
 	provAdapter, ok := p.registry.GetForTask(task.Provider, task.ProviderTaskID)
 	if !ok {
-		p.failTask(taskCtx, &task, "UnsupportedProvider", fmt.Sprintf("服务商 %s 未配置 API Key 或尚未接入生成，请在设置中检查", task.Provider))
+		reason := fmt.Sprintf("服务商 %s 未配置 API Key 或尚未接入生成，请在设置中检查", task.Provider)
+		if task.DeliveryStatus == model.DeliveryPending {
+			delivery := mediaDeliverySession{}
+			delivery.finish(p, &task, reason)
+		} else {
+			p.failTask(taskCtx, &task, "UnsupportedProvider", reason)
+		}
 		return
 	}
 
@@ -332,43 +364,92 @@ func (p *TaskPoller) ProcessTask(ctx context.Context, taskID string) {
 	if earliest := time.Now().Add(initDelay + pollInterval); deadline.Before(earliest) {
 		deadline = earliest
 	}
+	// A remote success starts a separate bounded window for file transfer, including on recovery.
+	const deliveryWindow = 30 * time.Minute
+	delivering := task.DeliveryStatus == model.DeliveryPending
+	if delivering {
+		if task.DeliveryStartedAt == nil {
+			// Older pending records already carry the time of the saved success.
+			origin := task.UpdatedAt
+			if origin.IsZero() {
+				origin = time.Now().UTC()
+			}
+			task.DeliveryStartedAt = &origin
+			if err := p.db.Model(&task).UpdateColumn("delivery_started_at", origin).Error; err != nil {
+				log.Printf("could not restore delivery deadline: %v", err)
+				return
+			}
+		}
+		deadline = task.DeliveryStartedAt.Add(deliveryWindow)
+	}
 	pollCtx, pollCancel := context.WithDeadline(taskCtx, deadline)
 	defer pollCancel()
 
 	// Initial delay before first poll
 	select {
 	case <-pollCtx.Done():
+		if delivering && taskCtx.Err() == nil {
+			new(mediaDeliverySession).finish(p, &task, "等待文件交付超时")
+			return
+		}
 		p.handlePollEnd(taskCtx, &task, isLayerDecomp)
 		return
 	case <-time.After(initDelay):
+	case <-wake:
 	}
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+	delivery := mediaDeliverySession{}
 
 	for {
 		pollResult, err := provAdapter.PollTask(pollCtx, &task)
 		if err != nil {
 			// Transient network/polling error: continue and retry on next tick
 			log.Printf("[TaskPoller] Poll error for task %s: %v (retrying)", task.ID, err)
+		} else if pollResult != nil && pollResult.Delivery != nil {
+			if !delivering {
+				pollCancel()
+				now := time.Now().UTC()
+				task.DeliveryStartedAt = &now
+				deliveryCtx, cancelDelivery := context.WithDeadline(taskCtx, now.Add(deliveryWindow))
+				defer cancelDelivery() // this transition occurs once, on confirmed remote success
+				pollCtx = deliveryCtx
+				delivering = true
+			}
+			if delivery.advance(pollCtx, p, &task, pollResult, provAdapter) {
+				return
+			}
 		} else if pollResult != nil {
 			switch pollResult.Status {
 			case model.TaskStatusRunning:
-				if pollResult.Progress > task.Progress {
-					task.Progress = pollResult.Progress
+				billingChanged := pollResult.BillingDetailsJSON != "" && pollResult.BillingDetailsJSON != task.BillingDetailsJSON
+				if pollResult.Progress > task.Progress || billingChanged {
+					task.Progress = max(task.Progress, pollResult.Progress)
+					if billingChanged {
+						task.BillingDetailsJSON = pollResult.BillingDetailsJSON
+					}
 					task.UpdatedAt = time.Now().UTC()
 					_ = p.db.Model(&task).Updates(map[string]interface{}{
-						"progress":   task.Progress,
-						"updated_at": task.UpdatedAt,
+						"progress": task.Progress, "updated_at": task.UpdatedAt,
+						"billing_details_json": task.BillingDetailsJSON,
 					})
 					p.broadcaster.Broadcast("task.progress", task)
 				}
 
 			case model.TaskStatusFailed, model.TaskStatusCancelled, model.TaskStatusExpired:
+				if task.DeliveryStatus == model.DeliveryPending {
+					// A failed re-query is not evidence that an already confirmed generation failed.
+					delivery.finish(p, &task, pollResult.ErrorMessage)
+					return
+				}
 				if isLayerDecomp {
 					p.limiter.FullRefundLayerDecomposition()
 				}
-				p.failTask(taskCtx, &task, pollResult.ErrorCode, pollResult.ErrorMessage)
+				if pollResult.BillingDetailsJSON != "" {
+					task.BillingDetailsJSON = pollResult.BillingDetailsJSON
+				}
+				p.finishUnsuccessfulTask(&task, pollResult.Status, pollResult.ErrorCode, pollResult.ErrorMessage)
 				return
 
 			case model.TaskStatusSucceeded:
@@ -380,9 +461,14 @@ func (p *TaskPoller) ProcessTask(ctx context.Context, taskID string) {
 
 		select {
 		case <-pollCtx.Done():
+			if taskCtx.Err() == nil && task.DeliveryStatus == model.DeliveryPending {
+				delivery.finish(p, &task, "等待文件交付超时")
+				return
+			}
 			p.handlePollEnd(taskCtx, &task, isLayerDecomp)
 			return
 		case <-ticker.C:
+		case <-wake:
 		}
 	}
 }
@@ -427,7 +513,7 @@ func (p *TaskPoller) submit(ctx context.Context, provAdapter adapter.ProviderAda
 // assetRootFor returns the folder a task's outputs are downloaded into.
 func (p *TaskPoller) assetRootFor(task *model.MediaTask) string {
 	if p.assetRoot != nil {
-		if root := p.assetRoot(task); root != "" {
+		if root, err := p.assetRoot(task.ProjectID); err == nil && root != "" {
 			return root
 		}
 	}
@@ -518,7 +604,13 @@ func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, r
 		}
 	}
 
-	// Update Task in DB
+	task.Assets = downloadedAssets
+	p.finishSuccessfulTask(task, res)
+	return true
+}
+
+func (p *TaskPoller) finishSuccessfulTask(task *model.MediaTask, res *adapter.PollResult) {
+	now := time.Now().UTC()
 	task.Status = model.TaskStatusSucceeded
 	task.Progress = 100
 	task.OutputDurationSec = res.OutputDurationSec
@@ -526,21 +618,25 @@ func (p *TaskPoller) handleSuccess(ctx context.Context, task *model.MediaTask, r
 	task.BillingDetailsJSON = res.BillingDetailsJSON
 	task.ResultActions = res.ResultActions
 	task.ResultText = res.Text
+	task.ResultVersion = res.ResultVersion
+	task.Contents = res.Contents
 	task.CompletedAt = &now
 	task.UpdatedAt = now
-	task.Assets = downloadedAssets
-
 	if err := p.db.Omit("Assets").Save(task).Error; err != nil {
 		log.Printf("[TaskPoller] Error updating succeeded task %s: %v", task.ID, err)
 	}
 
 	p.broadcaster.Broadcast("task.succeeded", task)
-	return true
 }
 
-func (p *TaskPoller) failTask(ctx context.Context, task *model.MediaTask, errCode, errMsg string) {
+func (p *TaskPoller) failTask(_ context.Context, task *model.MediaTask, errCode, errMsg string) {
+	p.finishUnsuccessfulTask(task, model.TaskStatusFailed, errCode, errMsg)
+}
+
+// The existing SSE event carries all unsuccessful terminal states; status is authoritative.
+func (p *TaskPoller) finishUnsuccessfulTask(task *model.MediaTask, status, errCode, errMsg string) {
 	now := time.Now().UTC()
-	task.Status = model.TaskStatusFailed
+	task.Status = status
 	task.ErrorCode = errCode
 	task.ErrorMessage = errMsg
 	task.CompletedAt = &now
@@ -559,14 +655,26 @@ func (p *TaskPoller) FailProviderTasks(provider, errCode, errMsg string) int {
 		[]string{model.TaskStatusQueued, model.TaskStatusRunning}).Find(&tasks).Error; err != nil {
 		return 0
 	}
-	for i := range tasks {
-		// Stop a worker still polling the task, or it could later overwrite the failure.
-		if cancel, ok := p.activeTasks.Load(tasks[i].ID); ok {
-			cancel.(context.CancelFunc)()
+	failed := 0
+	for _, row := range tasks {
+		if raw, ok := p.activeTasks.Load(row.ID); ok {
+			worker := raw.(*taskWorker)
+			worker.cancel()
+			<-worker.done
 		}
-		p.failTask(context.Background(), &tasks[i], errCode, errMsg)
+		// The worker may have persisted the upstream success or another receipt since the scan.
+		var task model.MediaTask
+		if p.db.Preload("Assets").Where("status IN ?", []string{model.TaskStatusQueued, model.TaskStatusRunning}).First(&task, "id = ?", row.ID).Error != nil {
+			continue
+		}
+		if task.DeliveryStatus == model.DeliveryPending {
+			new(mediaDeliverySession).finish(p, &task, errMsg)
+			continue
+		}
+		p.failTask(context.Background(), &task, errCode, errMsg)
+		failed++
 	}
-	return len(tasks)
+	return failed
 }
 
 func (p *TaskPoller) handleTimeout(ctx context.Context, task *model.MediaTask, isLayerDecomp bool) {

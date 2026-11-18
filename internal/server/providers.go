@@ -155,6 +155,7 @@ var protocolSpecs = map[model.Protocol]protocolSpec{
 		},
 		probeNeeds2xx: true,
 		listModels:    listHeighlinerModels,
+		extraKeys:     []string{"callback_url"},
 		notFoundHint:  "接口路径不存在 (HTTP 404: %s)：Base URL 请填写网关根地址，如 https://platform.sgt.site，不要带 /v1 或 /media/v1",
 	},
 }

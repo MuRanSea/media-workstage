@@ -2,7 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { AtSign, Film, Loader2, Maximize2, Plus, Sparkles, Volume2 } from 'lucide-react';
 import type { ResultActionDto, SpatialCard } from '../../types/canvas.ts';
 import { actionLabel } from '../../engine/resultCards.ts';
-import { FINAL_RESOLUTION, SAMPLE_RESOLUTION } from '../../engine/capability.ts';
+import { finalResolution, SAMPLE_RESOLUTION } from '../../engine/capability.ts';
 import {
   MISSING_PROVIDER_HINT,
   buildProviderGroups,
@@ -24,7 +24,7 @@ import { UPLOAD_REF_LABELS, mediaKindOf, offersUpload, sendsUploadedCopy, upload
 import { protocolOf } from '../../engine/providers.ts';
 import { inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { useChannels } from '../../services/channels.ts';
-import { assetUrl } from '../../engine/assetPaths.ts';
+import { assetStoredPath, assetUrl } from '../../engine/assetPaths.ts';
 import { Button } from '../ui/Button.tsx';
 import { Menu } from '../ui/Menu.tsx';
 import { InputSlot, LinkedPromptBox, OutputPort } from './CardPorts.tsx';
@@ -96,6 +96,8 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
   const canGenerate = isModelReady('video', provider, card.model);
   const isGenerating = card.status === 'running' || card.status === 'queued';
   const videoUrl = assetUrl(card.resultUrl);
+  const poster = assetUrl(assetStoredPath(card.outputAssets?.find((a) => a.kind === 'cover')));
+  const downloads = (card.outputAssets ?? []).filter((a) => a.local_path && ['video', 'image_frame', 'cover'].includes(a.kind));
   const refs = card.references ?? [];
 
   /** Same rules as dragging a line from the image card onto this one. */
@@ -151,6 +153,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
         <>
           <video
             src={videoUrl}
+            poster={poster}
             autoPlay
             loop
             muted
@@ -344,6 +347,13 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
         {player}
         {summary}
         <VideoMetaLine url={videoUrl} />
+        {downloads.length > 0 && <div className="flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-indigo-300">
+          {downloads.map((asset) => {
+            const label = asset.kind === 'cover' ? '封面' : asset.kind === 'image_frame' ? '尾帧' : asset.variant === 'watermarked' ? '带水印视频' : asset.variant === 'original' ? '原版视频' : '视频';
+            const name = asset.local_path.split(/[\\/]/).pop();
+            return <a key={asset.id} href={assetUrl(assetStoredPath(asset))} download={name} title={[asset.provider_output_id, asset.duration_seconds && `${asset.duration_seconds}秒`].filter(Boolean).join(' · ')}>{label}下载</a>;
+          })}
+        </div>}
         {card.status === 'succeeded' && !!card.resultActions?.length && onRunAction && (
           <div className="flex flex-wrap gap-1">
             {card.resultActions.map((action) => {
@@ -359,7 +369,7 @@ export const VideoCardView: React.FC<VideoCardViewProps> = ({
                   title={
                     running
                       ? `${label} 正在生成`
-                      : `用这条 ${SAMPLE_RESOLUTION} 样片生成 ${FINAL_RESOLUTION} 正式视频（新的一张结果卡，单独计费；样片 7 天内有效）`
+                      : `用这条 ${SAMPLE_RESOLUTION} 样片生成 ${finalResolution(action.id)?.replace('4k', '4K')} 正式视频（独立计费；按厂商创建时间，2026-10-28 10:00 UTC+8 前创建有效 7 天，自该时刻起创建有效 14 天）`
                   }
                   className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-slate-700 bg-slate-800/60 text-[11px] text-slate-200 hover:border-indigo-500/60 hover:text-indigo-200 disabled:opacity-50"
                 >

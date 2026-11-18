@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -29,7 +30,23 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	t.Cleanup(func() {
 		sqlDB, err := database.DB()
 		if err == nil && sqlDB != nil {
-			_ = sqlDB.Close()
+			if err := sqlDB.Close(); err != nil {
+				t.Errorf("close test database: %v", err)
+			}
+		}
+		// Windows can briefly report a non-empty directory while deleted SQLite WAL
+		// files are still pending removal. Only clean up this fixture's own directory.
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			err := os.RemoveAll(tempDir)
+			if err == nil {
+				break
+			}
+			if runtime.GOOS != "windows" || time.Now().After(deadline) {
+				t.Errorf("remove test database directory: %v", err)
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
 		}
 	})
 
@@ -905,5 +922,141 @@ func TestTaskPoller_SniffedGLBKeepsItsExtension(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, asset.LocalPath)); err != nil {
 		t.Fatalf("renamed file missing: %v", err)
+	}
+}
+
+func TestTaskPoller_KeepsProviderTerminalStatusAndBilling(t *testing.T) {
+	for _, status := range []string{model.TaskStatusCancelled, model.TaskStatusExpired, model.TaskStatusFailed} {
+		t.Run(status, func(t *testing.T) {
+			database := setupTestDB(t)
+			fake := adapter.NewFakeProviderAdapter("hl")
+			poller := NewTaskPoller(TaskPollerConfig{
+				DB: database, Adapters: map[string]adapter.ProviderAdapter{"hl": fake}, AssetDir: t.TempDir(),
+				ImagePollInterval: time.Millisecond, ImageInitialDelay: time.Millisecond,
+			})
+			task := model.MediaTask{ID: uuid.NewString(), Provider: "hl", Model: "m", TaskType: "image_generation", Status: model.TaskStatusQueued}
+			if err := database.Create(&task).Error; err != nil {
+				t.Fatal(err)
+			}
+			const billing = `{"status":"released","currency":"CNY"}`
+			fake.SetNextPollResult(task.ID, &adapter.PollResult{Status: status, ErrorCode: "remote_terminal", ErrorMessage: "gateway state", BillingDetailsJSON: billing})
+			poller.ProcessTask(context.Background(), task.ID)
+			var got model.MediaTask
+			if err := database.First(&got, "id = ?", task.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != status || got.BillingDetailsJSON != billing || got.ErrorCode != "remote_terminal" || got.CompletedAt == nil {
+				t.Fatalf("want %s with terminal billing and error, got %s / %s / %s", status, got.Status, got.BillingDetailsJSON, got.ErrorCode)
+			}
+		})
+	}
+}
+
+// The poller sees a confirmed remote success whose second artifact is not fully
+// delivered. Fresh links must not cause the first artifact to be downloaded again.
+type mediaDeliveryFixture struct {
+	*adapter.FakeProviderAdapter
+	calls         map[string]int
+	queries       int
+	submissions   int
+	cancelOnRetry context.CancelFunc
+}
+
+func (a *mediaDeliveryFixture) SubmitTask(ctx context.Context, task *model.MediaTask) (string, error) {
+	a.submissions++
+	return a.FakeProviderAdapter.SubmitTask(ctx, task)
+}
+
+func (a *mediaDeliveryFixture) PollTask(_ context.Context, _ *model.MediaTask) (*adapter.PollResult, error) {
+	a.queries++
+	return &adapter.PollResult{Status: model.TaskStatusSucceeded, Progress: 100, BillingDetailsJSON: `{"status":"settled"}`,
+		Delivery: &adapter.MediaDelivery{Expected: 2}, Assets: []model.TaskAsset{
+			{AssetIndex: 1, Kind: "image_base", RemoteURL: "good", LocalPath: "result/base.png"},
+			{AssetIndex: 2, Kind: "image_layer", RemoteURL: "bad", LocalPath: "result/layer.png"},
+		}}, nil
+}
+
+func (a *mediaDeliveryFixture) DownloadAsset(_ context.Context, remote, target string) error {
+	a.calls[remote]++
+	if remote == "bad" {
+		return fmt.Errorf("unreadable")
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(target, []byte("png"), 0644)
+}
+
+func (a *mediaDeliveryFixture) RetryDelivery(_ *model.MediaTask) bool {
+	if a.cancelOnRetry != nil {
+		a.cancelOnRetry()
+	}
+	return a.queries == 1
+}
+
+func TestTaskPoller_RecordsPartialDeliveryWithoutInventingFile(t *testing.T) {
+	database := setupTestDB(t)
+	fake := &mediaDeliveryFixture{FakeProviderAdapter: adapter.NewFakeProviderAdapter("hl"), calls: map[string]int{}}
+	poller := NewTaskPoller(TaskPollerConfig{DB: database, AssetDir: t.TempDir(), Adapters: map[string]adapter.ProviderAdapter{"hl": fake},
+		ImagePollInterval: time.Millisecond, ImageInitialDelay: time.Millisecond})
+	task := model.MediaTask{ID: uuid.NewString(), Provider: "hl", Model: "m", TaskType: "image_generation", Status: model.TaskStatusQueued}
+	if err := database.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	poller.ProcessTask(ctx, task.ID)
+	var got model.MediaTask
+	if err := database.Preload("Assets").First(&got, "id = ?", task.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != model.TaskStatusSucceeded || got.DeliveryStatus != model.DeliveryPartial || got.DeliveryMessage == "" || got.BillingDetailsJSON != `{"status":"settled"}` {
+		t.Fatalf("want generated but partially delivered with original billing, got %#v", got)
+	}
+	if len(got.Assets) != 1 || got.Assets[0].AssetIndex != 1 || got.Assets[0].DownloadedAt == nil {
+		t.Fatalf("want only the downloaded asset, got %#v", got.Assets)
+	}
+	if fake.queries != 2 || fake.calls["good"] != 1 || fake.calls["bad"] != 2 {
+		t.Fatalf("unexpected queries/downloads: %d / %v", fake.queries, fake.calls)
+	}
+}
+
+func TestTaskPoller_ResumesPendingDeliveryFromSavedReceipts(t *testing.T) {
+	database := setupTestDB(t)
+	dir := t.TempDir()
+	newWorker := func(fake *mediaDeliveryFixture) *TaskPoller {
+		return NewTaskPoller(TaskPollerConfig{DB: database, AssetDir: dir, Adapters: map[string]adapter.ProviderAdapter{"hl": fake},
+			ImagePollInterval: time.Millisecond, ImageInitialDelay: time.Millisecond})
+	}
+	task := model.MediaTask{ID: uuid.NewString(), Provider: "hl", Model: "m", TaskType: "image_generation", Status: model.TaskStatusQueued}
+	if err := database.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	ctx, stop := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stop()
+	workerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	first := &mediaDeliveryFixture{FakeProviderAdapter: adapter.NewFakeProviderAdapter("hl"), calls: map[string]int{}, cancelOnRetry: cancel}
+	newWorker(first).ProcessTask(workerCtx, task.ID)
+	load := func() model.MediaTask {
+		t.Helper()
+		var got model.MediaTask
+		if err := database.Preload("Assets").First(&got, "id = ?", task.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	pending := load()
+	if pending.Status != model.TaskStatusRunning || pending.DeliveryStatus != model.DeliveryPending || len(pending.Assets) != 1 {
+		t.Fatalf("want persisted original task and one file after shutdown, got %#v", pending)
+	}
+	resumed := &mediaDeliveryFixture{FakeProviderAdapter: adapter.NewFakeProviderAdapter("hl"), calls: map[string]int{}}
+	newWorker(resumed).ProcessTask(ctx, task.ID)
+	got := load()
+	if got.Status != model.TaskStatusSucceeded || got.DeliveryStatus != model.DeliveryPartial || got.ProviderTaskID != pending.ProviderTaskID {
+		t.Fatalf("want original generation and saved artifact after restart, got %#v", got)
+	}
+	if resumed.submissions != 0 || resumed.calls["good"] != 0 || resumed.calls["bad"] != 2 || len(got.Assets) != 1 || got.Assets[0].ID != pending.Assets[0].ID {
+		t.Fatalf("resume must only query the original generation and download the missing file: %d / %v / %#v", resumed.submissions, resumed.calls, got.Assets)
 	}
 }
