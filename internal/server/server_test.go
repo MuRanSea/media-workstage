@@ -14,6 +14,7 @@ import (
 	"media-workstage/internal/server"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -57,6 +58,15 @@ func TestServer_HealthAndConfig(t *testing.T) {
 	var healthResp map[string]interface{}
 	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &healthResp))
 	assert.Equal(t, "ok", healthResp["status"])
+	// A packaged sidecar must identify the same release as its desktop shell.
+	config, err := os.ReadFile(filepath.Join("..", "..", "src-tauri", "tauri.conf.json"))
+	require.NoError(t, err)
+	var desktop struct {
+		Version string `json:"version"`
+	}
+	require.NoError(t, json.Unmarshal(config, &desktop))
+	require.NotEmpty(t, desktop.Version)
+	assert.Equal(t, desktop.Version, healthResp["version"])
 
 	// 2. GET /api/config
 	w2 := httptest.NewRecorder()
