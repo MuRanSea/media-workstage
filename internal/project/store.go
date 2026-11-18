@@ -284,11 +284,23 @@ func (s *Store) AssetRoot(projectID string) string {
 	if projectID == "" {
 		return ""
 	}
-	dir, err := s.Dir(projectID)
-	if err != nil {
-		return ""
+	root, _ := s.LookupAssetRoot(projectID)
+	return root
+}
+
+// LookupAssetRoot distinguishes a detached project (empty root) from a failed lookup.
+func (s *Store) LookupAssetRoot(projectID string) (string, error) {
+	if projectID == "" {
+		return "", nil
 	}
-	return filepath.Join(dir, AssetsDir)
+	dir, err := s.Dir(projectID)
+	if errors.Is(err, ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, AssetsDir), nil
 }
 
 // dirLocked resolves an id, rescanning once in case the folder appeared or moved.
@@ -299,6 +311,8 @@ func (s *Store) dirLocked(id string) (string, error) {
 	if dir, ok := s.dirs[id]; ok {
 		if _, err := os.Stat(filepath.Join(dir, DocumentFile)); err == nil {
 			return dir, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
 		}
 	}
 	if _, err := s.scanLocked(); err != nil {

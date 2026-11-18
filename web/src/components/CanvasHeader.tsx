@@ -19,6 +19,7 @@ export const ADD_CARD_ITEMS = (onAdd: (type: CardType, mediaKind?: UploadKind) =
   'separator',
   { label: '上传图片', hint: '本地图片，可传素材库', icon: <Upload className="w-4 h-4 text-amber-400" />, onSelect: () => onAdd('upload', 'image') },
   { label: '上传视频', hint: '本地视频，得到素材 ID / 链接', icon: <Upload className="w-4 h-4 text-amber-400" />, onSelect: () => onAdd('upload', 'video') },
+  { label: '上传音频', hint: '用作支持音频引用的网关视频模型的参考', icon: <Upload className="w-4 h-4 text-amber-400" />, onSelect: () => onAdd('upload', 'audio') },
 ];
 
 export const CanvasHeader: React.FC<CanvasHeaderProps> = ({ onAdd, onOpenSettings, projectSlot }) => (

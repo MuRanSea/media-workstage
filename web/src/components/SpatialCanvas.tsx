@@ -15,6 +15,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
+import { cardCapability, isHeighliner } from '../engine/capability.ts';
 import type { CanvasSection, CardType, ResultActionDto, SpatialCard, UploadKind } from '../types/canvas.ts';
 import { useSpatialCanvas } from '../engine/useSpatialCanvas.ts';
 import { cardHeight, type CardMetrics } from '../engine/cardMetrics.ts';
@@ -69,6 +70,7 @@ interface SpatialCanvasProps {
   onRunAction?: (sourceId: string, action: ResultActionDto) => void;
   /** Asks Midjourney for prompts matching an image card's picture. */
   onDescribe?: (sourceId: string) => void;
+  onMediaAction?: (card: SpatialCard, action: 'cancel' | 'billing' | 'redownload') => void;
   /** Generation cards whose submit request is in flight, and `actionKey`s of result actions being submitted. */
   submittingIds?: ReadonlySet<string>;
   /** Prompt-assistant requests in flight, per generation card (not saved). */
@@ -177,6 +179,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
   onTriggerGenerate,
   onRunAction,
   onDescribe,
+  onMediaAction,
   submittingIds,
   textRuns,
   initialViewport,
@@ -592,6 +595,12 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       ...(card.role === 'generation'
         ? [{ label: '生成', icon: <Sparkles className="w-3.5 h-3.5" />, onSelect: () => onTriggerGenerate(card.id) }]
         : []),
+      ...(onMediaAction && card.role === 'result' && card.taskId && isHeighliner(card.provider) ? (
+        card.type === 'video' && card.status === 'running' && card.providerTaskId && !card.deliveryStatus && cardCapability(card)?.supports_cancel
+          ? [{ label: '请求取消生成', danger: true, onSelect: () => onMediaAction(card, 'cancel') }]
+          : ['succeeded', 'failed', 'cancelled', 'expired'].includes(card.status ?? '')
+            ? [...(card.status === 'succeeded' && (card.deliveryStatus === 'partial' || card.deliveryStatus === 'unavailable') ? [{ label: '补下载原任务文件（不重新生成）', onSelect: () => onMediaAction(card, 'redownload') }] : []), { label: '核对原任务账务', onSelect: () => onMediaAction(card, 'billing') }] : []
+      ) : []),
       // Any finished image can be described, when a Midjourney provider is configured.
       ...(describer && onDescribe && card.role === 'result' && card.status === 'succeeded' && savedImageOf(card)
         ? [{ label: 'Midjourney 反推提示词', icon: <ScanText className="w-3.5 h-3.5" />, onSelect: () => onDescribe(card.id) }]
@@ -600,7 +609,7 @@ export const SpatialCanvas: React.FC<SpatialCanvasProps> = ({
       'separator',
       { label: '删除', icon: <Trash2 className="w-3.5 h-3.5" />, hint: 'Delete', danger: true, onSelect: () => deleteCards([card.id]) },
     ],
-    [onTriggerGenerate, onDescribe, describer, duplicate, deleteCards]
+    [onTriggerGenerate, onDescribe, onMediaAction, describer, duplicate, deleteCards]
   );
 
   const { prompt } = useDialogs();

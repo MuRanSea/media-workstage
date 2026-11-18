@@ -20,10 +20,25 @@ type PollResult struct {
 	ErrorCode          string
 	ErrorMessage       string
 	Assets             []model.TaskAsset
+	// Delivery accompanies a confirmed upstream success, even if files are not ready.
+	Delivery *MediaDelivery
 	// ResultActions are the follow-ups the provider offers on this result.
 	ResultActions []model.ResultAction
 	// Text is a text result (e.g. Midjourney Describe); such a task may have no assets.
-	Text string
+	Text          string
+	ResultVersion int
+	Contents      []model.MediaContent
+}
+
+// MediaDelivery describes the complete set of relevant remote artifacts. Assets in
+// PollResult are only the currently downloadable subset; the rest may already be local.
+type MediaDelivery struct {
+	Layers   map[int]model.TaskAsset // Authoritative metadata updates independent of URL availability.
+	Expected int
+	Invalid  bool // the returned structure does not satisfy the requested output contract
+	TextOnly bool // a finished, valid text-only candidate need not contain files
+	Pending  bool
+	Message  string
 }
 
 // ProviderAdapter defines the abstraction seam for AI media generation services.
@@ -87,10 +102,11 @@ func downloadClient(client *http.Client) *http.Client {
 // ChannelConfig is the credential set shared by the image channel adapters.
 type ChannelConfig struct {
 	// ProviderID names the Provider this adapter serves; empty means the protocol's preset ID.
-	ProviderID string
-	BaseURL    string
-	APIKey     string
-	HTTPClient *http.Client
+	ProviderID  string
+	BaseURL     string
+	APIKey      string
+	HTTPClient  *http.Client
+	CallbackURL string
 }
 
 // NewProviderAdapter builds the live adapter for a Provider from its Protocol, or reports
@@ -111,6 +127,7 @@ func NewProviderAdapter(protocol model.Protocol, providerID, baseURL, apiKey str
 	case model.ProtocolMidjourney:
 		return NewMidjourneyAdapter(cfg), true
 	case model.ProtocolHeighliner:
+		cfg.CallbackURL = extra["callback_url"]
 		return NewHeighlinerAdapter(cfg), true
 	case model.ProtocolKling:
 		return NewKlingAdapter(cfg), true

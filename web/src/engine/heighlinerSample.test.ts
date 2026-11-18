@@ -12,7 +12,10 @@ import { addOriginResult, addPendingResult, snapshotOf } from './resultCards.ts'
 const descriptors = (catalog as unknown as { data: CapabilityDescriptor[] }).data;
 const HL = 'hl-1';
 const SEEDANCE_25 = 'doubao-seedance-2-5-260628';
+const FLASH = 'doubao-seedance-2-5-flash-261115';
 const SEEDANCE_20 = 'doubao-seedance-2-0-260128';
+
+descriptors.push({ ...descriptors.find((d) => d.id === SEEDANCE_25)!, id: FLASH });
 
 const providers: ProviderConfigItem[] = [
   {
@@ -66,6 +69,9 @@ const task = (patch: Partial<BackendTaskResponse> = {}): BackendTaskResponse => 
 describe('Seedance 2.5 sample (样片) cards', () => {
   it('are offered on Seedance 2.5 only', () => {
     expect(supportsSample(videoCard())).toBe(true);
+    const flash = videoCard({ model: FLASH, sampleMode: true, capParams: { resolution: '720p' } });
+    expect(supportsSample(flash)).toBe(false);
+    expect(JSON.stringify(compileCardVideoPayload(flash).params)).not.toContain('draft');
     expect(supportsSample(videoCard({ model: 'kling-3.0' }))).toBe(false);
     expect(supportsSample(videoCard({ provider: 'ark' }))).toBe(false);
     if (descriptors.some((d) => d.id === SEEDANCE_20)) expect(supportsSample(videoCard({ model: SEEDANCE_20 }))).toBe(false);
@@ -139,6 +145,14 @@ describe('生成正式视频 from a sample', () => {
     });
     expect(payload.reference_assets).toBeUndefined();
     expect(JSON.stringify(payload.params)).not.toMatch(/duration|aspect_ratio|seed|generate_audio/);
+  });
+
+  it('uses 4k for both the final request and its Result Card', () => {
+    const action4k = { id: 'finalize_4k', label: '生成 4K 正式视频' };
+    expect(compileFinalizePayload(sample(), action4k).params).toMatchObject({ parameters: { resolution: '4k' }, action_id: action4k.id });
+    const cards = addOriginResult([sample()], sample(), { operation: 'action', label: action4k.label, actionId: action4k.id },
+      { type: 'video', provider: HL, model: SEEDANCE_25 }, task({ id: 'task-4k' }));
+    expect(cards.find((c) => c.taskId === 'task-4k')).toMatchObject({ capParams: { resolution: '4k' }, snapshot: { capParams: { resolution: '4k' } } });
   });
 
   it('needs a finished sample', () => {

@@ -24,6 +24,7 @@ import (
 const (
 	maxLocalImageBytes = 10 << 20
 	maxLocalVideoBytes = 200 << 20
+	maxLocalAudioBytes = 15 << 20
 	uploadsSubdir      = "uploads"
 )
 
@@ -31,6 +32,7 @@ const (
 var uploadExtensions = map[string]map[string]string{
 	"image": {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"},
 	"video": {".mp4": "video/mp4", ".mov": "video/quicktime"},
+	"audio": {".wav": "audio/wav", ".mp3": "audio/mpeg"},
 }
 
 func (s *Server) registerUploadRoutes(api *gin.RouterGroup) {
@@ -49,7 +51,7 @@ func (s *Server) handleLocalUpload(c *gin.Context) {
 	kind := strings.ToLower(c.PostForm("kind"))
 	exts, ok := uploadExtensions[kind]
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "kind 必须是 image 或 video"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "kind 必须是 image、video 或 audio"})
 		return
 	}
 	header, err := c.FormFile("file")
@@ -66,6 +68,9 @@ func (s *Server) handleLocalUpload(c *gin.Context) {
 	limit := int64(maxLocalImageBytes)
 	if kind == "video" {
 		limit = maxLocalVideoBytes
+	}
+	if kind == "audio" {
+		limit = maxLocalAudioBytes
 	}
 	if header.Size > limit {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("%s不能超过 %d MiB", kindLabel(kind), limit>>20)})
@@ -99,6 +104,9 @@ func (s *Server) handleLocalUpload(c *gin.Context) {
 func kindLabel(kind string) string {
 	if kind == "video" {
 		return "视频"
+	}
+	if kind == "audio" {
+		return "音频"
 	}
 	return "图片"
 }

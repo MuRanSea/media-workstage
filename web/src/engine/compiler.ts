@@ -36,6 +36,9 @@ export interface ImageCompilationInput {
 export function compileImageTaskPayload(input: ImageCompilationInput): CreateTaskPayload {
   const provider = input.provider ?? 'ark';
   if (protocolOf(provider) === 'heighliner') return compileHeighlinerImagePayload(provider, input);
+  if (input.references?.some((ref) => input.allCards?.find((c) => c.id === ref.cardId)?.gatewayFile)) {
+    throw new Error('已选用平台文件，请切回原服务商或先移除平台引用');
+  }
   if (protocolOf(provider) !== 'ark') {
     return compileChannelImagePayload(provider, input);
   }

@@ -143,6 +143,7 @@ export const PROTOCOL_META: Record<Protocol, ProtocolMeta> = {
     hint: 'Base URL 填网关根地址（不含 /v1 或 /media/v1）。获取模型列表时会同时保存每个媒体模型的能力描述，网关调整模型后重新获取即可。',
     adapterReady: true,
     runs3d: true,
+    extraFields: [{ key: 'callback_url', label: 'HTTPS 回调地址（可选）', placeholder: '公网接收端需另行配置转发至 /api/media/callbacks/<服务商ID>' }],
   },
 };
 

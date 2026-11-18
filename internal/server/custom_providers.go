@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"media-workstage/internal/adapter"
 	"media-workstage/internal/model"
 
 	"github.com/gin-gonic/gin"
@@ -102,6 +103,12 @@ func (s *Server) handleCreateProvider(c *gin.Context) {
 		return
 	}
 
+	if payload.Protocol == model.ProtocolHeighliner {
+		if err := adapter.ValidateMediaCallbackURL(strings.TrimSpace(payload.Extra["callback_url"])); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	s.providersMu.Lock()
 	defer s.providersMu.Unlock()
 

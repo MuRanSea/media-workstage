@@ -332,7 +332,7 @@ func TestHeighliner_PollKeepsWaitingWhileReconcilingOrPending(t *testing.T) {
 	assert.Equal(t, "video", res.Assets[0].Kind)
 	assert.Equal(t, "videos/vid/output.mp4", res.Assets[0].LocalPath)
 	assert.Equal(t, "image_frame", res.Assets[1].Kind)
-	assert.Equal(t, "videos/vid/last_frame.png", res.Assets[1].LocalPath)
+	assert.Equal(t, "videos/vid/last_frame_01.png", res.Assets[1].LocalPath)
 	assert.JSONEq(t, `{"status":"settled","currency":"CNY","amount":"1.200000"}`, res.BillingDetailsJSON)
 }
 
@@ -371,10 +371,10 @@ func TestHeighliner_3DTaskKeepsModelsPreviewAndCoverAndDownloadsWithoutKey(t *te
 		got = append(got, [2]string{as.Kind, as.LocalPath})
 	}
 	assert.Equal(t, [][2]string{
-		{"model3d", "models/m3/model_00.glb"},
-		{"model3d", "models/m3/model_01.fbx"},
-		{"cover", "models/m3/cover_02.png"},
-		{"video", "models/m3/preview_03.mp4"},
+		{"model3d", "models/m3/model_01.glb"},
+		{"model3d", "models/m3/model_02.fbx"},
+		{"cover", "models/m3/cover_03.png"},
+		{"video", "models/m3/preview_04.mp4"},
 	}, got, "the echoed reference image is dropped")
 	assert.Equal(t, g.srv.URL+"/media/v1/tasks/task_1/artifacts/1?expires=9&sig=b", res.Assets[0].RemoteURL)
 
@@ -382,7 +382,7 @@ func TestHeighliner_3DTaskKeepsModelsPreviewAndCoverAndDownloadsWithoutKey(t *te
 	for _, as := range res.Assets {
 		require.NoError(t, a.DownloadAsset(context.Background(), as.RemoteURL, filepath.Join(dir, as.LocalPath)))
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "models/m3/model_00.glb"))
+	data, err := os.ReadFile(filepath.Join(dir, "models/m3/model_01.glb"))
 	require.NoError(t, err)
 	assert.Equal(t, "artifact:/media/v1/tasks/task_1/artifacts/1", string(data))
 	assert.Equal(t, []string{"", "", "", ""}, g.downloads, "signed links are fetched without the key")
@@ -523,6 +523,33 @@ func TestHeighliner_FinalizeSendsOnlyDraftTaskAndOutputSettings(t *testing.T) {
 	assert.Error(t, err, "without the sample's gateway task ID there is nothing to build on")
 }
 
+func TestHeighliner_FlashRejectsSampleOptionsBeforeSubmitting(t *testing.T) {
+	g := newFakeGateway(t)
+	for _, opts := range []map[string]any{{"draft": true}, {"draft_task_id": "task_sample"}} {
+		task := &model.MediaTask{ID: "flash", TaskType: "video_generation", Model: "doubao-seedance-2-5-flash-261115",
+			ParamsJSON: paramsJSON(t, map[string]any{"provider_options": map[string]any{"volcengine": opts}})}
+		_, err := g.adapter().SubmitTask(context.Background(), task)
+		require.ErrorContains(t, err, "样片")
+	}
+	assert.Empty(t, g.submits)
+}
+
+func TestHeighliner_Finalize4KUsesItsActionResolution(t *testing.T) {
+	g := newFakeGateway(t)
+	task := &model.MediaTask{ID: "f4", Model: "doubao-seedance-2-5-260628", TaskType: "video_generation", Prompt: "ignored",
+		ParamsJSON: paramsJSON(t, map[string]any{
+			"parameters":       map[string]any{"resolution": "1080p", "output_format": "mov", "seed": 12},
+			"provider_options": map[string]any{"volcengine": map[string]any{"priority": 0, "omni_reference_task_type": "ignored"}},
+			"action_id":        "finalize_4k", "source_provider_task_id": "task_sample",
+		})}
+	_, err := g.adapter().SubmitTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{
+		"model": task.Model, "resolution": "4k", "output_format": "mov", "wait": float64(0),
+		"provider_options": map[string]any{"volcengine": map[string]any{"draft_task_id": "task_sample", "priority": float64(0)}},
+	}, g.submits[0])
+}
+
 func TestHeighliner_SucceededSampleOffersFinalize(t *testing.T) {
 	g := newFakeGateway(t)
 	a := g.adapter()
@@ -537,18 +564,21 @@ func TestHeighliner_SucceededSampleOffersFinalize(t *testing.T) {
 		_, _ = io.WriteString(w, `{"id":"task_1",`+stage+`"status":"succeeded","artifacts":[
 			{"index":0,"kind":"video","mime_type":"video/mp4","state":"available","url":"https://cdn.example.com/v.mp4"}]}`)
 	}
-	finalize := []model.ResultAction{{ID: HeighlinerActionFinalize, Label: "生成正式视频"}}
+	finalize := []model.ResultAction{
+		{ID: HeighlinerActionFinalize, Label: "生成 1080p 正式视频"},
+		{ID: "finalize_4k", Label: "生成 4K 正式视频"},
+	}
 
-	res, err := a.PollTask(context.Background(), &model.MediaTask{ID: "a", ProviderTaskID: "task_1", TaskType: "video_generation"})
+	res, err := a.PollTask(context.Background(), &model.MediaTask{ID: "a", Model: "doubao-seedance-2-5-260628", ProviderTaskID: "task_1", TaskType: "video_generation"})
 	require.NoError(t, err)
 	assert.Equal(t, finalize, res.ResultActions, "the gateway says it is a sample")
 
 	sampleParams := paramsJSON(t, map[string]any{"provider_options": map[string]any{"volcengine": map[string]any{"draft": true}}})
-	res, err = a.PollTask(context.Background(), &model.MediaTask{ID: "b", ProviderTaskID: "task_1", TaskType: "video_generation", ParamsJSON: sampleParams})
+	res, err = a.PollTask(context.Background(), &model.MediaTask{ID: "b", Model: "doubao-seedance-2-5-260628", ProviderTaskID: "task_1", TaskType: "video_generation", ParamsJSON: sampleParams})
 	require.NoError(t, err)
 	assert.Equal(t, finalize, res.ResultActions, "no stage reported: fall back to what the card asked for")
 
-	res, err = a.PollTask(context.Background(), &model.MediaTask{ID: "c", ProviderTaskID: "task_1", TaskType: "video_generation", ParamsJSON: sampleParams})
+	res, err = a.PollTask(context.Background(), &model.MediaTask{ID: "c", Model: "doubao-seedance-2-5-260628", ProviderTaskID: "task_1", TaskType: "video_generation", ParamsJSON: sampleParams})
 	require.NoError(t, err)
 	assert.Empty(t, res.ResultActions, "a final video offers no further finalize")
 }
@@ -669,7 +699,7 @@ func TestHeighliner_SucceededTaskWaitsForEveryArtifactWithinTheGrace(t *testing.
 	assert.Equal(t, "https://cdn.example.com/0", res.Assets[0].RemoteURL)
 }
 
-func TestHeighliner_SucceededTaskWithNothingReadableFailsWithItsGatewayID(t *testing.T) {
+func TestHeighliner_SucceededTaskWithNothingReadableStaysSucceededAfterGrace(t *testing.T) {
 	g := newFakeGateway(t)
 	a := g.adapter()
 	clock := time.Unix(1_800_000_000, 0)
@@ -686,10 +716,11 @@ func TestHeighliner_SucceededTaskWithNothingReadableFailsWithItsGatewayID(t *tes
 	clock = clock.Add(heighlinerDeliveryGrace)
 	res, err = a.PollTask(context.Background(), task)
 	require.NoError(t, err)
-	assert.Equal(t, model.TaskStatusFailed, res.Status)
-	assert.Equal(t, "provider_unavailable", res.ErrorCode)
-	assert.Contains(t, res.ErrorMessage, "task_lost")
-	assert.Contains(t, res.ErrorMessage, "不要重新生成")
+	assert.Equal(t, model.TaskStatusSucceeded, res.Status)
+	require.NotNil(t, res.Delivery)
+	assert.False(t, res.Delivery.Pending)
+	assert.Empty(t, res.Assets)
+	assert.Contains(t, res.Delivery.Message, "Generation succeeded")
 }
 
 func TestHeighliner_VideoKeepsItsContainerAndReturnedLastFrame(t *testing.T) {
@@ -703,9 +734,9 @@ func TestHeighliner_VideoKeepsItsContainerAndReturnedLastFrame(t *testing.T) {
 	res, err := a.PollTask(context.Background(), &model.MediaTask{ID: "mov", ProviderTaskID: "task_1", TaskType: "video_generation"})
 	require.NoError(t, err)
 	require.Len(t, res.Assets, 2)
-	assert.Equal(t, "videos/mov/output.mov", res.Assets[0].LocalPath, "a MOV is not renamed to MP4")
+	assert.Equal(t, "videos/mov/output_01.mov", res.Assets[0].LocalPath, "a MOV is not renamed to MP4")
 	assert.Equal(t, "https://cdn.example.com/v", res.ResultURL, "the video comes first, whatever its index")
-	assert.Equal(t, model.TaskAsset{AssetIndex: 1, Kind: "image_frame", Name: "last_frame.jpg",
+	assert.Equal(t, model.TaskAsset{AssetIndex: 0, Kind: "image_frame", Name: "last_frame.jpg",
 		RemoteURL: "https://cdn.example.com/last", LocalPath: "videos/mov/last_frame.jpg"}, res.Assets[1])
 }
 
@@ -739,4 +770,101 @@ func TestHeighliner_PollInterval(t *testing.T) {
 	assert.Equal(t, 3*time.Second, a.PollInterval(&model.MediaTask{TaskType: "image_generation"}))
 	assert.Equal(t, 5*time.Second, a.PollInterval(&model.MediaTask{TaskType: "video_generation"}))
 	assert.Equal(t, 8*time.Second, a.PollInterval(&model.MediaTask{TaskType: "3d_generation"}))
+}
+
+func TestHeighliner_ExpiredArtifactDoesNotKeepTaskRunning(t *testing.T) {
+	g := newFakeGateway(t)
+	g.onTask = func(w http.ResponseWriter, _ int) {
+		_, _ = io.WriteString(w, `{"id":"task_1","status":"succeeded","billing":{"status":"settled"},"artifacts":[{"index":0,"kind":"image","state":"expired"}]}`)
+	}
+	res, err := g.adapter().PollTask(context.Background(), &model.MediaTask{ID: "expired", ProviderTaskID: "task_1", TaskType: "image_generation"})
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSucceeded, res.Status)
+	assert.Empty(t, res.Assets)
+	assert.JSONEq(t, `{"status":"settled"}`, res.BillingDetailsJSON)
+}
+
+func TestHeighliner_3DZipContainerWinsOverModelFormat(t *testing.T) {
+	g := newFakeGateway(t)
+	g.onTask = func(w http.ResponseWriter, _ int) {
+		_, _ = io.WriteString(w, `{"id":"task_1","status":"succeeded","artifacts":[{"index":0,"kind":"model3d","state":"available","format":"obj","container":"zip","url":"https://cdn.example.com/archive"}]}`)
+	}
+	res, err := g.adapter().PollTask(context.Background(), &model.MediaTask{ID: "zip", ProviderTaskID: "task_1", TaskType: "3d_generation"})
+	require.NoError(t, err)
+	require.Len(t, res.Assets, 1)
+	assert.Equal(t, ".zip", filepath.Ext(res.Assets[0].LocalPath))
+}
+
+func TestHeighliner_DownloadDoesNotPublishATruncatedFile(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "10")
+		_, _ = io.WriteString(w, "short")
+	}))
+	defer srv.Close()
+	path := filepath.Join(t.TempDir(), "output.png")
+	a := NewHeighlinerAdapter(ChannelConfig{})
+	require.Error(t, a.DownloadAsset(context.Background(), srv.URL, path))
+	assert.NoFileExists(t, path)
+	children, err := os.ReadDir(filepath.Dir(path))
+	require.NoError(t, err)
+	assert.Empty(t, children)
+}
+
+func TestHeighliner_ReadsOrderedContentsAndProviderMetadata(t *testing.T) {
+	g := newFakeGateway(t)
+	g.onTask = func(w http.ResponseWriter, _ int) {
+		_, _ = io.WriteString(w, `{"id":"task_1","status":"succeeded","result_version":1,"contents":[{"candidate_index":0,"parts":[{"type":"text","text":""},{"type":"image","artifact_index":0}]}],"artifacts":[{"index":0,"kind":"image","state":"available","url":"https://cdn.example.com/l.png","provider_metadata":{"volcengine":{"z_index":1,"name":"人物","bounding_box":[0,1,2,3],"text_recognition":false}}}]}`)
+	}
+	res, err := g.adapter().PollTask(context.Background(), &model.MediaTask{ID: "image", ProviderTaskID: "task_1", TaskType: "image_generation"})
+	require.NoError(t, err)
+	b, err := json.Marshal(res)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"artifact_index":0`)
+	assert.Contains(t, string(b), `"text":""`)
+	require.Len(t, res.Assets, 1)
+	assert.Equal(t, "image_layer", res.Assets[0].Kind)
+	assert.Equal(t, 1, res.Assets[0].ZIndex)
+	assert.Equal(t, "人物", res.Assets[0].Name)
+	assert.JSONEq(t, `[0,1,2,3]`, res.Assets[0].BoundingBoxJSON)
+	assert.Contains(t, string(b), `text_recognition`)
+}
+
+func TestHeighliner_CallbackAndSelectedFileAreExplicitInRequest(t *testing.T) {
+	a := NewHeighlinerAdapter(ChannelConfig{CallbackURL: "https://callback.example.test/path"})
+	const callback = "https://callback.example.test/path"
+	req, err := a.requestBody(context.Background(), &model.MediaTask{TaskType: "video_generation", Model: "MiniMax-H3", Prompt: "video"}, heighlinerParams{
+		Parameters:      map[string]any{"callback_url": "https://ignored.example.test"},
+		ReferenceAssets: []model.ReferenceItem{{Type: "audio", Role: "voice", FileID: "file_audio"}},
+	})
+	require.NoError(t, err)
+	var out struct {
+		Callback   string                `json:"callback_url"`
+		References []heighlinerReference `json:"references"`
+	}
+	require.NoError(t, json.Unmarshal(req, &out))
+	require.Equal(t, callback, out.Callback)
+	require.Equal(t, []heighlinerReference{{Type: "audio", Role: "voice", FileID: "file_audio"}}, out.References)
+	_, err = a.reference(context.Background(), model.ReferenceItem{FileID: "file_audio", URL: "asset://asset_x"})
+	require.Error(t, err)
+	final, err := finalizeBody(&model.MediaTask{TaskType: "video_generation", Model: seedanceSampleModel}, heighlinerParams{ActionID: HeighlinerActionFinalize4K, SourceProviderTaskID: "task_original_sample"}, callback)
+	require.NoError(t, err)
+	require.Contains(t, string(final), `"callback_url":"`+callback+`"`)
+}
+
+func TestHeighliner_LayerDeliveryRejectsMissingBaseDuplicateAndOverflow(t *testing.T) {
+	task := &model.MediaTask{TaskType: "image_generation", Model: "doubao-seedream-5-5-261028", ParamsJSON: `{"provider_options":{"volcengine":{"layer_decomposition":true,"layer_decomposition_options":{"max_images":2}}}}`}
+	art := func(idx, order int) heighlinerArtifact {
+		levels := []string{`{"volcengine":{"z_index":0}}`, `{"volcengine":{"z_index":1}}`, `{"volcengine":{"z_index":2}}`}
+		return heighlinerArtifact{Index: idx, Kind: "image", State: "available", ProviderMetadata: json.RawMessage(levels[order])}
+	}
+	require.Empty(t, validateLayerDelivery(task, []heighlinerArtifact{art(0, 1), art(1, 0)}))
+	require.Contains(t, validateLayerDelivery(task, []heighlinerArtifact{art(0, 1)}), "缺少底图")
+	require.Contains(t, validateLayerDelivery(task, []heighlinerArtifact{art(0, 0), art(1, 0)}), "重复")
+	require.Contains(t, validateLayerDelivery(task, []heighlinerArtifact{art(0, 2), art(1, 1), art(2, 0)}), "超过")
+}
+
+func TestLayerIdentityUsesStackOrderNotArtifactIndex(t *testing.T) {
+	a := model.TaskAsset{Kind: "image_frame", AssetIndex: 9}
+	applyLayerMetadata(&a, heighlinerArtifact{ProviderMetadata: json.RawMessage(`{"volcengine":{"z_index":0}}`)})
+	require.Equal(t, "image_base", a.Kind)
 }

@@ -1,10 +1,10 @@
 import type { Protocol } from '../services/api.ts';
-import type { SpatialCard } from '../types/canvas.ts';
+import type { SpatialCard, UploadKind } from '../types/canvas.ts';
 
 const nowSeconds = () => Date.now() / 1000;
 
 /** What a card that can be sent as a reference holds: video results are videos, uploads say which. */
-export function mediaKindOf(card: SpatialCard): 'image' | 'video' {
+export function mediaKindOf(card: SpatialCard): UploadKind {
   return card.type === 'video' ? 'video' : card.type === 'upload' ? card.mediaKind ?? 'image' : 'image';
 }
 
@@ -18,7 +18,7 @@ function isImageResult(card: SpatialCard): boolean {
  * provider's own image URL expires within a day and never gives an asset id.
  */
 export function offersUpload(card: SpatialCard): boolean {
-  if (card.type === 'upload') return true;
+  if (card.type === 'upload') return mediaKindOf(card) !== 'audio';
   return card.role === 'result' && (card.type === 'image' || card.type === 'video') && card.status === 'succeeded' && !!card.resultUrl;
 }
 
@@ -71,6 +71,7 @@ export function uploadReference(
   protocol: Protocol,
   assetOk = supportsAssetId(protocol)
 ): { url?: string; localPath?: string } {
+  if (card.gatewayFile) throw new Error(`卡片「${card.title}」已选用原服务商的平台文件；请切回原服务商，或先移除平台引用再使用本地文件`);
   const choice = card.uploadRefMode;
 
   if (choice === 'asset') {
@@ -93,7 +94,7 @@ export function uploadReference(
   if (url) return { url };
   const kind = mediaKindOf(card);
   if (!card.resultUrl) {
-    throw new Error(card.type === 'upload' ? `卡片「${card.title}」还没有选择${kind === 'video' ? '视频' : '图片'}` : `卡片「${card.title}」还没有生成完成`);
+    throw new Error(card.type === 'upload' ? `卡片「${card.title}」还没有选择${{ video: '视频', image: '图片', audio: '音频' }[kind]}` : `卡片「${card.title}」还没有生成完成`);
   }
   // Heighliner uploads the project's own file to the gateway, videos included.
   if (uploadsLocalFiles(protocol)) return { localPath: card.resultUrl };
@@ -108,10 +109,14 @@ export function uploadReference(
   return { localPath: card.resultUrl };
 }
 
-export type UploadRefKind = 'asset' | 'url' | 'local';
+export type UploadRefKind = 'asset' | 'url' | 'local' | 'file-id';
 
 /** Which of the card's copies a video card on `protocol` would send, or undefined when none is usable yet. */
 export function uploadRefKind(card: SpatialCard, protocol: Protocol): UploadRefKind | undefined {
+  if (card.gatewayFile) {
+    if (protocol !== 'heighliner' || (card.gatewayFile.expiresAt && card.gatewayFile.expiresAt <= nowSeconds())) return undefined;
+    return card.gatewayFile.assetId ? 'asset' : 'file-id';
+  }
   try {
     const ref = uploadReference(card, protocol);
     if (ref.localPath) return 'local';
@@ -121,4 +126,4 @@ export function uploadRefKind(card: SpatialCard, protocol: Protocol): UploadRefK
   }
 }
 
-export const UPLOAD_REF_LABELS: Record<UploadRefKind, string> = { asset: '素材 ID', url: '链接', local: '本地文件' };
+export const UPLOAD_REF_LABELS: Record<UploadRefKind, string> = { asset: '素材 ID', url: '链接', local: '本地文件', 'file-id': '平台文件 ID' };

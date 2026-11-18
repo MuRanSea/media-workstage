@@ -6,6 +6,7 @@ import {
   activeCapability,
   clampNumber,
   effectiveOptions,
+  explicitVideoParams,
   effectiveParams,
   optionGroups,
   rangeText,
@@ -20,6 +21,10 @@ import { ACCENT, Field, Section, Segmented, Toggle, inputClass, type Accent } fr
 const OPTION_LABELS: Record<string, string> = {
   watermark: '水印',
   multi_shot: '多镜头',
+  layer_decomposition: '自动拆图（连入一张参考图，提示词可留空）',
+  'layer_decomposition_options.max_images': '拆图上限（含底图）',
+  'layer_decomposition_options.text_recognition': '识别图层文字（OCR）',
+  'optimize_prompt_options.mode': '提示词优化',
   audio: '声音',
   return_last_frame: '返回尾帧',
   enable_pbr: 'PBR 材质',
@@ -207,8 +212,13 @@ export const CapabilitySections: React.FC<{
   }
   const values = effectiveParams(cap, card.capParams);
   const options = effectiveOptions(cap, card.capOptions);
-  const spec = specFields(cap).filter((f) => !(ratioNote && f.name === 'aspect_ratio') && !locked?.[f.name]);
-  const groups = optionGroups(cap);
+  const decomposition = cap.type === 'image' && options.volcengine?.layer_decomposition === true && /seedream-(5-5|5-0-flash)/.test(cap.id);
+  const explicitSize = cap.type === 'image' && typeof values.size === 'string';
+  const spec = specFields(cap).filter((f) => !(ratioNote && f.name === 'aspect_ratio') && !locked?.[f.name] &&
+    !((explicitSize || decomposition) && ['aspect_ratio', 'resolution'].includes(f.name)));
+  const groups = optionGroups(cap).map(({ ns, fields }) => ({ ns, fields: fields.filter(({ name }) =>
+    ns !== 'volcengine' || (decomposition ? name !== 'background' : !name.startsWith('layer_decomposition_options.'))
+  ) })).filter((g) => g.fields.length > 0);
   return (
     <>
       <Section title="规格">
@@ -227,7 +237,7 @@ export const CapabilitySections: React.FC<{
           fields={spec}
           values={values}
           accent={accent}
-          onChange={(name, v) => update({ capParams: withValue(values, name, v) })}
+          onChange={(name, v) => update({ capInputVersion: 1, capParams: withValue(explicitVideoParams(card), name, v) })}
         />
       </Section>
       {groups.length > 0 && (
@@ -239,7 +249,7 @@ export const CapabilitySections: React.FC<{
               fields={fields}
               values={options[ns] ?? {}}
               accent={accent}
-              onChange={(name, v) => update({ capOptions: withOption(options, ns, name, v) })}
+              onChange={(name, v) => update({ capOptions: withOption(card.capOptions, ns, name, v) })}
             />
           ))}
           <p className="text-[11px] leading-relaxed text-slate-500">厂商自己的选项，原样放进 provider_options 发给网关；设为「默认」的不发送。</p>

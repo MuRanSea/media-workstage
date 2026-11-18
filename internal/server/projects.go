@@ -220,29 +220,56 @@ func projectAssetFile(projectDir, stored string) (string, error) {
 	return abs, nil
 }
 
+// Keep project assets isolated even when they were downloaded to the global store
+// while a project was detached. Only an owned download receipt permits fallback.
+func (s *Server) projectAssetLocation(id, dir, stored string) (root, rel string, err error) {
+	root = filepath.Join(dir, project.AssetsDir)
+	abs, err := projectAssetFile(dir, stored)
+	if err != nil {
+		return "", "", err
+	}
+	rel, err = filepath.Rel(root, abs)
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := os.Stat(abs); os.IsNotExist(err) && s.db != nil && s.assetServer != nil {
+		var owned int64
+		err = s.db.Model(&model.TaskAsset{}).Joins("JOIN media_tasks ON media_tasks.id = task_assets.task_id").Where("media_tasks.project_id = ? AND task_assets.local_path = ? AND task_assets.global_fallback = ?", id, filepath.ToSlash(rel), true).Count(&owned).Error
+		if err != nil {
+			return "", "", err
+		}
+		if owned > 0 {
+			root = s.assetServer.rootDir
+		}
+	}
+	return root, rel, nil
+}
+
 func (s *Server) handleProjectAsset(c *gin.Context) {
-	dir, err := s.projects.Dir(c.Param("id"))
+	id := c.Param("id")
+	dir, err := s.projects.Dir(id)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "Project not found"})
 		return
 	}
-	serveAssetFile(c, filepath.Join(dir, project.AssetsDir), c.Param("filepath"))
+	root, rel, err := s.projectAssetLocation(id, dir, project.AssetsDir+"/"+strings.TrimPrefix(c.Param("filepath"), "/"))
+	if err != nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+	serveAssetFile(c, root, rel)
 }
 
-// resolveProjectReferences rewrites project-relative reference paths
-// ("assets/images/...") to absolute paths inside the project folder, so
-// adapters read the right file regardless of the process working directory.
-func resolveProjectReferences(projectDir string, refs []model.ReferenceItem) error {
+func (s *Server) resolveProjectReferences(id, dir string, refs []model.ReferenceItem) error {
 	for i := range refs {
-		local := refs[i].LocalPath
-		if local == "" {
+		if refs[i].LocalPath == "" {
 			continue
 		}
-		abs, err := projectAssetFile(projectDir, local)
+		root, rel, err := s.projectAssetLocation(id, dir, refs[i].LocalPath)
 		if err != nil {
-			return fmt.Errorf("reference path %q escapes the project folder", local)
+			return err
 		}
-		refs[i].LocalPath = abs
+		refs[i].LocalPath = filepath.Join(root, rel)
 	}
 	return nil
 }

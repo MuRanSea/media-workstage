@@ -1,5 +1,5 @@
 import type { CapabilityDescriptor } from '../services/api.ts';
-import type { CapOptions, CapValues } from '../types/canvas.ts';
+import type { CapOptions, CapValues, VideoTaskMode } from '../types/canvas.ts';
 
 /**
  * Rules the Heighliner docs state that a model's capability descriptor cannot express:
@@ -24,7 +24,10 @@ const hasRefSlot = (cap: CapabilityDescriptor, role: string, type: string) =>
 export const isSeedream = (cap: CapabilityDescriptor) => cap.type === 'image' && /seedream/i.test(cap.id);
 /** Kling's family takes `provider_options.kling`; only Omni takes reference images and a reference video. */
 export const isKling = (cap: CapabilityDescriptor) => !!cap.provider_options_schema?.properties?.kling || /^kling/i.test(cap.id);
-export const isKlingOmni = (cap: CapabilityDescriptor) => isKling(cap) && hasRefSlot(cap, 'reference', 'video');
+export const isKlingOmni = (cap: CapabilityDescriptor) => cap.id === 'kling-3.0-omni' && hasRefSlot(cap, 'reference', 'video');
+export const isKling4 = (cap?: CapabilityDescriptor) => cap?.id === 'kling-4.0' || cap?.id === 'kling-4.0-flash';
+export const isSeedance25 = (id: string) => id === 'doubao-seedance-2-5-260628' || id === 'doubao-seedance-2-5-flash-261115';
+export const supportsKlingMultiShot = (cap: CapabilityDescriptor) => cap.id === 'kling-3.0' || cap.id === 'kling-3.0-omni';
 export const isMiniMaxH3 = (cap: CapabilityDescriptor) => !!cap.provider_options_schema?.properties?.minimax || /minimax/i.test(cap.id);
 /** Hunyuan 3D (hy-3d-3.0 / 3.1 / express) as against Tripo (tripo-3d-3.1 / p1). */
 export const isTripo = (cap: CapabilityDescriptor) => cap.type === '3d' && (/^tripo/i.test(cap.id) || 'face_limit' in tencentOptions(cap));
@@ -58,8 +61,18 @@ export function promptBytes(prompt: string): number {
 // --- Images ----------------------------------------------------------------------
 
 /** Seedream's n plus its reference images may not pass 15. */
-export function checkImageRules(cap: CapabilityDescriptor, params: CapValues, referenceCount: number): void {
+export function checkImageRules(cap: CapabilityDescriptor, params: CapValues, referenceCount: number, decomposition = false): void {
   if (!isSeedream(cap)) return;
+  if (['doubao-seedream-5-5-261028', 'doubao-seedream-5-0-flash-260915'].includes(cap.id) && typeof params.size === 'string') {
+    const size = params.size;
+    if (!['1K', '1.5K', '2K'].includes(size)) {
+      const pixels = /^(\d+)x(\d+)$/.exec(size);
+      const w = Number(pixels?.[1]), h = Number(pixels?.[2]);
+      if (decomposition ? size !== 'auto' : !pixels || w*h < 921600 || w*h > 4624220 || w/h < 1/16 || w/h > 16) {
+        throw new Error(decomposition ? '拆图尺寸只支持 auto、1K、1.5K 或 2K' : '普通生成尺寸需要合法档位或像素宽x高');
+      }
+    }
+  }
   const n = typeof params.n === 'number' ? params.n : 1;
   if (n + referenceCount > SEEDREAM_MAX_IMAGES) {
     throw new Error(`${cap.id} 的张数加参考图最多 ${SEEDREAM_MAX_IMAGES} 张，当前 ${n} 张 + ${referenceCount} 张参考图`);
@@ -72,7 +85,8 @@ export function checkImageRules(cap: CapabilityDescriptor, params: CapValues, re
 export const KLING_OMNI_IMAGES_WITH_VIDEO = 4;
 
 export interface VideoRuleInput {
-  mode: 'all_modal' | 'first_last_frame' | 'text_to_video' | 'video_edit';
+  mode: VideoTaskMode;
+  audioRefs?: number;
   imageRefs: number;
   videoRefs: number;
   parameters: CapValues;
@@ -81,23 +95,35 @@ export interface VideoRuleInput {
 
 /**
  * Fits a video request to its model's rules, in place:
- * - Kling: `multi_shot` is true exactly when Omni has a reference video (the card does not
- *   offer it); Omni with a reference video takes at most four images and no generated audio.
- *   Editing a video (operation=edit) never sends multi_shot.
+ * - Kling: Omni with a reference video takes at most four images, no generated audio,
+ *   and infers multi_shot when omitted. Editing a video never sends multi_shot.
  * - MiniMax H3: text-to-video cannot use `adaptive`, so the ratio is left to the model.
  */
 export function applyVideoRules(cap: CapabilityDescriptor, input: VideoRuleInput): void {
   const { parameters, options } = input;
+  const volc = options.volcengine;
+  if (isSeedance25(cap.id)) {
+    const op = volc?.omni_reference_task_type;
+    if (op === 'edit' || op === 'extend') {
+      if (input.mode !== 'all_modal' || input.videoRefs < 1) throw new Error('Seedance 编辑／延长需要至少 1 段参考视频');
+      if (volc.draft) throw new Error('样片不能用于视频编辑或延长模式');
+      parameters.aspect_ratio = 'adaptive';
+      if (op === 'edit') parameters.duration = -1;
+    }
+  }
+  if (cap.id.startsWith('doubao-seedance-2-0') && input.audioRefs && !input.imageRefs && !input.videoRefs) {
+    throw new Error('Seedance 2.0 参考音频需与参考图或参考视频一起使用');
+  }
   if (isKling(cap)) {
     const kling = { ...options.kling };
-    delete kling.multi_shot;
+    if (!supportsKlingMultiShot(cap) || input.mode === 'video_edit' || input.mode === 'motion_control') delete kling.multi_shot;
     // An edit is never multi-shot, and its sound is kling.audio (the descriptor view drops generate_audio).
     if (isKlingOmni(cap) && input.videoRefs > 0 && input.mode !== 'video_edit') {
       if (input.imageRefs > KLING_OMNI_IMAGES_WITH_VIDEO) {
         throw new Error(`${cap.id} 带参考视频时最多 ${KLING_OMNI_IMAGES_WITH_VIDEO} 张参考图，当前 ${input.imageRefs} 张`);
       }
       if (parameters.generate_audio === true) throw new Error(`${cap.id} 带参考视频时不能生成音频，请关闭「生成音频」`);
-      if (cap.provider_options_schema?.properties?.kling?.properties?.multi_shot) kling.multi_shot = true;
+      if (kling.multi_shot === false) throw new Error(`${cap.id} 带参考视频时需要多镜头，请开启「多镜头」或留为默认`);
     }
     if (Object.keys(kling).length) options.kling = kling;
     else delete options.kling;

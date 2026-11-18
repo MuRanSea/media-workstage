@@ -26,10 +26,22 @@ import {
 import { connectCards } from './connections.ts';
 import { compileCardImagePayload } from './compiler.ts';
 import { compileCardVideoPayload } from './videoCompiler.ts';
+import { compileDescribePayload, savedImageOf } from './midjourney.ts';
 import { snapshotOf } from './resultCards.ts';
 
 // The gateway's real media catalog, as GET /media/v1/models returned it (shared with the Go tests).
 const descriptors = (catalog as unknown as { data: CapabilityDescriptor[] }).data;
+
+const fixtureImage = (id: string): CapabilityDescriptor => ({ id, type: 'image',
+  parameters: { prompt: { type: 'string', required: true }, size: { type: 'string' }, aspect_ratio: { type: 'string' }, resolution: { type: 'string' } },
+  references: [{ role: 'reference', types: ['image'], max_count: 10 }],
+  provider_options_schema: { type: 'object', properties: { volcengine: { type: 'object', properties: {
+    layer_decomposition: { type: 'boolean' }, layer_decomposition_options: { type: 'object' }, background: { type: 'string' },
+  } } } },
+});
+// Small synthetic descriptors for contracts introduced after the captured real catalog.
+descriptors.push(...['kling-4.0', 'kling-4.0-flash'].map((id): CapabilityDescriptor => ({ id, type: 'video' })),
+  fixtureImage('doubao-seedream-5-5-261028'), fixtureImage('doubao-seedream-5-0-flash-260915'));
 
 const HL = 'hl-1';
 const LITE = 'doubao-seedream-5-0-lite-260128';
@@ -97,9 +109,9 @@ function connect(source: SpatialCard, target: SpatialCard): SpatialCard {
 }
 
 describe('Heighliner panels from capability descriptors', () => {
-  it('shows only the common parameters a model declares, never size', () => {
+  it('shows the common parameters and explicit image size the model declares', () => {
     const lite = specFields(cap(LITE));
-    expect(lite.map((f) => f.name)).toEqual(['aspect_ratio', 'resolution', 'n', 'output_format']);
+    expect(lite.map((f) => f.name)).toEqual(['aspect_ratio', 'resolution', 'n', 'output_format', 'size']);
     expect(lite.find((f) => f.name === 'n')?.param).toMatchObject({ minimum: 1, maximum: 15 });
     expect(lite.find((f) => f.name === 'resolution')?.param.enum).toEqual(['2K', '3K', '4K']);
     expect(specFields(cap(PRO)).find((f) => f.name === 'n')?.param).toMatchObject({ minimum: 1, maximum: 1 });
@@ -116,7 +128,8 @@ describe('Heighliner panels from capability descriptors', () => {
   it('lists vendor options by namespace for the advanced page', () => {
     const names = (id: string) => optionGroups(cap(id)).flatMap((g) => g.fields.map((f) => `${g.ns}.${f.name}`));
     expect(names(LITE)).toEqual(['volcengine.watermark']);
-    expect(names(KLING)).toEqual(['kling.watermark']);
+    expect(names(KLING)).toEqual(['kling.multi_shot', 'kling.watermark']);
+    expect(names(KLING_TURBO)).not.toContain('kling.multi_shot');
     expect(names(SEEDANCE_25)).toContain('volcengine.return_last_frame');
   });
 
@@ -144,18 +157,21 @@ describe('Heighliner panels from capability descriptors', () => {
 describe('Heighliner model switching', () => {
   it('resets values out of the new range and drops fields the new model lacks', () => {
     const before = videoCard({
+      capInputVersion: 1,
       capParams: { duration: 30, resolution: '1080p', aspect_ratio: 'adaptive', seed: 42, generate_audio: true },
       capOptions: { volcengine: { watermark: true, return_last_frame: true } },
     });
     const after = { ...before, ...videoModelPatch(before, option('video', KLING)) };
-    expect(after.capParams).toEqual({ aspect_ratio: '16:9', duration: 5, generate_audio: true, resolution: '1080p' });
+    expect(after.capParams).toEqual({ generate_audio: true, resolution: '1080p' });
+    expect(effectiveParams(cap(KLING), after.capParams)).toMatchObject({ aspect_ratio: '16:9', duration: 5 });
     expect(after.capOptions).toEqual({});
   });
 
   it('fits image counts and resolutions to the new tier', () => {
     const lite = imageCard({ capParams: { n: 4, resolution: '4K', aspect_ratio: '16:9' } });
     const pro = { ...lite, ...imageModelPatch(lite, option('image', PRO)) };
-    expect(pro.capParams).toEqual({ n: 1, resolution: '1K', aspect_ratio: '16:9' });
+    expect(pro.capParams).toEqual({ aspect_ratio: '16:9' });
+    expect(effectiveParams(cap(PRO), pro.capParams)).toMatchObject({ n: 1, resolution: '1K' });
     expect(imageSizeSummary(lite)).toBe('4K · 16:9 · 4 张');
   });
 
@@ -180,7 +196,7 @@ describe('Heighliner model switching', () => {
 describe('Heighliner reference roles', () => {
   it('opens video modes by role: first/last frame needs first_frame, multi-reference needs reference', () => {
     expect(capVideoModes(cap(H3))).toEqual(['all_modal', 'first_last_frame', 'text_to_video']);
-    expect(capVideoModes(cap(KLING))).toEqual(['first_last_frame', 'text_to_video']);
+    expect(capVideoModes(cap(KLING))).toEqual(['first_last_frame', 'motion_control', 'text_to_video']);
     expect(capReferenceLimit(cap(KLING), 'first_last_frame', 'image')).toBe(2);
     expect(capReferenceLimit(cap(KLING_TURBO), 'first_last_frame', 'image')).toBe(1);
     expect(capReferenceLimit(cap(KLING_OMNI), 'all_modal', 'video')).toBe(1);
@@ -231,7 +247,7 @@ describe('Heighliner compilation', () => {
     );
     expect(payload).toMatchObject({ provider: HL, model: LITE, task_type: 'image_generation', task_mode: 'single', prompt: '一只猫' });
     expect(payload.params).toEqual({
-      parameters: { n: 4, resolution: '3K', aspect_ratio: '16:9' },
+      parameters: { n: 4, size: '2048x2048' },
       provider_options: { volcengine: { watermark: true } },
     });
     noNulls(payload);
@@ -315,5 +331,170 @@ describe('Heighliner compilation', () => {
     expect(snapshot.capParams).toEqual({ aspect_ratio: '16:9', duration: 8, generate_audio: false, resolution: '720p' });
     expect(snapshot.params).toEqual({ mode: 'text_to_video' });
     expect(videoSpecSummary(v)).toBe('720p · 8s · 16:9');
+  });
+});
+
+describe('expanded Media contract', () => {
+  const audio = card({ id: 'audio-1', type: 'upload', role: 'result', mediaKind: 'audio', tagIndex: 8, resultUrl: '/assets/uploads/voice.wav' });
+  it('connects local audio to H3 and Seedance 2.5 as voice/audio, not as an image', () => {
+    for (const model of [H3, SEEDANCE_25]) {
+      const video = connect(audio, videoCard({ model, prompt: '根据参考音频制作视频' }));
+      const wire = compileCardVideoPayload(video, [audio]);
+      expect(wire.reference_assets?.[0]).toMatchObject({ role: 'voice', type: 'audio', local_path: audio.resultUrl });
+      expect(videoModePatch(video, 'first_last_frame', 2).references).toEqual([]);
+    }
+    expect(connectCards(audio, imageCard()).ok).toBe(false);
+  });
+
+  it('submits a selected file_id only to its own provider and rejects expired files', () => {
+    const a = { ...audio, gatewayFile: { provider: HL, id: 'file_opaque' } };
+    const video = connect(a, videoCard({ model: H3 }));
+    expect(compileCardVideoPayload(video, [a]).reference_assets?.[0]).toEqual({ card_id: a.id, tag_index: 1, role: 'voice', type: 'audio', label: a.title, file_id: 'file_opaque' });
+    expect(() => compileCardVideoPayload(video, [{ ...a, gatewayFile: { ...a.gatewayFile, provider: 'other' } }])).toThrow('原服务商');
+    expect(() => compileCardVideoPayload(video, [{ ...a, gatewayFile: { ...a.gatewayFile, expiresAt: 1 } }])).toThrow('已过期');
+  });
+
+  it('requires reference video for Seedance edit or extend, rejects draft and compiles edit as adaptive length', () => {
+    const clip = uploadVideo();
+    const options = { volcengine: { omni_reference_task_type: 'edit' } };
+    expect(() => compileCardVideoPayload(videoCard({ capOptions: options }))).toThrow('模型目录未声明');
+    const prior = cap(SEEDANCE_25);
+    const schema = prior.provider_options_schema!.properties!.volcengine;
+    const enabled: CapabilityDescriptor = { ...prior, provider_options_schema: { type: 'object', properties: { volcengine: { ...schema, properties: { ...schema.properties, omni_reference_task_type: { type: 'string', enum: ['reference','edit','extend'] } } } } } };
+    rememberProviders(providers.map(p => ({ ...p, models: p.models.map(m => m.id === SEEDANCE_25 ? { ...m, capability: enabled } : m) })));
+    try {
+      expect(() => compileCardVideoPayload(videoCard({ capOptions: options }))).toThrow('至少 1 段');
+      const video = connect(clip, videoCard({ capOptions: options, capParams: { duration: 7, aspect_ratio: '16:9' } }));
+      const wire = compileCardVideoPayload(video, [clip]);
+      expect(wire.params).toMatchObject({ parameters: { duration: -1, aspect_ratio: 'adaptive' }, provider_options: options });
+      expect(wire.reference_assets?.[0].role).toBe('reference');
+      expect(() => compileCardVideoPayload({ ...video, sampleMode: true }, [clip])).toThrow('样片不能');
+      expect(compileCardVideoPayload({ ...video, capOptions: { volcengine: { omni_reference_task_type: 'extend' } } }, [clip]).params)
+        .toMatchObject({ parameters: { duration: 7, aspect_ratio: 'adaptive' }, provider_options: { volcengine: { omni_reference_task_type: 'extend' } } });
+    } finally { rememberProviders(providers); }
+  });
+
+  it('separates Kling 3.0 motion control from multi-shot and ordinary output defaults', () => {
+    const clip = uploadVideo();
+    const person = imageResult('person', 3);
+    const initial = videoCard({ model: KLING, mode: 'motion_control', capParams: { duration: 5, aspect_ratio: '16:9', resolution: '4k' } });
+    const video = connect(clip, connect(person, initial));
+    expect(() => compileCardVideoPayload(video, [clip, person])).toThrow('人物朝向');
+    const wire = compileCardVideoPayload({ ...video, capOptions: { kling: { character_orientation: 'image', multi_shot: false } } }, [clip, person]);
+    expect(wire.params).toMatchObject({ parameters: { operation: 'motion_control', resolution: '720p' }, provider_options: { kling: { character_orientation: 'image' } } });
+    expect(wire.params!.parameters).not.toHaveProperty('duration');
+    expect(wire.params!.parameters).not.toHaveProperty('aspect_ratio');
+    expect(wire.reference_assets?.map(({ role, type }) => [role, type])).toEqual([['character', 'image'], ['motion', 'video']]);
+  });
+
+  it('names Kling 4.0 references in frame order, with no implicit ratio or duration; Flash accepts only a first frame', () => {
+    const first = imageResult('first', 2);
+    const end = imageResult('end', 3);
+    const middle = imageResult('middle', 4);
+    const source = videoCard({ model: 'kling-4.0', mode: 'first_last_frame', prompt: '从 @图2 经过 @图4 到 @图3' });
+    const video = connect(middle, connect(end, connect(first, source)));
+    const wire = compileCardVideoPayload(video, [first, end, middle]);
+    expect(wire.prompt).toBe('从 @image_1 经过 @image_2 到 @image_3');
+    expect(wire.params!.parameters).toEqual({ resolution: '1080p' });
+    expect(wire.reference_assets?.map(({ role, reference_id }) => [role, reference_id])).toEqual([['first_frame', 'image_1'], ['middle_frame', 'image_2'], ['last_frame', 'image_3']]);
+    const flash = connect(first, { ...source, model: 'kling-4.0-flash', prompt: '动画化 @图2' });
+    expect(connectCards(end, flash).ok).toBe(false);
+    expect(compileCardVideoPayload(flash, [first]).params!.parameters).toEqual({ resolution: '720p' });
+  });
+
+  it('Kling 4.0 edit distinguishes the source from supplementary clips and can keep original audio', () => {
+    const clip = uploadVideo();
+    const extra = uploadVideo({ id: 'extra', tagIndex: 9 });
+    const source = videoCard({ model: 'kling-4.0', mode: 'video_edit', capOptions: { kling: { audio: 'original', multi_shot: true } }, prompt: '将 @视频4 的颜色改成参考 @视频9 的色调' });
+    const video = connect(extra, connect(clip, source));
+    const wire = compileCardVideoPayload(video, [clip, extra]);
+    expect(wire.params).toEqual({ parameters: { operation: 'edit', resolution: '1080p' }, provider_options: { kling: { audio: 'original' } } });
+    expect(wire.reference_assets?.map(({ role, reference_id }) => [role, reference_id])).toEqual([['source', 'video_1'], ['reference', 'video_2']]);
+    expect(wire.prompt).toContain('@video_2');
+    expect(() => compileCardVideoPayload(videoCard({ model: 'kling-4.0', capOptions: { kling: { audio: 'original' } } }))).toThrow('保留原声');
+  });
+
+  it('nests 5.5 layer options with explicit false and never sends them to Flash', () => {
+    const img = imageResult('layout', 6);
+    const input: Partial<SpatialCard> = {
+      prompt: '@图6',
+      capParams: { size: 'auto', aspect_ratio: '16:9', resolution: '2K' },
+      references: [{ cardId: img.id, tagIndex: 6, label: 'layout', role: 'reference_image' }],
+      capOptions: { volcengine: { layer_decomposition: true, 'layer_decomposition_options.max_images': 8, 'layer_decomposition_options.text_recognition': false, background: 'auto' } },
+    };
+    const model = 'doubao-seedream-5-5-261028';
+    const flash = 'doubao-seedream-5-0-flash-260915';
+    const result = compileCardImagePayload(imageCard({ ...input, model }), [img]);
+    expect(result.prompt).toBe('');
+    expect(result.params!.parameters).toMatchObject({ size: 'auto' });
+    expect(result.params!.parameters).not.toHaveProperty('aspect_ratio');
+    expect(result.params!.parameters).not.toHaveProperty('resolution');
+    expect(result.params!.provider_options).toEqual({ volcengine: { layer_decomposition: true, layer_decomposition_options: { max_images: 8, text_recognition: false } } });
+    expect(compileCardImagePayload(imageCard({ ...input, model: flash }), [img]).params!.provider_options).toEqual({ volcengine: { layer_decomposition: true } });
+    expect(() => compileCardImagePayload(imageCard({ model, prompt: '' }), [])).toThrow('提示词');
+  });
+});
+
+describe('release regressions', () => {
+  it('does not promote Kling 3 defaults into explicit settings for Kling 4', () => {
+    const first = videoCard({ ...videoModelPatch(videoCard(), option('video', KLING)) });
+    const next = { ...first, ...videoModelPatch(first, option('video', 'kling-4.0')) };
+    const parameters = compileCardVideoPayload(next).params!.parameters;
+    expect(parameters).toMatchObject({ resolution: '1080p' });
+    expect(parameters).not.toHaveProperty('duration');
+    expect(parameters).not.toHaveProperty('aspect_ratio');
+  });
+  it('does not silently swap a bound platform image for its old local file', () => {
+    const src = uploadVideo({ mediaKind: 'image', resultUrl: '/assets/uploads/old.png', gatewayFile: { provider: HL, id: 'selected' } });
+    const target = connect(src, videoCard());
+    expect(compileCardVideoPayload(target, [src]).reference_assets?.[0].file_id).toBe('selected');
+    expect(() => compileCardVideoPayload({ ...target, provider:'ark' }, [src])).toThrow('原服务商');
+    expect(() => compileCardImagePayload(imageCard({ provider: 'ark', references: target.references }), [src])).toThrow('原服务商');
+  });
+  it('does not mix contradictory sound defaults or send omni-only options after refs are removed', () => {
+    const withAudio = compileCardVideoPayload(videoCard({ model: KLING, mode: 'text_to_video', capParams: { generate_audio: true } }));
+    expect(withAudio.params!.parameters).toMatchObject({ generate_audio: true });
+    expect(withAudio.params!.provider_options).not.toMatchObject({ kling: { audio: 'off' } });
+    for (const patch of [{ capOptions: { kling: { audio: 'native' } } }, { capParams: { aspect_ratio: 'adaptive' } }]) {
+      expect(() => compileCardVideoPayload(videoCard({ model: 'kling-4.0', mode:'all_modal', ...patch }))).toThrow('参考选项');
+    }
+  });
+  it('validates ordinary and decomposition size separately', () => {
+    const model = 'doubao-seedream-5-5-261028';
+    expect(() => compileCardImagePayload(imageCard({ model, capParams: { size: 'auto' } }))).toThrow('普通生成尺寸');
+    const img = imageResult('layer', 1);
+    const card = connect(img, imageCard({ model, capParams: { size: '1024x1024' }, capOptions:{volcengine:{layer_decomposition:true}} }));
+    expect(() => compileCardImagePayload(card,[img])).toThrow('拆图尺寸');
+  });
+  it('distinguishes persisted legacy defaults from deliberately selected defaults on model switch', () => {
+    const legacy = videoCard({ model: KLING, capParams: { duration: 5, resolution: '720p', aspect_ratio: '16:9', generate_audio: false } });
+    const nextParams = (from: SpatialCard) => compileCardVideoPayload({ ...from, ...videoModelPatch(from, option('video', 'kling-4.0')) }).params!.parameters;
+    expect(nextParams(legacy)).toEqual({ resolution: '1080p' });
+    expect(nextParams({ ...legacy, capInputVersion: 1 })).toMatchObject({ duration: 5, resolution: '720p', aspect_ratio: '16:9' });
+  });
+
+  it('does not send a stale local image to Midjourney Describe', () => {
+    const img = uploadVideo({ mediaKind: 'image', resultUrl: '/assets/uploads/previous.png', gatewayFile: { provider: HL, id: 'chosen' } });
+    const runner = { provider: 'mj', model: 'mj' };
+    expect(savedImageOf(img)).toBeUndefined();
+    expect(() => compileDescribePayload(img, runner)).toThrow('移除平台引用');
+    expect(compileDescribePayload({ ...img, gatewayFile: undefined }, runner).reference_assets?.[0].local_path).toBe(img.resultUrl);
+  });
+
+  it('removes unsupported audio and its prompt tag on switching provider and rejects mislabeled audio at submit', () => {
+    const audio = uploadVideo({ mediaKind: 'audio', resultUrl: '/assets/uploads/audio.wav' });
+    const hl = connect(audio, videoCard({ model: H3, prompt: '使用 @音频4' }));
+    const ark = { ...hl, ...videoModelPatch(hl, { provider: 'ark', protocol: 'ark', id: SEEDANCE_25, label: 'Seedance', ready: true }) };
+    expect(ark.references).toEqual([]);
+    expect(ark.prompt).not.toContain('@音频4');
+    expect(() => compileCardVideoPayload({ ...ark, mode: 'first_last_frame', references: [{ ...hl.references![0], role: 'first_frame' }] }, [audio])).toThrow('类型');
+  });
+
+  it.each(['middle_frame', 'last_frame'])('accepts a lone %s on Kling 4 but never on Flash', (view) => {
+    const img = imageResult('key', 1);
+    const target = connect(img, videoCard({ model: 'kling-4.0', mode: 'first_last_frame' }));
+    const v = { ...target, references: [{ ...target.references![0], view }] };
+    expect(compileCardVideoPayload(v, [img]).reference_assets?.[0].role).toBe(view);
+    expect(() => compileCardVideoPayload({ ...v, model: 'kling-4.0-flash' }, [img])).toThrow();
   });
 });

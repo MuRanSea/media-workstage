@@ -19,19 +19,22 @@ import {
 import { compileCardVideoPayload, inferVideoProvider } from '../../engine/videoCompiler.ts';
 import { refTag } from '../../engine/refTags.ts';
 import { UPLOAD_REF_LABELS, uploadRefKind } from '../../engine/uploadRefs.ts';
+import { isKling4 } from '../../engine/heighlinerRules.ts';
+import { cardCapability, modeCapability, referenceSlot } from '../../engine/capability.ts';
 import { useChannels } from '../../services/channels.ts';
 import { ProviderModelPicker } from '../cards/ProviderModelPicker.tsx';
 import { Field, Section, Segmented, Toggle, inputClass } from '../ui/index.ts';
 import { DevJson } from './DevJson.tsx';
 import { AssetRefList } from './AssetRefList.tsx';
 import { CapabilitySections } from './CapabilityFields.tsx';
-import { FINAL_RESOLUTION, SAMPLE_RESOLUTION, isSampleRun, supportsSample } from '../../engine/capability.ts';
+import { SAMPLE_RESOLUTION, isSampleRun, supportsSample } from '../../engine/capability.ts';
 
 const ROLE_LABELS: Record<string, string> = {
   first_frame: '首帧',
   last_frame: '尾帧',
   reference_image: '参考',
   reference_video: '参考视频',
+  reference_audio: '参考音频',
 };
 
 interface Props {
@@ -49,6 +52,12 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
   const mode = card.mode ?? 'all_modal';
   const refs = card.references ?? [];
   const isHeighliner = protocolOf(provider) === 'heighliner';
+  const cap = cardCapability(card);
+  const kling4 = isKling4(cap);
+  const roleOptions = (type: 'image' | 'video') => (type === 'video'
+    ? mode === 'video_edit' ? ['source', 'reference'] : ['reference']
+    : mode === 'first_last_frame' ? ['first_frame', 'middle_frame', 'last_frame'] : ['reference', 'first_frame', 'middle_frame', 'last_frame']
+  ).filter((role) => referenceSlot(modeCapability(cap, mode), role, type));
   const maxRefs = referenceCapacity(card, mode);
   const supports = (m: VideoTaskMode) => supportsVideoMode(def, m);
   // Kling Omni asks what its reference video is for; an edit keeps the video's length and shape. Neither has sound.
@@ -104,13 +113,13 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
             <Section title="样片">
               <Toggle
                 label="样片模式"
-                hint={`先出 ${SAMPLE_RESOLUTION} 样片确认画面，满意再在结果卡上「生成正式视频」（${FINAL_RESOLUTION}）`}
+                hint={`先出 ${SAMPLE_RESOLUTION} 样片确认画面，满意再在结果卡上选择 1080p 或 4K 正式视频`}
                 checked={!!card.sampleMode}
                 onChange={(v) => update({ sampleMode: v || undefined })}
               />
               {card.sampleMode && (
                 <p className="text-[11px] leading-relaxed text-slate-500">
-                  样片按提示词、参考素材、时长、比例和音频生成；正式视频沿用这些设置，不能再改。样片从生成起 7 天内可转正式视频，样片和正式视频各自计费。
+                  样片按提示词、参考素材、时长、比例和音频生成；正式视频沿用这些设置，不能再改。样片按厂商创建时间有效 7 或 14 天，样片和正式视频各自计费。
                 </p>
               )}
             </Section>
@@ -160,19 +169,30 @@ export const VideoInspector: React.FC<Props> = ({ card, cards, update, linkedPro
             </p>
           ) : (
             <ul className="space-y-1">
-              {refs.map((ref) => {
+              {refs.map((ref, index) => {
                 const src = cards.find((c) => c.id === ref.cardId);
+                const type = ref.role === 'reference_video' ? 'video' : 'image';
+                const role = ref.view ?? (type === 'video' && mode === 'video_edit' && !refs.slice(0, index).some((r) => r.role === 'reference_video') ? 'source' : mode === 'first_last_frame' ? (index === 0 ? 'first_frame' : index === refs.length - 1 ? 'last_frame' : 'middle_frame') : 'reference');
                 return (
                   <li key={ref.cardId} className="flex items-center gap-2 rounded-lg bg-canvas-bg border border-canvas-border px-2 py-1.5 text-xs">
                     <span className={`font-mono ${src?.type === 'upload' ? 'text-amber-300' : 'text-pink-300'}`}>{refTag(ref)}</span>
                     <span className="flex-1 min-w-0 truncate text-slate-300">{src?.title ?? ref.label}</span>
                     <span className="text-[11px] text-slate-500">
-                      {mode === 'video_edit' && ref.role === 'reference_video' ? '待编辑视频' : ROLE_LABELS[ref.role] ?? ref.role}
+                      {kling4 && roleOptions(type).length > 1 ? <select aria-label={`设置 ${refTag(ref)} 的角色`} value={role} className="rounded bg-canvas-bg" onChange={(e) => {
+                        const view = e.target.value;
+                        const next = refs.map((r) => r.cardId === ref.cardId ? { ...r, view } : r);
+                        update({ references: next });
+                      }}>{roleOptions(type).map((r) => <option key={r} value={r}>{{ source: '源视频', reference: '参考', first_frame: '首帧', middle_frame: '中间帧', last_frame: '尾帧' }[r]}</option>)}</select> : mode === 'video_edit' && ref.role === 'reference_video' ? '待编辑视频' : ROLE_LABELS[ref.role] ?? ref.role}
                       {src?.type === 'upload' && (() => {
                         const sent = uploadRefKind(src, protocolOf(provider) ?? 'ark');
                         return sent ? ` · 发送${UPLOAD_REF_LABELS[sent]}` : ' · 未就绪';
                       })()}
                     </span>
+                    {kling4 && index > 0 && <button type="button" title="向前移动素材" onClick={() => {
+                      const reordered = [...refs];
+                      [reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]];
+                      update({ references: reordered });
+                    }}>↑</button>}
                     <button type="button" title="移除" onClick={() => update(removeReferencePatch(card, ref.cardId))} className="p-0.5 text-slate-500 hover:text-rose-400">
                       <X className="w-3.5 h-3.5" />
                     </button>

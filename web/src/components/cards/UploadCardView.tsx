@@ -1,5 +1,7 @@
 import React, { useRef, useState } from 'react';
-import { Film, Image as ImageIcon, Loader2, Maximize2, RefreshCw, Upload } from 'lucide-react';
+import { Film, Music2, Image as ImageIcon, Loader2, Maximize2, RefreshCw, Upload } from 'lucide-react';
+import { useChannels } from '../../services/channels.ts';
+import { apiGetMediaFile, mediaFileType } from '../../services/media.ts';
 import { apiUploadLocal } from '../../services/uploads.ts';
 import { assetUrl, getActiveProjectId } from '../../engine/assetPaths.ts';
 import { cardTag } from '../../engine/refTags.ts';
@@ -9,8 +11,8 @@ import { UploadPanel } from './UploadPanel.tsx';
 import { VideoMetaLine } from './VideoMetaLine.tsx';
 import type { CardViewProps } from './cardProps.ts';
 
-const ACCEPT = { image: 'image/png,image/jpeg,image/webp', video: 'video/mp4,video/quicktime,.mp4,.mov' } as const;
-const MAX_MB = { image: 10, video: 200 } as const;
+const ACCEPT = { image: 'image/png,image/jpeg,image/webp', video: 'video/mp4,video/quicktime,.mp4,.mov', audio: '.wav,.mp3,audio/wav,audio/mpeg' } as const;
+const MAX_MB = { image: 10, video: 200, audio: 15 } as const;
 interface UploadCardViewProps extends CardViewProps {
   onStartConnect?: (e: React.MouseEvent<HTMLDivElement>) => void;
 }
@@ -28,14 +30,17 @@ export const UploadCardView: React.FC<UploadCardViewProps> = ({
   onStartConnect,
 }) => {
   const kind = card.mediaKind ?? 'image';
+  const providers = useChannels().filter((p) => p.protocol === 'heighliner' && p.is_configured);
+  const [gatewayProvider, setGatewayProvider] = useState(card.gatewayFile?.provider ?? '');
+  const [gatewayID, setGatewayID] = useState(card.gatewayFile?.id ?? '');
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [loadedAspect, setLoadedAspect] = useState<number>();
 
   const previewUrl = assetUrl(card.resultUrl);
-  const Icon = kind === 'video' ? Film : ImageIcon;
-  const noun = kind === 'video' ? '视频' : '图片';
+  const Icon = kind === 'video' ? Film : kind === 'audio' ? Music2 : ImageIcon;
+  const noun = { video: '视频', image: '图片', audio: '音频' }[kind];
 
   const fail = (err: unknown) => onUpdateCard(card.id, { errorMessage: (err as Error).message || '上传失败' }, { history: false });
 
@@ -49,6 +54,7 @@ export const UploadCardView: React.FC<UploadCardViewProps> = ({
       // A new file invalidates whatever was uploaded for the old one.
       onUpdateCard(card.id, {
         resultUrl: saved.local_path,
+        gatewayFile: undefined,
         uploadName: saved.name,
         status: 'succeeded',
         errorMessage: undefined,
@@ -67,7 +73,24 @@ export const UploadCardView: React.FC<UploadCardViewProps> = ({
     }
   };
 
-  const sizeHint = `${kind === 'video' ? 'mp4 / mov' : 'png / jpg / webp'} · ≤ ${MAX_MB[kind]} MiB`;
+  const importFile = async () => {
+    if (busy || !gatewayID.trim()) return;
+    const provider = gatewayProvider || providers[0]?.id;
+    if (!provider) return;
+    setBusy(true);
+    try {
+      const file = await apiGetMediaFile(provider, gatewayID.trim());
+      if (file.status !== 'ready') throw new Error(`平台文件目前不可引用：${file.status}`);
+      const fileType = mediaFileType(file);
+      if (fileType && fileType !== kind) throw new Error(`平台文件类型与${noun}卡不匹配`);
+      if (file.purpose === 'provider_asset' && !file.asset_id) throw new Error('厂商素材尚未返回素材 ID');
+      const expires = typeof file.expires_at === 'number' ? file.expires_at : file.expires_at ? Date.parse(file.expires_at) / 1000 : undefined;
+      onUpdateCard(card.id, { gatewayFile: { provider, id: file.id, assetId: file.purpose === 'provider_asset' ? file.asset_id : undefined, expiresAt: expires && Number.isFinite(expires) ? expires : undefined }, errorMessage: undefined });
+    } catch (err) { fail(err); }
+    finally { setBusy(false); }
+  };
+
+  const sizeHint = `${{ video: 'mp4 / mov', image: 'png / jpg / webp', audio: 'wav / mp3' }[kind]} · ≤ ${MAX_MB[kind]} MiB`;
 
   return (
     <CardShell
@@ -103,7 +126,9 @@ export const UploadCardView: React.FC<UploadCardViewProps> = ({
 
       <MediaFrame aspect={(previewUrl && loadedAspect) || 16 / 9}>
         {previewUrl ? (
-          kind === 'video' ? (
+          kind === 'audio' ? (
+            <div className="flex h-full items-center justify-center"><audio controls preload="metadata" className="w-full" src={previewUrl} /></div>
+          ) : kind === 'video' ? (
             <>
               <video
                 src={previewUrl}
@@ -183,10 +208,21 @@ export const UploadCardView: React.FC<UploadCardViewProps> = ({
 
           {kind === 'video' && <VideoMetaLine url={previewUrl} />}
 
-          <UploadPanel card={card} onUpdateCard={onUpdateCard} />
+          {kind !== 'audio' && !card.gatewayFile && <UploadPanel card={card} onUpdateCard={onUpdateCard} />}
         </>
       )}
 
+      {(providers.length > 0 || card.gatewayFile) && <details className="text-[11px] text-slate-400">
+        <summary className="cursor-pointer">{card.gatewayFile ? '已选用平台文件' : '引用网关已有文件'}</summary>
+        {card.gatewayFile && <div className="flex items-start gap-1"><span className="flex-1 break-all">{card.gatewayFile.assetId ? `asset_id: ${card.gatewayFile.assetId}` : `file_id: ${card.gatewayFile.id}`}</span><button type="button" onClick={() => onUpdateCard(card.id, { gatewayFile: undefined })}>移除</button></div>}
+        {providers.length > 0 && <div className="mt-1 space-y-1">
+          <select aria-label="文件服务商" className="w-full rounded bg-canvas-bg px-1" value={gatewayProvider || providers[0].id} onChange={(e) => setGatewayProvider(e.target.value)}>
+            {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+          </select>
+          <div className="flex gap-1"><input aria-label="平台文件 ID" placeholder="file_id" className="min-w-0 flex-1 rounded bg-canvas-bg px-1" value={gatewayID} onChange={(e) => setGatewayID(e.target.value)} /><button type="button" className="text-cyan-300 disabled:opacity-50" disabled={busy || !gatewayID.trim()} onClick={() => void importFile()}>验证并引用</button></div>
+          <p>生成会使用已选的平台文件，不覆盖本地上传文件。</p>
+        </div>}
+      </details>}
       {card.errorMessage && <ErrorBox message={card.errorMessage} />}
     </CardShell>
   );

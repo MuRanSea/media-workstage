@@ -135,7 +135,7 @@ func main() {
 		Registry: registry,
 		AssetDir: assetDir,
 		// Tasks created inside a project download into that project's folder.
-		AssetRoot: func(task *model.MediaTask) string { return projectStore.AssetRoot(task.ProjectID) },
+		AssetRoot: projectStore.LookupAssetRoot,
 	})
 
 	// Start background poller and startup recovery

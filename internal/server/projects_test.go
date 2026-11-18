@@ -144,7 +144,7 @@ func TestProjectTask_DownloadsIntoProjectFolder(t *testing.T) {
 		DB:                database,
 		Registry:          registry,
 		AssetDir:          globalAssets,
-		AssetRoot:         func(task *model.MediaTask) string { return store.AssetRoot(task.ProjectID) },
+		AssetRoot:         store.LookupAssetRoot,
 		ImagePollInterval: 50 * time.Millisecond,
 		ImageInitialDelay: 10 * time.Millisecond,
 	})
@@ -214,13 +214,13 @@ func TestResolveProjectReferences(t *testing.T) {
 		{LocalPath: "/assets/images/t2/base.png"},
 		{URL: "https://example.com/a.png"},
 	}
-	require.NoError(t, resolveProjectReferences(dir, refs))
+	require.NoError(t, new(Server).resolveProjectReferences("", dir, refs))
 	assert.Equal(t, filepath.Join(dir, "assets", "images", "t1", "base.png"), refs[0].LocalPath)
 	assert.Equal(t, filepath.Join(dir, "assets", "images", "t2", "base.png"), refs[1].LocalPath)
 	assert.Empty(t, refs[2].LocalPath)
 
 	bad := []model.ReferenceItem{{LocalPath: "assets/../../secret.txt"}}
-	assert.Error(t, resolveProjectReferences(dir, bad))
+	assert.Error(t, new(Server).resolveProjectReferences("", dir, bad))
 }
 
 func TestProjectsAPI_ExportImportDuplicate(t *testing.T) {
@@ -318,4 +318,43 @@ func TestRevealAsset_ShowsProjectFilesOnly(t *testing.T) {
 	w = postJSON(r, base, map[string]string{"path": "/assets/../project.json"})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Len(t, revealed, 1, "nothing else is revealed")
+}
+
+func TestProjectAssetFallbackRequiresOwnedReceipt(t *testing.T) {
+	dbConn, err := db.InitDB(filepath.Join(t.TempDir(), "fallback.db"))
+	require.NoError(t, err)
+	sqlDB, _ := dbConn.DB()
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	global := t.TempDir()
+	store, err := project.NewStore(t.TempDir())
+	require.NoError(t, err)
+	s := NewServer(dbConn, global, adapter.NewAdapterRegistry(nil), store)
+	r := s.SetupRouter()
+	owner, err := store.Create("owner")
+	require.NoError(t, err)
+	other, err := store.Create("other")
+	require.NoError(t, err)
+	const rel = "assets/image.png" // a valid subfolder also named assets
+	require.NoError(t, os.Mkdir(filepath.Join(global, "assets"), 0755))
+	target := filepath.Join(global, filepath.FromSlash(rel))
+	require.NoError(t, os.WriteFile(target, []byte("saved image"), 0600))
+	task := model.MediaTask{ID: "delivered", ProjectID: owner.ID, Assets: []model.TaskAsset{{ID: "receipt", LocalPath: rel, GlobalFallback: true}}}
+	require.NoError(t, dbConn.Create(&task).Error)
+	for _, tc := range []struct {
+		id     string
+		status int
+	}{{owner.ID, http.StatusOK}, {other.ID, http.StatusNotFound}} {
+		w := sendJSON(r, http.MethodGet, "/api/projects/"+tc.id+"/assets/"+rel, nil)
+		require.Equal(t, tc.status, w.Code)
+		dir, err := store.Dir(tc.id)
+		require.NoError(t, err)
+		refs := []model.ReferenceItem{{LocalPath: "/assets/" + rel}}
+		require.NoError(t, s.resolveProjectReferences(tc.id, dir, refs))
+		if tc.id == owner.ID {
+			require.Equal(t, "saved image", w.Body.String())
+			require.Equal(t, target, refs[0].LocalPath)
+		} else {
+			require.NoFileExists(t, refs[0].LocalPath)
+		}
+	}
 }

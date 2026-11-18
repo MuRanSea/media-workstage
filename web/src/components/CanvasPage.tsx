@@ -9,10 +9,12 @@ import {
   getBufferedTaskEvent,
   subscribeTaskEvents,
 } from '../services/api.ts';
+import { apiCancelMediaTask, apiRefreshMediaBilling, apiRetryMediaDelivery } from '../services/media.ts';
+import { readBilling } from '../engine/mediaBilling.ts';
 import { apiGetProject, apiRenameProject, type ProjectDocument } from '../services/projects.ts';
 import { navigate } from '../services/router.ts';
 import { useProjectActions } from './useProjectActions.ts';
-import { Button, useToast } from './ui/index.ts';
+import { Button, useDialogs, useToast } from './ui/index.ts';
 import { compileCardImagePayload } from '../engine/compiler.ts';
 import { compileCardVideoPayload } from '../engine/videoCompiler.ts';
 import { compileFinalizePayload, compileHeighliner3DPayload } from '../engine/heighlinerCompiler.ts';
@@ -26,11 +28,13 @@ import {
   addOriginResult,
   addPendingResult,
   applyTaskToCards,
+  updateTaskBilling,
   settleTextRun,
   type HeightOf,
   type TextRunOutcome,
 } from '../engine/resultCards.ts';
 import { compileActionPayload, compileDescribePayload, findDescribeProvider, isMidjourney } from '../engine/midjourney.ts';
+import { isHeighliner } from '../engine/capability.ts';
 import type { BackendTaskResponse, GenerateTextPayload } from '../services/api.ts';
 import { cardsAwaitingTask, normalizeCards, normalizeViewport, restoredAwaitingTask } from '../engine/projectDoc.ts';
 import { setActiveProjectId } from '../engine/assetPaths.ts';
@@ -82,6 +86,8 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   const [initialViewport] = useState(() => normalizeViewport(doc.viewport));
   const [name, setName] = useState(doc.name);
   const toast = useToast();
+  const { confirm } = useDialogs();
+  const mediaActions = useRef(new Set<string>());
   const providers = useChannels();
   const { create: createProject } = useProjectActions();
   const { saveState, lastError, onViewportChange } = useAutosave({
@@ -129,8 +135,8 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   /** Catches `awaiting` cards up with their tasks' latest state. */
   const fetchTasks = useCallback(
     (awaiting: SpatialCard[]) => {
-      for (const card of awaiting) {
-        apiGetTask(card.taskId!)
+      for (const taskId of new Set(awaiting.flatMap((card) => card.taskId ? [card.taskId] : []))) {
+        apiGetTask(taskId)
           .then(updateTaskCards)
           .catch(() => {});
       }
@@ -140,7 +146,8 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
 
   // Tasks that finished while the project was closed never reached us over SSE.
   useEffect(() => {
-    fetchTasks(cardsAwaitingTask(cards));
+    const pendingBilling = cards.filter((card) => ['reserved', 'reconciling', 'release_pending'].includes(readBilling(card.billingDetailsJson)?.status ?? ''));
+    fetchTasks([...cardsAwaitingTask(cards), ...pendingBilling]);
     // Only on open: later updates arrive over SSE.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -154,11 +161,34 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
   // Subscribe to SSE backend push events
   useEffect(() => {
     return subscribeTaskEvents((eventType, task) => {
-      if (eventType === 'task.progress' || eventType === 'task.succeeded' || eventType === 'task.failed') {
+      if (eventType === 'task.billing') {
+        setCards((prev) => updateTaskBilling(prev, task));
+      } else if (eventType === 'task.progress' || eventType === 'task.succeeded' || eventType === 'task.failed') {
         updateTaskCards(task);
       }
     });
   }, [updateTaskCards]);
+
+  const handleMediaAction = async (card: SpatialCard, action: 'cancel' | 'billing' | 'redownload') => {
+    const id = card.taskId;
+    if (!id || mediaActions.current.has(id)) return;
+    mediaActions.current.add(id);
+    try {
+      if (action === 'cancel') {
+        if (!await confirm({ title: '取消生成任务', message: '网关只允许取消可撤销的排队任务，最终状态和额度释放请以原任务查询为准。', confirmText: '请求取消', danger: true })) return;
+        await apiCancelMediaTask(id, projectId);
+        toast('已发送取消请求，等待原任务状态更新');
+      } else if (action === 'redownload') {
+        await apiRetryMediaDelivery(id, projectId);
+        toast('已请求补下载原任务文件，不会重新生成');
+      } else {
+        const task = await apiRefreshMediaBilling(id, projectId);
+        setCards((prev) => updateTaskBilling(prev, task));
+        toast('已查询原任务账务');
+      }
+    } catch (err) { toast((err as Error).message, { tone: 'error' }); }
+    finally { mediaActions.current.delete(id); }
+  };
 
   const handleRename = async (next: string) => {
     const prev = name;
@@ -220,7 +250,11 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       const submitted = withEffectivePrompt(card, cards);
       // A Midjourney Blend mixes its images and needs no prompt; a 3D card may run from images alone.
       const blending = isMidjourney(submitted) && submitted.mjOperation === 'blend';
-      if (!blending && submitted.type !== '3d' && !submitted.prompt.trim()) throw new Error('请先填写提示词');
+      // Heighliner image validation is in its compiler: automatic decomposition can be promptless.
+      const validatesMediaPrompt = (submitted.type === 'image' || submitted.type === 'video') && isHeighliner(submitted.provider);
+      if (!blending && submitted.type !== '3d' && !validatesMediaPrompt && !submitted.prompt.trim()) {
+        throw new Error('请先填写提示词');
+      }
       const payload =
         submitted.type === 'video'
           ? compileCardVideoPayload(submitted, cards)
@@ -313,6 +347,7 @@ function ProjectCanvas({ doc }: { doc: ProjectDocument }) {
       onTriggerGenerate={handleTriggerGenerate}
       onRunAction={(sourceId, action) => void handleRunAction(sourceId, action)}
       onDescribe={(sourceId) => void handleDescribe(sourceId)}
+      onMediaAction={(card, action) => void handleMediaAction(card, action)}
       submittingIds={submittingIds}
       textRuns={textRuns}
       initialViewport={initialViewport}

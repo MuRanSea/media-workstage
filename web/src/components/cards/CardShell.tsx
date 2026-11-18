@@ -1,3 +1,4 @@
+import { billingLabel, readBilling } from '../../engine/mediaBilling.ts';
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, Check, ChevronDown, ChevronUp, Copy, Loader2, MoreHorizontal } from 'lucide-react';
 import type { SpatialCard } from '../../types/canvas.ts';
@@ -110,7 +111,10 @@ export const CardShell: React.FC<CardShellProps> = ({
           )}
         </MenuButton>
       </div>
-      <div className="p-3 space-y-2.5">{children}</div>
+      <div className="p-3 space-y-2.5">{children}{(() => {
+        const billing = card.role === 'result' ? readBilling(card.billingDetailsJson) : undefined;
+        return billing && <p className="text-[11px] text-slate-400">{billingLabel(billing)}</p>;
+      })()}</div>
     </div>
   );
 };

@@ -11,10 +11,27 @@ import { setViewPatch } from './model3d.ts';
 import { PROMPT_MAX_CHARS_3D, apply3DRules, documentedCapability, tripoFaceLimitRange } from './heighlinerRules.ts';
 
 // The gateway's real media catalog (shared with the Go tests), checked against what the docs add.
-const descriptors = (catalog as unknown as { data: CapabilityDescriptor[] }).data;
+const catalogDescriptors = (catalog as unknown as { data: CapabilityDescriptor[] }).data;
+// Exercise current catalog declarations, including a default from an older descriptor.
+const descriptors = catalogDescriptors.map<CapabilityDescriptor>((cap) => cap.id === 'kling-3.0-omni' ? {
+  ...cap,
+  provider_options_schema: { type: 'object', properties: { kling: { type: 'object', properties: {
+    watermark: { type: 'boolean' }, multi_shot: { type: 'boolean', default: false },
+  } } } },
+} : cap);
+const lite = catalogDescriptors.find((cap) => cap.id === 'doubao-seedream-5-0-lite-260128')!;
+descriptors.push({
+  ...lite,
+  id: 'doubao-seedream-5-5-261028',
+  parameters: { ...lite.parameters, prompt: { type: 'string', required: true } },
+  provider_options_schema: { type: 'object', properties: { volcengine: { type: 'object', properties: {
+    layer_decomposition: { type: 'boolean' }, background: { type: 'string', default: 'auto' },
+  } } } },
+});
 
 const HL = 'hl-1';
 const LITE = 'doubao-seedream-5-0-lite-260128';
+const SEEDREAM_55 = 'doubao-seedream-5-5-261028';
 const KLING = 'kling-3.0';
 const KLING_OMNI = 'kling-3.0-omni';
 const H3 = 'MiniMax-H3';
@@ -112,14 +129,16 @@ describe('Kling', () => {
   const video = (patch: Partial<SpatialCard>) =>
     card({ id: 'v1', type: 'video', provider: HL, model: KLING_OMNI, prompt: '让 @图1 照着 @视频9 跳舞', mode: 'all_modal', ...patch });
 
-  it('turns multi_shot on exactly when Omni has a reference video', () => {
+  it('keeps multi_shot unset for gateway inference, rejecting explicit false with reference video', () => {
     const img = image('i1', 1);
     const withVideo = connect(video({ capOptions: { kling: { watermark: true } } }), img, clip());
     const payload = compileCardVideoPayload(withVideo, [img, clip()]);
-    expect(optionsOf(payload)).toEqual({ kling: { watermark: true, multi_shot: true } });
+    expect(optionsOf(payload)).toEqual({ kling: { watermark: true } });
+    expect(() => compileCardVideoPayload({ ...withVideo, capOptions: { kling: { multi_shot: false } } }, [img, clip()]))
+      .toThrow('多镜头');
 
     const imagesOnly = connect(video({ prompt: '@图1 跳舞', capOptions: { kling: { multi_shot: true } } }), img);
-    expect(optionsOf(compileCardVideoPayload(imagesOnly, [img]))).toBeUndefined();
+    expect(optionsOf(compileCardVideoPayload(imagesOnly, [img]))).toEqual({ kling: { multi_shot: true } });
   });
 
   it('names images as <<<image_N>>> in an Omni prompt, in send order', () => {
@@ -138,9 +157,32 @@ describe('Kling', () => {
     expect(() => compileCardVideoPayload(loud, [imgs[0], clip()])).toThrow('带参考视频时不能生成音频');
   });
 
-  it('never sends multi_shot from kling-3.0, even one a card saved earlier', () => {
+  it('sends explicit multi_shot from kling-3.0 when advertised', () => {
     const v = card({ id: 'v1', type: 'video', provider: HL, model: KLING, prompt: '日落', mode: 'text_to_video', capOptions: { kling: { multi_shot: true } } });
-    expect(optionsOf(compileCardVideoPayload(v))).toBeUndefined();
+    expect(optionsOf(compileCardVideoPayload(v))?.kling).toMatchObject({ multi_shot: true });
+  });
+});
+
+describe('Seedream 5.5 automatic layer decomposition', () => {
+  const base = card({ id: 'g1', type: 'image', provider: HL, model: SEEDREAM_55,
+    capOptions: { volcengine: { layer_decomposition: true } } });
+  it('accepts one reference image without a semantic prompt or background default', () => {
+    const img = image('i1', 1);
+    const withImage = connect(base, img);
+    for (const prompt of ['', '@图1', '图1']) {
+      const payload = compileCardImagePayload({ ...withImage, prompt }, [img]);
+      expect(payload.prompt).toBe('');
+      expect(payload.reference_assets).toHaveLength(1);
+      expect(optionsOf(payload)).toEqual({ volcengine: { layer_decomposition: true } });
+    }
+    expect(compileCardImagePayload({ ...withImage, prompt: '@图1 保留人物' }, [img]).prompt).toBe('图1 保留人物');
+  });
+  it('rejects the wrong number of references and keeps the ordinary prompt requirement', () => {
+    const a = image('a', 1);
+    const b = image('b', 2);
+    expect(() => compileCardImagePayload(base)).toThrow('恰好 1 张');
+    expect(() => compileCardImagePayload(connect(base, a, b), [a, b])).toThrow('恰好 1 张');
+    expect(() => compileCardImagePayload({ ...connect(base, a), prompt: '', capOptions: {} }, [a])).toThrow('请先填写提示词');
   });
 });
 

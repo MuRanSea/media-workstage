@@ -12,6 +12,8 @@ export interface CreateTaskPayload {
   reference_assets?: Array<{
     card_id: string;
     tag_index: number;
+    reference_id?: string;
+    file_id?: string;
     role: string;
     /** Heighliner: the media type, since its roles do not imply it ("image" | "video" | "audio"). */
     type?: string;
@@ -35,6 +37,8 @@ export interface BackendTaskResponse {
   progress: number;
   error_code?: string;
   error_message?: string;
+  delivery_status?: 'pending' | 'complete' | 'partial' | 'unavailable';
+  delivery_message?: string;
   usage_tokens?: number;
   output_duration_sec?: number;
   billing_details_json?: string;
@@ -44,6 +48,9 @@ export interface BackendTaskResponse {
   assets?: TaskAssetDto[];
   /** Follow-ups the provider offers on the result. */
   result_actions?: ResultActionDto[];
+  /** Versioned ordered image/text candidates; artifact_index addresses assets, not array offsets. */
+  result_version?: number;
+  contents?: { candidate_index: number; role?: string; parts: ({ type: 'text'; text: string } | { type: 'image'; artifact_index: number })[] }[];
   /** Text result (Midjourney Describe). */
   result_text?: string;
 }
@@ -402,7 +409,7 @@ export function subscribeTaskEvents(
   const handleCustomEvent = (type: string) => (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data) as BackendTaskResponse;
-      if (data && data.id) {
+      if (data && data.id && type !== 'task.billing') {
         recentTaskEvents.set(data.id, { eventType: type, task: data });
       }
       onEvent(type, data);
@@ -415,6 +422,7 @@ export function subscribeTaskEvents(
   eventSource.addEventListener('task.progress', handleCustomEvent('task.progress'));
   eventSource.addEventListener('task.succeeded', handleCustomEvent('task.succeeded'));
   eventSource.addEventListener('task.failed', handleCustomEvent('task.failed'));
+  eventSource.addEventListener('task.billing', handleCustomEvent('task.billing'));
 
   return () => {
     eventSource.close();

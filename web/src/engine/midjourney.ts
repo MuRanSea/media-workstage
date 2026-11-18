@@ -15,7 +15,7 @@ export function isMidjourney(card: Pick<SpatialCard, 'provider'>): boolean {
 
 /** The saved image file of an image result or an uploaded image, if it has one. */
 export function savedImageOf(card: SpatialCard): string | undefined {
-  if (mediaKindOf(card) !== 'image') return undefined;
+  if (card.gatewayFile || mediaKindOf(card) !== 'image') return undefined;
   const path = assetStoredPath(card.outputAssets?.find((a) => a.local_path)) ?? card.resultUrl;
   return path && !/^https?:\/\//.test(path) ? path : undefined;
 }
@@ -50,6 +50,7 @@ export function compileActionPayload(source: SpatialCard, action: ResultActionDt
 
 /** Sends `source`'s image to Midjourney Describe; the suggested prompts come back as text. */
 export function compileDescribePayload(source: SpatialCard, runner: { provider: ProviderId; model: string }): CreateTaskPayload {
+  if (source.gatewayFile) throw new Error('Midjourney 无法使用已选择的平台文件；请先移除平台引用');
   const localPath = savedImageOf(source);
   if (!localPath) throw new Error(`「${source.title}」还没有图片，无法反推提示词`);
   return {
