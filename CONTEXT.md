@@ -99,7 +99,7 @@ This file is the canonical domain model glossary for `media-workstage`. Use thes
   A Result Card with no source holding a user-picked image or video (`type: 'upload'`, `mediaKind`). The file is saved into the project (`assets/uploads/`) and can be sent to the **Upload Platform** for a **Platform Asset ID** (素材库 `asset://<id>`, usable once review turns `Active`, Seedance only) and/or a **File URL** (7-day download link). Wired to a video card it becomes a reference: images as `reference_image` (`@图N`), videos as `reference_video` (`@视频N`, multi-reference mode, on models that take reference videos). A video reference must be uploaded first; images fall back to the saved file. A video Result Card uploads and wires in the same way.
 
 - **Upload Platform (上传平台)**:
-  Where Upload Cards and video Result Cards send their files: the Heighliner platform's own business API (asset library `/api/volcengine/assets/*`, file store `/api/files/upload`), configured on its own page in Settings with an address and an API Key. It is not a Provider and no Provider's settings are used for uploads (ADR 0008).
+  Where Upload Cards and video Result Cards send their files: the Heighliner platform's own business API (asset library `/api/volcengine/assets/*`, file store `/api/files/upload`), configured on its own page in Settings with separate addresses and API keys for the asset library and file links. It is not a Provider and no Provider's settings are used for uploads (ADR 0008).
   _Avoid_: uploading "to a provider"
 
 - **Result action (结果动作)**:

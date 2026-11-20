@@ -276,7 +276,7 @@ type assetResult struct {
 // returns its asset id (usable as asset://<id>). Review can still be pending: poll
 // /uploads/asset/status until status is Active.
 func (s *Server) handleUploadAsset(c *gin.Context) {
-	platform, err := s.uploadPlatform()
+	platform, err := s.uploadPlatform(assetUploadTarget)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -328,7 +328,7 @@ func (s *Server) handleAssetStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	platform, err := s.uploadPlatform()
+	platform, err := s.uploadPlatform(assetUploadTarget)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -352,7 +352,7 @@ func (s *Server) handleAssetStatus(c *gin.Context) {
 // handleUploadFile stores the file on the platform and returns a download URL that stays
 // valid for 7 days: the way to hand a video to a model that only takes URLs.
 func (s *Server) handleUploadFile(c *gin.Context) {
-	platform, err := s.uploadPlatform()
+	platform, err := s.uploadPlatform(fileUploadTarget)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

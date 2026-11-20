@@ -57,11 +57,12 @@ export const UploadPanel: React.FC<{
   onUpdateCard: CardViewProps['onUpdateCard'];
   accent?: Accent;
 }> = ({ card, onUpdateCard, accent = 'amber' }) => {
-  const platform = useUploadPlatform();
+  const assetPlatform = useUploadPlatform('asset');
+  const filePlatform = useUploadPlatform('file');
   const [busy, setBusy] = useState<Busy>(null);
 
   const fileExpired = !!card.fileUrl && !liveFileUrl(card);
-  const notReady = !platform?.is_configured;
+  const missing = [assetPlatform && !assetPlatform.is_configured && '上传素材库', filePlatform && !filePlatform.is_configured && '获取链接'].filter(Boolean);
 
   const fail = (err: unknown) => onUpdateCard(card.id, { errorMessage: (err as Error).message || '上传失败' }, { history: false });
 
@@ -116,14 +117,14 @@ export const UploadPanel: React.FC<{
 
   return (
     <div className="space-y-2 rounded-xl border border-slate-800 bg-canvas-bg/60 p-2">
-      {platform && !platform.is_configured && (
-        <p className="text-[11px] leading-relaxed text-amber-300">还没有配置上传平台：请在「设置 → 上传平台」填写 API Key</p>
+      {missing.length > 0 && (
+        <p className="text-[11px] leading-relaxed text-amber-300">{missing.join('、')}未配置：请在「设置 → 上传平台」填写对应的 API Key</p>
       )}
 
       <div className="grid grid-cols-2 gap-1.5">
         <Button
           size="sm"
-          disabled={notReady || busy !== null}
+          disabled={!assetPlatform?.is_configured || busy !== null}
           onClick={() => void uploadAsset()}
           icon={busy === 'asset' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
           title="上传到素材库，得到素材 ID（asset://…）"
@@ -132,7 +133,7 @@ export const UploadPanel: React.FC<{
         </Button>
         <Button
           size="sm"
-          disabled={notReady || busy !== null}
+          disabled={!filePlatform?.is_configured || busy !== null}
           onClick={() => void uploadFile()}
           icon={busy === 'file' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />}
           title="上传到文件存储，得到 7 天有效的下载链接"

@@ -5,27 +5,21 @@ import { Section } from '../ui/index.ts';
 
 /** Where an upload card sends its file, and how video cards will reference it. */
 export const UploadInspector: React.FC<{ card: SpatialCard; update: (patch: Partial<SpatialCard>) => void }> = ({ card }) => {
-  const platform = useUploadPlatform();
+  const assetPlatform = useUploadPlatform('asset');
+  const filePlatform = useUploadPlatform('file');
 
   return (
     <>
       <Section title="上传平台">
-        <p className="text-[11px] leading-relaxed text-slate-400">
-          「上传素材库」和「获取链接」都发到上传平台
-          {platform && <span className="font-mono text-slate-300"> {platform.base_url}</span>}
-          {platform && !platform.is_configured && <span className="text-amber-300">（还没有填 API Key）</span>}
-          ，在「设置 → 上传平台」里配置，与服务商无关。
-          {platform && (
-            <>
-              {' '}
-              接口说明见{' '}
-              <a href={platform.docs_url} target="_blank" rel="noreferrer" className="underline hover:text-slate-200">
-                平台文档
-              </a>
-              。
-            </>
-          )}
-        </p>
+        <div className="space-y-1 text-[11px] leading-relaxed text-slate-400">
+          {([['上传素材库', assetPlatform], ['获取链接', filePlatform]] as const).map(([label, platform]) => (
+            <p key={label}>
+              {label}：{platform ? <span className="break-all font-mono text-slate-300">{platform.base_url}</span> : '读取配置中'}
+              {platform && !platform.is_configured && <span className="text-amber-300">（未填写 API Key）</span>}
+            </p>
+          ))}
+          <p>两项均在「设置 → 上传平台」里独立配置，与模型服务商无关。</p>
+        </div>
       </Section>
       <Section title="引用方式">
         <p className="text-[11px] leading-relaxed text-slate-400">

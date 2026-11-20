@@ -4,9 +4,10 @@
 上传卡片的「上传素材库」和「获取链接」调用的是 Heighliner 平台自己的业务 API（`/api/volcengine/assets/*` 和 `/api/files/upload`，见 https://platform.sgt.site/docs/ 的「平台业务 API」一节），不是哪家模型厂商的接口。原先的实现让用户在卡片上选一个服务商，再拿该服务商 Base URL 的域名和密钥去调这些接口。结果下拉框里列出了所有已配置的服务商，Midjourney、Google、OpenAI 都在里面。指向别处的服务商只会失败，指向同一平台、同一密钥的服务商则重复出现。用户分不清该选哪个。
 
 ## 决策 (Decision)
-- **上传平台（Upload Platform）单独配置**：在设置里有自己的一页「上传平台」，只有平台地址和 API Key 两项，存放在 `system_configs` 的 `upload_base_url`、`upload_api_key` 中。环境变量 `UPLOAD_BASE_URL`、`UPLOAD_API_KEY` 作为回退，地址默认为 `https://platform.sgt.site`。
+- **上传平台（Upload Platform）单独配置**：在设置里有自己的一页「上传平台」，「上传素材库」与「获取链接」各自填写、保存和清除平台地址及 API Key。素材库沿用 `upload_base_url`、`upload_api_key`，文件链接使用 `file_upload_base_url`、`file_upload_api_key`（均存放在 `system_configs`）。各自优先使用保存的配置，环境变量分别为 `UPLOAD_BASE_URL` / `UPLOAD_API_KEY` 和 `FILE_UPLOAD_BASE_URL` / `FILE_UPLOAD_API_KEY`，地址均默认 `https://platform.sgt.site`。
+- **升级兼容**：升级时将数据库中原有的完整 URL 和 Key 复制一次作为文件链接的初始设置；此后两边不联动，清除后重启也不会再复制。原先只通过环境变量配置的部署，需另外设置 `FILE_UPLOAD_*` 才能「获取链接」。已有素材 ID 和文件链接不做迁移或改写。
 - **上传卡片不再选服务商**：所有上传都发往上传平台。接口只用地址的 scheme 和 host，`/api/...` 路径由程序补上。
-- **测试连接走只读接口**：调用 `POST /api/volcengine/assets/list`（只取一条），不上传文件，也不消耗额度。
+- **素材库的测试连接走只读接口**：调用 `POST /api/volcengine/assets/list`（只取一条），不上传文件；不将此测试结果用于判断「获取链接」的权限。素材审核查询也使用素材库配置。
 - 卡片里已有的 `uploadProvider` 字段不再读取，也不再写入。旧工程里留着这个字段不受影响。
 
 ## 考虑过的方案 (Considered Options)

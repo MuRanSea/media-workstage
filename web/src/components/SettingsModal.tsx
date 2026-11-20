@@ -315,7 +315,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {side === 'storage'
                 ? '数据、工程与日志放在哪里'
                 : side === 'upload'
-                ? '素材库与文件链接用哪个平台账号'
+                ? '分别配置素材库和文件链接的平台地址与密钥'
                 : '填写各家服务的 API Key，并选择卡片里可以用的模型'}
             </p>
           </div>

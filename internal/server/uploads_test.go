@@ -50,13 +50,20 @@ func setupUploadServer(t *testing.T) (*gin.Engine, *Server, *project.Store) {
 }
 
 // fakePlatform mimics the Heighliner asset and file endpoints.
-func fakePlatform(t *testing.T) *httptest.Server {
+func fakePlatform(t *testing.T, target, key string) *httptest.Server {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "Bearer sk-test", r.Header.Get("Authorization"))
+		if !assert.Equal(t, "Bearer "+key, r.Header.Get("Authorization")) ||
+			!assert.Equal(t, target == "file", r.URL.Path == "/api/files/upload", r.URL.Path) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/volcengine/assets/create":
-			require.NoError(t, r.ParseMultipartForm(1<<20))
+			if !assert.NoError(t, r.ParseMultipartForm(1<<20)) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			assert.Equal(t, "Video", r.FormValue("asset_type"))
 			_, _ = w.Write([]byte(`{"success":true,"data":{"id":"asset-1","uri":"asset://asset-1","status":"Processing"}}`))
 		case "/api/volcengine/assets/check":
@@ -74,20 +81,23 @@ func fakePlatform(t *testing.T) *httptest.Server {
 }
 
 func TestUploads_LocalThenRemote(t *testing.T) {
-	r, srv, store := setupUploadServer(t)
-	platform := fakePlatform(t)
+	t.Setenv("FILE_UPLOAD_API_KEY", "")
+	r, _, store := setupUploadServer(t)
+	assets := fakePlatform(t, "asset", "sk-test-asset")
+	files := fakePlatform(t, "file", "sk-test-file")
 
-	// Uploads use the Upload Platform's own settings, not any provider's.
-	require.NoError(t, upsertConfigs(srv.db, map[string]string{
-		uploadBaseURLKey: platform.URL,
-		uploadAPIKeyKey:  "sk-test",
-	}))
+	// The two operations must use different origins and keys, not any model provider.
+	w := sendJSON(r, http.MethodPost, "/api/uploads/config", map[string]string{"base_url": assets.URL, "api_key": "sk-test-asset"})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	w = sendJSON(r, http.MethodPost, "/api/uploads/config/file", map[string]string{"base_url": files.URL, "api_key": "sk-test-file"})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.NotContains(t, w.Body.String(), "sk-test-file")
 
 	doc, err := store.Create("上传")
 	require.NoError(t, err)
 
 	// Save the video into the project.
-	w := httptest.NewRecorder()
+	w = httptest.NewRecorder()
 	r.ServeHTTP(w, multipartRequest(t, "/api/projects/"+doc.ID+"/uploads", map[string]string{"kind": "video"}, "clip.mp4", []byte("video-bytes")))
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	var saved struct {
@@ -123,6 +133,18 @@ func TestUploads_LocalThenRemote(t *testing.T) {
 	r.ServeHTTP(w, multipartRequest(t, "/api/uploads/file", fields, "", nil))
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "https://tos.example/v.mp4?sig=1")
+
+	// Clearing only the file target must neither reuse nor clear the asset configuration.
+	w = sendJSON(r, http.MethodPost, "/api/uploads/config/file", map[string]any{"clear": true})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"is_configured":false`)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, multipartRequest(t, "/api/uploads/file", fields, "", nil))
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "获取链接")
+	w = sendJSON(r, http.MethodPost, "/api/uploads/asset/status", map[string]string{"asset_id": "asset-1"})
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), `"status":"Active"`)
 }
 
 func TestUploads_Rejections(t *testing.T) {
@@ -136,7 +158,7 @@ func TestUploads_Rejections(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// No Upload Platform key yet, even with providers configured.
-	t.Setenv("UPLOAD_API_KEY", "")
+	t.Setenv("FILE_UPLOAD_API_KEY", "")
 	require.NoError(t, upsertConfigs(srv.db, map[string]string{"ark_base_url": "http://127.0.0.1:1", "ark_api_key": "sk"}))
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, multipartRequest(t, "/api/uploads/file", nil, "a.png", []byte("x")))
@@ -144,17 +166,18 @@ func TestUploads_Rejections(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "上传平台")
 
 	// Path traversal out of the project folder.
-	require.NoError(t, upsertConfigs(srv.db, map[string]string{uploadBaseURLKey: "http://127.0.0.1:1", uploadAPIKeyKey: "sk"}))
+	require.NoError(t, upsertConfigs(srv.db, map[string]string{fileUploadTarget.baseURLKey: "http://127.0.0.1:1", fileUploadTarget.apiKeyKey: "sk"}))
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, multipartRequest(t, "/api/uploads/file", map[string]string{"project_id": doc.ID, "local_path": "/assets/../../x.png"}, "", nil))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "escapes the project folder")
 }
 
 func TestUploadPlatformConfig(t *testing.T) {
 	t.Setenv("UPLOAD_BASE_URL", "")
 	t.Setenv("UPLOAD_API_KEY", "")
 	r, _, _ := setupUploadServer(t)
-	platform := fakePlatform(t)
+	platform := fakePlatform(t, "asset", "sk-test")
 
 	// Unset: the Heighliner default address, no key.
 	w := httptest.NewRecorder()
@@ -173,13 +196,21 @@ func TestUploadPlatformConfig(t *testing.T) {
 	w = sendJSON(r, http.MethodPost, "/api/uploads/config/test", map[string]string{"base_url": "http://127.0.0.1:1", "api_key": "sk-test"})
 	assert.Contains(t, w.Body.String(), `"ok":false`)
 
-	// Saving keeps the key server-side and shows it masked; a path on the address is kept as typed.
+	// Saving keeps the key server-side and only returns its masked form.
 	w = sendJSON(r, http.MethodPost, "/api/uploads/config", map[string]string{"base_url": platform.URL + "/", "api_key": "sk-test-1234567890"})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &view))
 	assert.Equal(t, platform.URL, view["base_url"])
 	assert.Equal(t, true, view["is_configured"])
 	assert.NotContains(t, w.Body.String(), "sk-test-1234567890")
+
+	// Address-only changes cannot implicitly send the saved secret to another origin.
+	w = sendJSON(r, http.MethodPost, "/api/uploads/config", map[string]string{"base_url": "http://127.0.0.1:1"})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "同时填写")
+	w = sendJSON(r, http.MethodPost, "/api/uploads/config/test", map[string]string{"base_url": "http://127.0.0.1:1"})
+	assert.Contains(t, w.Body.String(), `"ok":false`)
+	assert.Contains(t, w.Body.String(), "同时填写")
 
 	// Clearing falls back to the default.
 	w = sendJSON(r, http.MethodPost, "/api/uploads/config", map[string]any{"clear": true})
