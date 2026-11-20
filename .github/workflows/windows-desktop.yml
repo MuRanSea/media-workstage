@@ -1,0 +1,56 @@
+name: Windows desktop
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    name: Test and build Windows x64 installer
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.4'
+      - name: Install web dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: Test web and check types
+        working-directory: web
+        shell: pwsh
+        run: |
+          bun run test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun run --bun tsc --noEmit
+          exit $LASTEXITCODE
+      - name: Test Go backend
+        run: go test ./internal/...
+      - name: Build NSIS installer
+        shell: pwsh
+        run: ./build.ps1 -Desktop
+      - name: Stage versioned installer
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath 'src-tauri/tauri.conf.json' -Raw | ConvertFrom-Json).version
+          $installer = "src-tauri/target/release/bundle/nsis/Media Workstage_${version}_x64-setup.exe"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw "Missing installer: $installer" }
+          New-Item -ItemType Directory -Path 'release-assets' | Out-Null
+          Copy-Item -LiteralPath $installer -Destination "release-assets/Media.Workstage_${version}_x64-setup.exe"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: windows-x64-installer
+          path: release-assets/*.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

@@ -75,7 +75,10 @@ export async function apiUploadFile(projectId: string, localPath: string): Promi
   return resp.json();
 }
 
-/** The Upload Platform (Heighliner business API) that upload cards send files to. */
+export type UploadTarget = 'asset' | 'file';
+const configPath = (target: UploadTarget) => target === 'asset' ? '/api/uploads/config' : '/api/uploads/config/file';
+
+/** One upload operation's independent platform configuration. */
 export interface UploadPlatformConfig {
   base_url: string;
   is_configured: boolean;
@@ -83,15 +86,15 @@ export interface UploadPlatformConfig {
   docs_url: string;
 }
 
-export async function apiGetUploadConfig(): Promise<UploadPlatformConfig> {
-  const resp = await fetch('/api/uploads/config');
+export async function apiGetUploadConfig(target: UploadTarget): Promise<UploadPlatformConfig> {
+  const resp = await fetch(configPath(target));
   if (!resp.ok) throw await readError(resp, '读取上传平台设置失败');
   return resp.json();
 }
 
 /** Saves the address and/or key; blank fields keep what is saved. `clear` removes both. */
-export async function apiSaveUploadConfig(payload: { base_url?: string; api_key?: string; clear?: boolean }): Promise<UploadPlatformConfig> {
-  const resp = await fetch('/api/uploads/config', {
+export async function apiSaveUploadConfig(target: UploadTarget, payload: { base_url?: string; api_key?: string; clear?: boolean }): Promise<UploadPlatformConfig> {
+  const resp = await fetch(configPath(target), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -100,8 +103,8 @@ export async function apiSaveUploadConfig(payload: { base_url?: string; api_key?
   return resp.json();
 }
 
-/** Checks an address and key with a read-only call; blank fields test the saved ones. */
-export async function apiTestUploadConfig(payload: { base_url?: string; api_key?: string }): Promise<{ ok: boolean; message: string }> {
+/** Checks the asset library address and key with a read-only call; blank fields test the saved ones. */
+export async function apiTestAssetUploadConfig(payload: { base_url?: string; api_key?: string }): Promise<{ ok: boolean; message: string }> {
   const resp = await fetch('/api/uploads/config/test', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -1,38 +1,42 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import { apiGetUploadConfig, type UploadPlatformConfig } from './uploads.ts';
+import { apiGetUploadConfig, apiSaveUploadConfig, type UploadPlatformConfig, type UploadTarget } from './uploads.ts';
 
-// Shared snapshot of GET /api/uploads/config so upload panels and the settings pane agree
-// on whether uploads can run. The settings pane refreshes it after every save.
-let snapshot: UploadPlatformConfig | null = null;
-let inflight: Promise<void> | null = null;
-const listeners = new Set<() => void>();
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+function createUploadConfigStore(target: UploadTarget) {
+  let snapshot: UploadPlatformConfig | null = null;
+  let inflight: Promise<void> | null = null;
+  const listeners = new Set<() => void>();
+  const publish = (next: UploadPlatformConfig) => {
+    snapshot = next;
+    listeners.forEach((listener) => listener());
+  };
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    load() {
+      if (snapshot || inflight) return;
+      inflight = apiGetUploadConfig(target)
+        .then(publish)
+        .catch(() => { /* Keep this destination disabled if its configuration could not load. */ })
+        .finally(() => { inflight = null; });
+    },
+    async save(payload: Parameters<typeof apiSaveUploadConfig>[1]) {
+      publish(await apiSaveUploadConfig(target, payload));
+    },
+  };
 }
 
-/** Reloads the Upload Platform settings and notifies subscribers. */
-export function refreshUploadPlatform(): Promise<void> {
-  if (inflight) return inflight;
-  inflight = apiGetUploadConfig()
-    .then((data) => {
-      snapshot = data;
-      listeners.forEach((l) => l());
-    })
-    .catch(() => {
-      // Keep the previous snapshot; the upload buttons stay as they were.
-    })
-    .finally(() => {
-      inflight = null;
-    });
-  return inflight;
+const stores = { asset: createUploadConfigStore('asset'), file: createUploadConfigStore('file') };
+
+export function saveUploadPlatform(target: UploadTarget, payload: Parameters<typeof apiSaveUploadConfig>[1]): Promise<void> {
+  return stores[target].save(payload);
 }
 
-/** Current Upload Platform settings; null until the first load finishes. */
-export function useUploadPlatform(): UploadPlatformConfig | null {
-  useEffect(() => {
-    if (!snapshot) void refreshUploadPlatform();
-  }, []);
-  return useSyncExternalStore(subscribe, () => snapshot);
+/** Current settings for one upload operation; null until it loads. */
+export function useUploadPlatform(target: UploadTarget): UploadPlatformConfig | null {
+  const store = stores[target];
+  useEffect(() => { store.load(); }, [store]);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot);
 }

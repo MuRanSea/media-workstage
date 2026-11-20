@@ -8,9 +8,11 @@ import (
 	"media-workstage/internal/db"
 	"media-workstage/internal/model"
 
+	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestInitDB_DualTablesAndCascade(t *testing.T) {
@@ -97,4 +99,47 @@ func TestInitDB_DualTablesAndCascade(t *testing.T) {
 	assert.Equal(t, "image_base", fetched.Assets[0].Kind)
 	assert.Equal(t, "image_layer", fetched.Assets[1].Kind)
 	assert.Equal(t, `[512,384,1024,1536]`, fetched.Assets[1].BoundingBoxJSON)
+}
+
+func TestInitDB_SplitsLegacyUploadSettingsOnlyOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	legacy, err := gorm.Open(sqlite.Open(path))
+	require.NoError(t, err)
+	legacySQL, err := legacy.DB()
+	require.NoError(t, err)
+	defer legacySQL.Close()
+	require.NoError(t, legacy.AutoMigrate(&model.SystemConfig{}))
+	require.NoError(t, legacy.Create(&[]model.SystemConfig{
+		{Key: "upload_base_url", Value: "https://old.example"},
+		{Key: "upload_api_key", Value: "sk-legacy-test"},
+	}).Error)
+
+	database, err := db.InitDB(path)
+	require.NoError(t, err)
+	sqlDB, err := database.DB()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+	readSettings := func(db *gorm.DB, pattern string) map[string]string {
+		var rows []model.SystemConfig
+		require.NoError(t, db.Where("key LIKE ?", pattern).Find(&rows).Error)
+		values := map[string]string{}
+		for _, row := range rows {
+			values[row.Key] = row.Value
+		}
+		return values
+	}
+	assert.Equal(t, map[string]string{
+		"file_upload_base_url": "https://old.example",
+		"file_upload_api_key":  "sk-legacy-test",
+	}, readSettings(database, "file_upload_%"))
+
+	require.NoError(t, database.Where("key LIKE ?", "file_upload_%").Delete(&model.SystemConfig{}).Error)
+	restarted, err := db.InitDB(path)
+	require.NoError(t, err)
+	restartedSQL, err := restarted.DB()
+	require.NoError(t, err)
+	defer restartedSQL.Close()
+	assert.Empty(t, readSettings(restarted, "file_upload_%"))
+	assert.Equal(t, "https://old.example", readSettings(restarted, "upload_base_url")["upload_base_url"])
+	assert.Equal(t, "sk-legacy-test", readSettings(restarted, "upload_api_key")["upload_api_key"])
 }
